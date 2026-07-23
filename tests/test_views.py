@@ -18,9 +18,15 @@ from obsauto import gui, hotkey
 hotkey.register = lambda *a, **k: None
 gui.ensure_obs_running = lambda *a, **k: None
 
+from obsauto import config as config_module
 from obsauto.classifier import Classifier
 from obsauto.config import load_config
 from obsauto.gui import AppWindow
+
+# Layout changes persist through save_config(); tests must not rewrite the real
+# config.json sitting next to the app. gui.py imports it inside the function, so
+# patching the module attribute is enough.
+config_module.save_config = lambda *a, **k: None
 
 app = AppWindow(load_config(), Classifier(), on_close_to_tray=lambda: None)
 app.root.withdraw()
@@ -101,6 +107,58 @@ check("Activity replayed earlier lines", "before activity view was opened" in fu
 
 # Visibility gating: hidden window must skip animation work.
 check("animations gated while hidden", app._visible is False, app._visible)
+
+# ---- modular dashboard ----
+app._show_view("dashboard")
+settle()
+check("customise off by default", app._customising is False)
+check("grips hidden when not customising",
+      app.bg.itemcget(app._grips["hero"]["tile"], "state") == "hidden",
+      app.bg.itemcget(app._grips["hero"]["tile"], "state"))
+
+app._toggle_customise()
+settle(120)
+check("grips shown in customise mode",
+      app.bg.itemcget(app._grips["hero"]["tile"], "state") == "normal",
+      app.bg.itemcget(app._grips["hero"]["tile"], "state"))
+
+default_order = list(app._layout_order)
+hero_y_before = app._blocks["hero"]["y"]
+
+# Reorder and confirm blocks actually move and stack without overlapping.
+app._apply_dashboard_layout(["activity", "stats", "hero"])
+settle(120)
+check("reorder applied", app._layout_order == ["activity", "stats", "hero"],
+      app._layout_order)
+check("hero physically moved", app._blocks["hero"]["y"] != hero_y_before,
+      f"{hero_y_before} -> {app._blocks['hero']['y']}")
+ys = [(app._blocks[b]["y"], app._blocks[b]["y"] + app._blocks[b]["h"])
+      for b in app._layout_order]
+check("blocks stack without overlap",
+      all(ys[i][1] <= ys[i + 1][0] for i in range(len(ys) - 1)), ys)
+check("layout stays inside the window",
+      ys[0][0] >= 56 and ys[-1][1] <= 760, (ys[0][0], ys[-1][1]))
+check("layout persisted to config",
+      app.config.get("dashboard_layout") == ["activity", "stats", "hero"],
+      app.config.get("dashboard_layout"))
+
+# A corrupt/partial saved layout must never lose a panel.
+app.config["dashboard_layout"] = ["stats", "nonsense"]
+recovered = app._saved_layout()
+check("bad saved layout recovers all blocks",
+      sorted(recovered) == sorted(gui.DEFAULT_BLOCKS) and recovered[0] == "stats",
+      recovered)
+
+# Leaving the dashboard must drop customise mode rather than strand the grips.
+app._toggle_customise() if not app._customising else None
+app._set_customise(True)
+app._show_view("games")
+settle(120)
+check("customise cleared when leaving dashboard", app._customising is False)
+
+app._show_view("dashboard")
+app._apply_dashboard_layout(list(default_order))
+settle(120)
 
 passed_all = all(p for _, p, _ in results)
 for name, passed, detail in results:

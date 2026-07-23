@@ -117,6 +117,12 @@ VIEW_TITLES = {
 VIDEO_EXTS = (".mkv", ".mp4", ".mov", ".flv", ".ts", ".m4v")
 LOG_HISTORY = 500  # lines kept for replay into the Activity view
 
+# Rearrangeable dashboard blocks. Heights are fixed so reordering is a pure
+# translation of each block - no rebuilding, nothing to resize.
+DEFAULT_BLOCKS = ("hero", "stats", "activity")
+BLOCK_LABELS = {"hero": "Now recording", "stats": "Stats", "activity": "Activity"}
+BLOCK_GAP = 18
+
 
 # ---- DPI / UI scaling ----------------------------------------------------
 # The whole UI is a fixed-pixel canvas design authored in these base units
@@ -793,6 +799,15 @@ class AppWindow:
         )
         self.bg.create_window(WIDTH - 356, cy - 15, anchor="nw", window=self.gamedata_btn,
                               width=104, height=30)
+        self.customise_btn = ctk.CTkButton(
+            self.root, text="⣿  Customise", command=self._toggle_customise,
+            fg_color=SURFACE, hover_color=SURFACE_HOVER, text_color=MUTED,
+            bg_color=self._bg_at(WIDTH - 420, cy), border_width=1, border_color=EDGE,
+            corner_radius=9, font=ctk.CTkFont(size=12),
+        )
+        self._customise_win = self.bg.create_window(
+            WIDTH - 480, cy - 15, anchor="nw", window=self.customise_btn,
+            width=116, height=30)
 
     def _draw_keycap(self, cx, cy, label):
         """A small rounded keycap chip on the canvas - the sampled-corner
@@ -862,13 +877,21 @@ class AppWindow:
                                   state="normal" if view == name else "hidden")
         self._current_view = name
         self.bg.itemconfigure(self._topbar_title, text=VIEW_TITLES[name])
+        # Customise only means anything on the dashboard; leaving it on while
+        # navigating away would strand the grips over another view.
+        self.bg.itemconfigure(self._customise_win,
+                              state="normal" if name == "dashboard" else "hidden")
+        if name != "dashboard" and getattr(self, "_customising", False):
+            self._set_customise(False)
         for nav_name, parts in self._nav.items():
             self._set_nav_active(parts, nav_name == name)
         if name == "dashboard":
             # Showing the whole tag un-hides items the dashboard deliberately
             # keeps hidden (the timer/size readout and Pause button when nothing
-            # is recording), so re-apply the current state's own visibility.
+            # is recording, and the customise grips), so re-apply their own
+            # visibility rules on top.
             self._set_hero_state(self._hero_state)
+            self._set_customise(self._customising)
         elif name == "recordings":
             self._refresh_recordings()
         elif name == "games":
@@ -880,10 +903,118 @@ class AppWindow:
     def _content_x0(self):
         return SIDEBAR_W + MARGIN
 
+    # ---- dashboard blocks (rearrangeable) ----
+    # Each block is built at its natural origin, then tagged. Because a canvas
+    # move() shifts every item carrying a tag - embedded widget windows included
+    # - rearranging the dashboard is pure translation of whole groups, with no
+    # rebuilding and nothing to keep in sync.
     def _build_dashboard(self):
-        self._build_hero()
-        self._build_stats()
-        self._build_activity()
+        self._blocks = {}
+        for name, builder, origin, height in (
+            ("hero", self._build_hero, 62, 300),
+            ("stats", self._build_stats, 380, 92),
+            ("activity", self._build_activity, 490, 246),
+        ):
+            before = set(self.bg.find_all())
+            builder()
+            for item in set(self.bg.find_all()) - before:
+                self.bg.addtag_withtag(f"blk_{name}", item)
+            self._blocks[name] = {"origin": origin, "y": origin, "h": height}
+        self._build_customise_controls()
+        self._apply_dashboard_layout(self._saved_layout(), save=False)
+
+    def _saved_layout(self):
+        """Block order from config, defended against a hand-edited file."""
+        order = self.config.get("dashboard_layout")
+        if not isinstance(order, list):
+            return list(DEFAULT_BLOCKS)
+        cleaned = [b for b in order if b in self._blocks]
+        # Anything missing is appended, so a partial list can't lose a panel.
+        cleaned += [b for b in DEFAULT_BLOCKS if b not in cleaned]
+        return cleaned
+
+    def _apply_dashboard_layout(self, order, save=True):
+        y = 62
+        for name in order:
+            block = self._blocks[name]
+            delta = y - block["y"]
+            if delta:
+                self.bg.move(f"blk_{name}", 0, delta)
+                block["y"] = y
+            y += block["h"] + BLOCK_GAP
+        self._layout_order = list(order)
+        if save:
+            self.config["dashboard_layout"] = list(order)
+            from .config import save_config
+            save_config(self.config)
+
+    def _build_customise_controls(self):
+        """A grip per block plus a hint strip, all hidden until Customise is on."""
+        self._grips = {}
+        x0 = self._content_x0()
+        w = WIDTH - MARGIN - x0
+        for name in DEFAULT_BLOCKS:
+            block = self._blocks[name]
+            tile = self._glass(x0, block["origin"], w, 26, tint=ACCENT, radius=8,
+                               tint_alpha=70, border_hex=ACCENT, border_alpha=90)
+            label = self.bg.create_text(
+                x0 + 14, block["origin"] + 13, anchor="w",
+                text=f"⣿   {BLOCK_LABELS[name]}   —   drag to reorder",
+                fill=NAV_ACTIVE_TEXT, font=("Segoe UI Semibold", 11))
+            for item in (tile, label):
+                self.bg.tag_bind(item, "<ButtonPress-1>",
+                                 lambda e, n=name: self._grip_press(e, n))
+                self.bg.tag_bind(item, "<B1-Motion>", self._grip_drag)
+                self.bg.tag_bind(item, "<ButtonRelease-1>", self._grip_release)
+            self._grips[name] = {"tile": tile, "label": label}
+            self.bg.addtag_withtag(f"blk_{name}", tile)
+            self.bg.addtag_withtag(f"blk_{name}", label)
+        self._set_customise(False)
+
+    def _set_customise(self, on):
+        self._customising = on
+        for parts in self._grips.values():
+            for item in parts.values():
+                self.bg.itemconfigure(item, state="normal" if on else "hidden")
+        if hasattr(self, "customise_btn"):
+            self.customise_btn.configure(
+                text="✓  Done" if on else "⣿  Customise",
+                text_color=ACCENT_LIGHT if on else MUTED)
+
+    def _toggle_customise(self):
+        self._set_customise(not self._customising)
+
+    def _grip_press(self, event, name):
+        if not self._customising:
+            return
+        self._drag_block = name
+        self._drag_from_y = event.y / self.scale
+        self._drag_moved = 0
+
+    def _grip_drag(self, event):
+        if not getattr(self, "_drag_block", None):
+            return
+        now = event.y / self.scale
+        delta = now - self._drag_from_y
+        self.bg.move(f"blk_{self._drag_block}", 0, delta)
+        self._blocks[self._drag_block]["y"] += delta
+        self._drag_moved += delta
+        self._drag_from_y = now
+
+    def _grip_release(self, _event):
+        name = getattr(self, "_drag_block", None)
+        if not name:
+            return
+        self._drag_block = None
+        # Snap: order the blocks by where their centres now sit, then re-lay out.
+        centres = [(self._blocks[b]["y"] + self._blocks[b]["h"] / 2, b)
+                   for b in self._layout_order]
+        centres.sort()
+        self._apply_dashboard_layout([b for _, b in centres])
+        self._log(f"[Manual] Dashboard layout: {' → '.join(self._layout_order)}")
+
+    def _reset_dashboard(self):
+        self._apply_dashboard_layout(list(DEFAULT_BLOCKS))
 
     # ---- shared building blocks for the secondary views ----
     def _view_panel(self, title, subtitle):
