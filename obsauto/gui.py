@@ -98,12 +98,11 @@ GLOW_SIZE = 460     # diameter of the drifting violet accent bloom
 STAR_COUNT = 22
 STAR_DIM = "#2E2A52"    # star colour at the bottom of its twinkle
 STAR_BRIGHT = "#D9D4FF"  # ...and at the top
-STAR_BATCHES = 3        # stars are twinkled in this many round-robin batches
-
-# Animation pacing. Everything decorative runs at ACTIVE_TICK_MS while the
-# window is on screen, and is skipped entirely while it's hidden in the tray -
-# the timers then just idle at IDLE_TICK_MS waiting to notice it come back.
-ACTIVE_TICK_MS = 80
+# Timer pacing. The decorative canvas animation is gone entirely (see the long
+# note above _glass in AppWindow); ICON_TICK_MS paces the one remaining
+# window-level animation, and IDLE_TICK_MS is how often a parked timer checks
+# whether the window has come back on screen.
+ICON_TICK_MS = 400
 IDLE_TICK_MS = 500
 
 VIEW_TITLES = {
@@ -317,7 +316,6 @@ class AppWindow:
         self._hero_state = "offline"  # offline | watching | recording | paused
         self._current_game = None
         self._eq_bars = []            # scene-preview equaliser bar canvas ids
-        self._star_phase = 0          # round-robin batch for the star twinkle
         self._log_lines = []          # replayed into the Activity view when shown
         self.console = None           # set by _build_activity
         self.console_full = None      # set by _build_activity_view
@@ -383,13 +381,11 @@ class AppWindow:
         self.root.overrideredirect(True)
         apply_rounded_corners(self.root)
 
-        # ---- living backdrop ----
-        # The nebula is rendered DRIFT larger on every side so it can wander
-        # without ever exposing an edge; a violet bloom drifts behind the glass
-        # panels (they're translucent, so it glows *through* them); and a seeded
-        # scatter of stars twinkles. One cheap timer (_animate_backdrop) drives
-        # all three, so the window feels alive without ever re-rendering the
-        # nebula or the panels.
+        # ---- backdrop ----
+        # A nebula, a violet bloom behind the glass panels (they're translucent,
+        # so it glows *through* them), and a seeded scatter of stars. All three
+        # used to animate; they're now static, because on this window any canvas
+        # change costs a full composite (see the note above _glass).
         self.nebula = generate_nebula(self._S(WIDTH + DRIFT * 2), self._S(HEIGHT + DRIFT * 2))
         self.bg = ScaledCanvas(
             tk.Canvas(self.root, width=self._S(WIDTH), height=self._S(HEIGHT),
@@ -402,35 +398,31 @@ class AppWindow:
         self._images.append(bg_photo)
         self._backdrop_id = self.bg.create_image(-DRIFT, -DRIFT, anchor="nw", image=bg_photo)
 
-        # Pre-render a few alpha levels of the bloom and cycle them for a slow
-        # "breath" - re-blurring a glow this size every frame would be far too
-        # expensive to do live.
-        self._glow_frames = []
-        # Deliberately faint. This bloom is the one layer that ISN'T in the
-        # composite widgets sample their bg_color from (it moves, so no static
-        # colour could match it) - every unit of alpha here is a unit of
-        # mismatch around a widget's rounded corners. The accent punch comes
-        # from the nebula's own violet blobs instead, which the composite does
-        # capture exactly; this just adds a gentle breathing drift on top.
-        for alpha in (8, 12, 16, 20, 16, 12):
-            photo = to_photo(make_accent_glow(self._S(GLOW_SIZE), ACCENT, alpha))
-            self._images.append(photo)
-            self._glow_frames.append(photo)
-        self._glow_id = self.bg.create_image(0, 0, anchor="nw", image=self._glow_frames[0])
+        # A single violet bloom, centred behind the panels. Deliberately faint:
+        # this is the one layer NOT in the composite that widgets sample their
+        # bg_color from, so every unit of alpha here is a unit of mismatch around
+        # a widget's rounded corners. The accent punch comes from the nebula's
+        # own violet blobs, which the composite does capture exactly.
+        glow_photo = to_photo(make_accent_glow(self._S(GLOW_SIZE), ACCENT, 16))
+        self._images.append(glow_photo)
+        self._glow_id = self.bg.create_image(
+            WIDTH / 2 - GLOW_SIZE / 2, HEIGHT / 2 - GLOW_SIZE / 2,
+            anchor="nw", image=glow_photo)
 
-        # Seeded so the sky is identical every launch (a different one each
-        # start would read as flicker, not atmosphere - same rule as the nebula).
+        # Seeded so the sky is identical every launch (a different one each start
+        # would read as flicker, not atmosphere - same rule as the nebula). Each
+        # star gets its own fixed brightness so the field still has depth now
+        # that they no longer twinkle.
         self._stars = []
         star_rng = random.Random(11)
         for _ in range(STAR_COUNT):
             sx = star_rng.uniform(8, WIDTH - 8)
             sy = star_rng.uniform(8, HEIGHT - 8)
             r = star_rng.choice((0.9, 1.2, 1.6))
-            star = self.bg.create_oval(sx - r, sy - r, sx + r, sy + r,
-                                       fill=STAR_DIM, outline="")
-            self._stars.append((star, star_rng.uniform(0, 6.283),
-                                star_rng.uniform(0.5, 1.3)))
-        self._anim_t = 0.0
+            star = self.bg.create_oval(
+                sx - r, sy - r, sx + r, sy + r, outline="",
+                fill=_blend_hex(STAR_DIM, STAR_BRIGHT, star_rng.uniform(0.15, 0.95)))
+            self._stars.append(star)
 
         # Truth source for widget corner-blending. An embedded CTk widget paints
         # the area its rounded corners cut away with a single flat bg_color, so
@@ -456,8 +448,7 @@ class AppWindow:
         self._poll_obs_status()
         self._poll_disk_stats()
         self._register_hotkey()
-        self._animate_backdrop()
-        self._animate_hero()
+        self._animate_taskbar_icon()
 
     @property
     def _visible(self):
@@ -490,49 +481,25 @@ class AppWindow:
         except Exception:
             pass
 
-    def _animate_backdrop(self):
-        """Drives the whole living backdrop from one timer: the nebula drifts on
-        a slow lissajous, the violet bloom wanders on a wider/slower path and
-        breathes, and the stars twinkle.
-
-        Skipped entirely while the window is hidden in the tray - which is
-        almost all of the time, since this app's whole job is to sit in the
-        background during a game. Moving the full-window nebula image forces Tk
-        to repaint the entire canvas, so animating it for a window nobody can
-        see was burning CPU that belongs to whatever you're playing."""
-        if not self._visible:
-            self.root.after(IDLE_TICK_MS, self._animate_backdrop)
-            return
-        t = self._anim_t
-        amp = DRIFT * 0.85  # stay just inside the rendered margin
-
-        self.bg.coords(
-            self._backdrop_id,
-            -DRIFT + math.sin(t * 0.19) * amp,
-            -DRIFT + math.cos(t * 0.13) * amp,
-        )
-
-        self.bg.coords(
-            self._glow_id,
-            WIDTH / 2 - GLOW_SIZE / 2 + math.sin(t * 0.10) * (WIDTH * 0.30),
-            HEIGHT / 2 - GLOW_SIZE / 2 + math.cos(t * 0.07) * (HEIGHT * 0.26),
-        )
-        self.bg.itemconfigure(
-            self._glow_id,
-            image=self._glow_frames[int(t * 1.3) % len(self._glow_frames)],
-        )
-
-        # Twinkle a third of the stars each frame, cycling. The twinkle period is
-        # seconds long, so spreading the itemconfigure calls over three frames is
-        # visually identical and cuts two thirds of the per-frame canvas work.
-        for i in range(self._star_phase, len(self._stars), STAR_BATCHES):
-            star, phase, speed = self._stars[i]
-            level = (math.sin(t * speed + phase) + 1) / 2
-            self.bg.itemconfigure(star, fill=_blend_hex(STAR_DIM, STAR_BRIGHT, level))
-        self._star_phase = (self._star_phase + 1) % STAR_BATCHES
-
-        self._anim_t = t + 0.085
-        self.root.after(ACTIVE_TICK_MS, self._animate_backdrop)
+    # ---- why the backdrop no longer animates -------------------------------
+    # It used to drift the nebula, wander + breathe the violet bloom, and twinkle
+    # the stars on an ~12fps timer. Measured on a mapped 1770x1140 window, that
+    # was catastrophic: p50 frame pacing 110ms (~9fps) with a core pegged at 95%.
+    #
+    # The cost is NOT the drawing. Attribution runs showed it is flat regardless
+    # of what changes: moving the full-window nebula image, swapping the 690px
+    # glow, or recolouring a single 2px star all cost the same ~100ms, and
+    # halving the canvas contents (141 items vs 187) barely moved it. That
+    # signature means the expense is a *window-level* composite - any canvas
+    # change makes DWM recomposite the whole layered, rounded-corner window - so
+    # it scales with window size, not with damage or item count. The Aurora
+    # redesign grew the window 1.6x in area, which is why this only bit now.
+    #
+    # Frequency is therefore the only lever, so the decorative animation is gone.
+    # What remains mutates the canvas at most once a second, and only while
+    # something is actually happening (the recording timer). The tray icon still
+    # animates - it's a separate icon surface and never touches this window.
+    # Don't reintroduce a repaint-per-frame timer here; measure first if tempted.
 
     # ---- glass panel helper ----
     # x/y/w/h/radius are base design units; the placement coordinate is scaled
@@ -1416,7 +1383,10 @@ class AppWindow:
         self.bg.create_text(x + 34, y + 24, anchor="w", text="Game Capture (Auto)",
                             fill=NAV_ACTIVE_TEXT, font=("Segoe UI", 10, "bold"))
 
-        # Equaliser bars along the bottom - animated in _animate_hero.
+        # Equaliser bars along the bottom. Drawn once, in a fixed waveform - they
+        # used to animate, but every canvas mutation costs a full window
+        # composite (see the note above _glass), so a 12fps equaliser cost about
+        # as much as the entire rest of the UI put together.
         self._eq_bars = []
         n = 11
         bar_w = 5
@@ -1426,7 +1396,8 @@ class AppWindow:
         floor_y = y + h - 14
         for i in range(n):
             bx = base_x + i * (bar_w + gap)
-            bar = self.bg.create_rectangle(bx, floor_y - 6, bx + bar_w, floor_y,
+            height = 6 + (math.sin(i * 0.8) + 1) * 9
+            bar = self.bg.create_rectangle(bx, floor_y - height, bx + bar_w, floor_y,
                                            fill="#EDEAFF", outline="")
             self._eq_bars.append((bar, bx, floor_y, bar_w))
 
@@ -1448,23 +1419,6 @@ class AppWindow:
             [0, 0, sw - 1, sh - 1], radius=self._S(13), fill=255)
         img.putalpha(mask)
         return img
-
-    def _animate_hero(self):
-        """Drives the scene-preview equaliser: lively while recording, a low
-        idle shimmer otherwise. One cheap timer, a handful of canvas updates."""
-        if not self._visible:
-            self.root.after(IDLE_TICK_MS, self._animate_hero)
-            return
-        t = self._anim_t
-        active = self._is_recording and not self._is_paused
-        for i, (bar, bx, floor_y, bar_w) in enumerate(self._eq_bars):
-            if active:
-                level = (math.sin(t * 3.2 + i * 0.7) + 1) / 2
-                height = 4 + level * 26
-            else:
-                height = 3 + (math.sin(t * 0.9 + i * 0.5) + 1) * 1.5
-            self.bg.coords(bar, bx, floor_y - height, bx + bar_w, floor_y)
-        self.root.after(90, self._animate_hero)
 
     def _set_hero_state(self, state):
         """Recolours the whole hero card for one of: offline / watching /
@@ -1777,10 +1731,7 @@ class AppWindow:
             except OBSError:
                 pass
 
-        was_paused = self._is_paused
         self._is_paused = is_paused
-        if is_recording and (not self._is_recording or was_paused) and not is_paused:
-            self._pulse_dot(True)  # just started, or just resumed from pause
         self._is_recording = is_recording
 
         # The hero card owns the badge/border/readout visibility; pick the state
@@ -1811,15 +1762,6 @@ class AppWindow:
         # actual recording independently of this poll.
         self.root.after(1000 if self._visible else 5000, self._poll_obs_status)
 
-    def _pulse_dot(self, bright=True):
-        if not self._is_recording:
-            self.bg.itemconfigure(self.rec_dot_id, fill=FAINT)
-            return
-        if self._is_paused:
-            self.bg.itemconfigure(self.rec_dot_id, fill=AMBER)
-            return
-        self.bg.itemconfigure(self.rec_dot_id, fill=(RED if bright else RED_DIM))
-        self.root.after(650, lambda: self._pulse_dot(not bright))
 
     def _toggle_record(self):
         """Manual override, independent of auto-detection. Note: if
@@ -2394,10 +2336,12 @@ class AppWindow:
         return result["value"]
 
     def _animate_taskbar_icon(self):
-        # Only meaningful while the window is mapped - a withdrawn window has no
-        # taskbar button or Alt-Tab entry to animate, so this was ~12 icon swaps
-        # a second painting something that wasn't on screen. The tray icon has
-        # its own animation thread and is unaffected.
+        """Slowly rotates the taskbar/Alt-Tab icon while the window is mapped.
+
+        Deliberately slow. `iconphoto` is a window-level change, and on this
+        window those are expensive (see the note above _glass) - at the old 80ms
+        it was 12 window updates a second for an icon most people never look at.
+        A withdrawn window has no taskbar button at all, so it idles then."""
         if not self._visible:
             self.root.after(IDLE_TICK_MS, self._animate_taskbar_icon)
             return
@@ -2406,7 +2350,7 @@ class AppWindow:
         except Exception:
             pass
         self._taskbar_icon_index += 1
-        self.root.after(ACTIVE_TICK_MS, self._animate_taskbar_icon)
+        self.root.after(ICON_TICK_MS, self._animate_taskbar_icon)
 
     def _poll_manual_review(self):
         for key, basenames, suggested_name in self.classifier.pop_pending_reviews():

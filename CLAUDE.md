@@ -100,6 +100,27 @@ callback tracebacks to a **stderr that doesn't exist**, so the crash is invisibl
 now installs `report_callback_exception` → `_on_callback_exception`, which writes them to the
 app log instead. Don't remove that.
 
+## ⛔ The big one: never animate the canvas per-frame
+On this window, **any** canvas change forces a full *window-level* composite costing ~100ms at
+1770×1140. The cost is **flat** — it does not scale with how much changed. Measured: moving the
+full-window nebula image, swapping the 690px glow, and recolouring a single 2px star all cost
+the same, and halving the canvas contents (187→141 items) barely moved it. It scales with
+**window size**, which is why the Aurora redesign (1.6× the old area) is what exposed it.
+
+So a ~12fps decorative animation timer wasn't "a bit expensive", it was fatal: **p50 110ms
+frames (~9fps), one core at 95%**. Removing all of it gives **p50 16ms at ~4%**.
+
+The backdrop (nebula drift, glow breathing, star twinkle), the hero equaliser and the REC dot
+pulse are therefore all **static by design**. What remains mutates the canvas at most once a
+second, and only while recording. The tray icon still animates — separate surface, never touches
+this window. `tests/test_frame_pacing.py` fails if a per-frame timer comes back.
+
+> Two earlier diagnoses of this were **wrong** and cost time: "it's the big image moves" (no —
+> a 2px star costs the same) and "it's the extra views' widgets" (no — dashboard-only is barely
+> cheaper). Measure with the window **actually mapped**; profiling a withdrawn window skips real
+> painting and understates everything by ~100×. And note that setting a timer method to a NOOP
+> silently kills its reschedule loop, which invalidated a whole attribution run.
+
 ## Performance gotchas (fixed 2026-07-23 — don't reintroduce)
 - **Never connect to OBS on the Tk thread.** `obs.connect()` blocks for up to its 5s socket
   timeout, and at startup that's the *normal* case (we've just launched OBS, it's still
@@ -121,9 +142,17 @@ app log instead. Don't remove that.
   own `~`, so the same `config.json` works despite different Windows usernames.
 - **Silent runs:** intended to run as `pythonw` (no console), so all diagnostics go through
   `app_log` to a file — don't rely on `print()`.
-- **Tests:** `python tests/test_async_connect.py` (needs a desktop session; creates a hidden
-  Tk window, no OBS required). Covers the connect path, deferred-callback error handling and
-  reconnect state. Beyond that, verify changes by running the app against a live OBS instance.
+- **Tests** (need a desktop session, no OBS required):
+  ```
+  python tests/test_async_connect.py   # connect is async; nothing escapes into a Tk callback
+  python tests/test_views.py           # every tab opens; modular layout reorders + persists
+  python tests/test_list_views.py      # Recordings/Games actually populate (real mainloop)
+  python tests/test_frame_pacing.py    # visible-window frame budget (briefly shows the window)
+  ```
+  ⚠️ Anything async **must** be tested under a real `mainloop()`. Tk refuses a cross-thread
+  `root.after()` when driven by `update()`-pumping, and `_ui()` swallows that — so an
+  `update()`-pumped test sees worker results never arrive. That has hidden real behaviour twice.
+  Beyond the suite, verify against a live OBS instance.
 
 ## Codebase knowledge graph (token-saving)
 A graphify graph of this project lives in `graphify-out/` (232 nodes, 441 edges). To answer
