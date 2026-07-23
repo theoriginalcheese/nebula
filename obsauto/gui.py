@@ -20,7 +20,7 @@ from .app_log import log_to_file
 from .theme_art import (
     generate_nebula, make_accent_glow, make_glass_tile, make_solid_tile, to_photo,
 )
-from .icon_art import generate_animation_frames
+from .icon_art import generate_animation_frames, render_frame
 from . import hotkey
 from .paths import RESOURCE_DIR
 
@@ -98,6 +98,24 @@ GLOW_SIZE = 460     # diameter of the drifting violet accent bloom
 STAR_COUNT = 22
 STAR_DIM = "#2E2A52"    # star colour at the bottom of its twinkle
 STAR_BRIGHT = "#D9D4FF"  # ...and at the top
+STAR_BATCHES = 3        # stars are twinkled in this many round-robin batches
+
+# Animation pacing. Everything decorative runs at ACTIVE_TICK_MS while the
+# window is on screen, and is skipped entirely while it's hidden in the tray -
+# the timers then just idle at IDLE_TICK_MS waiting to notice it come back.
+ACTIVE_TICK_MS = 80
+IDLE_TICK_MS = 500
+
+VIEW_TITLES = {
+    "dashboard": "Dashboard",
+    "recordings": "Recordings",
+    "games": "Games",
+    "activity": "Activity",
+    "macropad": "Macropad",
+    "settings": "Settings",
+}
+VIDEO_EXTS = (".mkv", ".mp4", ".mov", ".flv", ".ts", ".m4v")
+LOG_HISTORY = 500  # lines kept for replay into the Activity view
 
 
 # ---- DPI / UI scaling ----------------------------------------------------
@@ -293,6 +311,10 @@ class AppWindow:
         self._hero_state = "offline"  # offline | watching | recording | paused
         self._current_game = None
         self._eq_bars = []            # scene-preview equaliser bar canvas ids
+        self._star_phase = 0          # round-robin batch for the star twinkle
+        self._log_lines = []          # replayed into the Activity view when shown
+        self.console = None           # set by _build_activity
+        self.console_full = None      # set by _build_activity_view
 
         ctk.set_appearance_mode("dark")
         ctk.set_default_color_theme("dark-blue")
@@ -422,9 +444,7 @@ class AppWindow:
 
         self._build_sidebar()
         self._build_topbar()
-        self._build_hero()
-        self._build_stats()
-        self._build_activity()
+        self._build_views()
 
         self._poll_manual_review()
         self._poll_obs_status()
@@ -432,6 +452,19 @@ class AppWindow:
         self._register_hotkey()
         self._animate_backdrop()
         self._animate_hero()
+
+    @property
+    def _visible(self):
+        """Whether the window is actually on screen.
+
+        Asked of Tk directly rather than tracked with a flag, because the window
+        is hidden/shown from several places that don't all go through _hide()/
+        show() - main.py withdraws it at startup, and the tray menu drives it
+        too. winfo_viewable() is always right by construction."""
+        try:
+            return bool(self.root.winfo_viewable())
+        except Exception:
+            return False
 
     def _S(self, v):
         """Scale a base design-unit value to physical pixels by the UI scale."""
@@ -454,9 +487,16 @@ class AppWindow:
     def _animate_backdrop(self):
         """Drives the whole living backdrop from one timer: the nebula drifts on
         a slow lissajous, the violet bloom wanders on a wider/slower path and
-        breathes, and the stars twinkle. Deliberately ~12fps with only a couple
-        of dozen canvas updates per tick, so it stays visually alive while
-        costing next to nothing during a recording session."""
+        breathes, and the stars twinkle.
+
+        Skipped entirely while the window is hidden in the tray - which is
+        almost all of the time, since this app's whole job is to sit in the
+        background during a game. Moving the full-window nebula image forces Tk
+        to repaint the entire canvas, so animating it for a window nobody can
+        see was burning CPU that belongs to whatever you're playing."""
+        if not self._visible:
+            self.root.after(IDLE_TICK_MS, self._animate_backdrop)
+            return
         t = self._anim_t
         amp = DRIFT * 0.85  # stay just inside the rendered margin
 
@@ -476,12 +516,17 @@ class AppWindow:
             image=self._glow_frames[int(t * 1.3) % len(self._glow_frames)],
         )
 
-        for star, phase, speed in self._stars:
+        # Twinkle a third of the stars each frame, cycling. The twinkle period is
+        # seconds long, so spreading the itemconfigure calls over three frames is
+        # visually identical and cuts two thirds of the per-frame canvas work.
+        for i in range(self._star_phase, len(self._stars), STAR_BATCHES):
+            star, phase, speed = self._stars[i]
             level = (math.sin(t * speed + phase) + 1) / 2
             self.bg.itemconfigure(star, fill=_blend_hex(STAR_DIM, STAR_BRIGHT, level))
+        self._star_phase = (self._star_phase + 1) % STAR_BATCHES
 
         self._anim_t = t + 0.085
-        self.root.after(80, self._animate_backdrop)
+        self.root.after(ACTIVE_TICK_MS, self._animate_backdrop)
 
     # ---- glass panel helper ----
     # x/y/w/h/radius are base design units; the placement coordinate is scaled
@@ -569,22 +614,19 @@ class AppWindow:
 
     # ---- brand mark ----
     def _draw_logo(self, cx, cy, size):
-        """The Nebula mark drawn straight on the canvas: an amber orbital ring
-        (tilted ellipse) with a violet four-point sparkle at its centre - the
-        same emblem the design mockups use in the header and nav rail."""
-        r = size / 2
-        # Tilted orbital ring (approximate the SVG's rotated ellipse via an arc-
-        # less oval that we squash + rotate by drawing as a thin polygon ring).
-        self.bg.create_oval(cx - r, cy - r * 0.62, cx + r, cy + r * 0.62,
-                            outline=AMBER, width=max(1, size // 12), fill="")
-        # Four-point sparkle (a plump star) in accent violet.
-        s = r * 0.86
-        w = r * 0.30
-        pts = [
-            cx, cy - s,  cx + w, cy - w,  cx + s, cy,  cx + w, cy + w,
-            cx, cy + s,  cx - w, cy + w,  cx - s, cy,  cx - w, cy - w,
-        ]
-        self.bg.create_polygon(*pts, fill=ACCENT, outline="")
+        """The Nebula mark: a tilted amber orbit ring around a violet sparkle.
+
+        Rendered via icon_art.render_frame - the exact artwork already used for
+        the tray and taskbar icons - rather than drawn with canvas primitives.
+        A tk oval can't be rotated, so the canvas version lost the ring's tilt,
+        which is the most recognisable part of the mark (and the design's SVG
+        applies a -22 degree rotation to it). Going through icon_art also gets
+        supersampled antialiasing and keeps every instance of the logo
+        identical."""
+        px = self._S(size)
+        photo = to_photo(render_frame(size=px))
+        self._images.append(photo)
+        self.bg.create_image(cx - size / 2, cy - size / 2, anchor="nw", image=photo)
 
     # ---- left nav rail ----
     def _build_sidebar(self):
@@ -606,16 +648,18 @@ class AppWindow:
         # Nav items. Only Dashboard is wired in this pass; the rest render as
         # calm, inactive destinations (the shell the design is built around).
         nav = [
-            ("▦", "Dashboard", None, True),
-            ("▷", "Recordings", None, False),
-            ("◉", "Games", self._game_count(), False),
-            ("∿", "Activity", None, False),
-            ("⌨", "Macropad", None, False),
-            ("⚙", "Settings", None, False),
+            ("▦", "Dashboard", "dashboard", None),
+            ("▷", "Recordings", "recordings", None),
+            ("◉", "Games", "games", self._game_count()),
+            ("∿", "Activity", "activity", None),
+            ("⌨", "Macropad", "macropad", None),
+            ("⚙", "Settings", "settings", None),
         ]
+        self._nav = {}
         y = 108
-        for glyph, label, badge, active in nav:
-            self._nav_item(12, y, SIDEBAR_W - 24, 40, glyph, label, badge, active)
+        for glyph, label, view, badge in nav:
+            self._nav[view] = self._nav_item(
+                12, y, SIDEBAR_W - 24, 40, glyph, label, view, badge)
             y += 46
 
         # ---- bottom status stack (OBS connection + monitoring toggle) ----
@@ -635,27 +679,53 @@ class AppWindow:
         except Exception:
             return None
 
-    def _nav_item(self, x, y, w, h, glyph, label, badge, active):
+    def _nav_item(self, x, y, w, h, glyph, label, view, badge):
+        """One nav-rail destination. The active highlight is drawn up front and
+        toggled by visibility, so switching views never has to re-render it."""
         cy = y + h / 2
-        if active:
-            self._glass(x, y, w, h, tint=ACCENT, radius=10, tint_alpha=36,
-                        border_hex=ACCENT, border_alpha=0)
-            self.bg.create_rectangle(x, y + 9, x + 3, y + h - 9, fill=ACCENT, outline="")
-            text_color, icon_color = NAV_ACTIVE_TEXT, ACCENT_LIGHT
-            font = ("Segoe UI Semibold", 13)
-        else:
-            text_color, icon_color = MUTED, MUTED
-            font = ("Segoe UI", 13)
-        self.bg.create_text(x + 20, cy, anchor="w", text=glyph,
-                            fill=icon_color, font=("Segoe UI Symbol", 15))
-        self.bg.create_text(x + 42, cy, anchor="w", text=label,
-                            fill=text_color, font=font)
+        tile = self._glass(x, y, w, h, tint=ACCENT, radius=10, tint_alpha=36,
+                           border_hex=ACCENT, border_alpha=0)
+        bar = self.bg.create_rectangle(x, y + 9, x + 3, y + h - 9,
+                                       fill=ACCENT, outline="")
+        icon = self.bg.create_text(x + 20, cy, anchor="w", text=glyph,
+                                   fill=MUTED, font=("Segoe UI Symbol", 15))
+        text = self.bg.create_text(x + 42, cy, anchor="w", text=label,
+                                   fill=MUTED, font=("Segoe UI", 13))
         if badge:
             bx = x + w - 34
             self._glass(bx, cy - 9, 26, 18, tint=ACCENT, radius=8, tint_alpha=40,
                         border_hex=ACCENT, border_alpha=0)
             self.bg.create_text(bx + 13, cy, text=badge, fill=ACCENT_LIGHT,
                                 font=("Segoe UI", 9, "bold"))
+
+        parts = {"tile": tile, "bar": bar, "icon": icon, "text": text}
+        hit = self.bg.create_rectangle(x, y, x + w, y + h, fill="", outline="")
+        for item in (hit, icon, text):
+            self.bg.tag_bind(item, "<Button-1>",
+                             lambda _e, v=view: self._show_view(v))
+            self.bg.tag_bind(item, "<Enter>",
+                             lambda _e, p=parts: self._nav_hover(p, True))
+            self.bg.tag_bind(item, "<Leave>",
+                             lambda _e, p=parts: self._nav_hover(p, False))
+        self._set_nav_active(parts, False)
+        return parts
+
+    def _set_nav_active(self, parts, active):
+        parts["active"] = active
+        state = "normal" if active else "hidden"
+        self.bg.itemconfigure(parts["tile"], state=state)
+        self.bg.itemconfigure(parts["bar"], state=state)
+        self.bg.itemconfigure(parts["icon"], fill=ACCENT_LIGHT if active else MUTED)
+        self.bg.itemconfigure(
+            parts["text"], fill=NAV_ACTIVE_TEXT if active else MUTED,
+            font=("Segoe UI Semibold", 13) if active else ("Segoe UI", 13))
+
+    def _nav_hover(self, parts, hovering):
+        if parts.get("active"):
+            return
+        self.bg.itemconfigure(parts["text"], fill=TEXT_SOFT if hovering else MUTED)
+        self.bg.itemconfigure(parts["icon"], fill=TEXT_SOFT if hovering else MUTED)
+        self.bg.configure(cursor="hand2" if hovering else "")
 
     def _build_sidebar_status(self):
         # OBS connection card, near the bottom of the rail.
@@ -697,8 +767,9 @@ class AppWindow:
     def _build_topbar(self):
         x0 = SIDEBAR_W
         cy = TOPBAR_HEIGHT / 2
-        self.bg.create_text(x0 + MARGIN, cy, anchor="w", text="Dashboard",
-                            fill=TEXT, font=("Segoe UI Semibold", 15))
+        self._topbar_title = self.bg.create_text(
+            x0 + MARGIN, cy, anchor="w", text="Dashboard",
+            fill=TEXT, font=("Segoe UI Semibold", 15))
 
         # Window controls pinned to the right edge.
         self._make_circle_button(WIDTH - 26, cy, 14, SURFACE, RED, "✕", self._hide)
@@ -752,11 +823,355 @@ class AppWindow:
         y = event.y_root - self._drag_offset_y
         self.root.geometry(f"+{x}+{y}")
 
+    # ---- view switching ----
+    # Every view's canvas items (including the embedded-widget windows, which
+    # are canvas items too) get tagged "view_<name>", so showing/hiding a whole
+    # view is one itemconfigure on the tag. Items are identified by diffing
+    # find_all() around each builder, which means the builders stay ordinary
+    # drawing code with no bookkeeping of their own.
+    def _build_views(self):
+        # _bg_at() samples self._composite so embedded widgets can match the
+        # pixels behind them. Views share the same screen area, so each one must
+        # sample the shell *without* the other views paintedn on top - rewind to
+        # a pristine snapshot before building each.
+        self._base_composite = self._composite.copy()
+        builders = [
+            ("dashboard", self._build_dashboard),
+            ("recordings", self._build_recordings),
+            ("games", self._build_games),
+            ("activity", self._build_activity_view),
+            ("macropad", self._build_macropad),
+            ("settings", self._build_settings),
+        ]
+        for name, builder in builders:
+            self._composite = self._base_composite.copy()
+            before = set(self.bg.find_all())
+            builder()
+            for item in set(self.bg.find_all()) - before:
+                self.bg.addtag_withtag(f"view_{name}", item)
+        self._composite = self._base_composite
+        self._views = [name for name, _ in builders]
+        self._current_view = None
+        self._show_view("dashboard")
+
+    def _show_view(self, name):
+        if name == self._current_view:
+            return
+        for view in self._views:
+            self.bg.itemconfigure(f"view_{view}",
+                                  state="normal" if view == name else "hidden")
+        self._current_view = name
+        self.bg.itemconfigure(self._topbar_title, text=VIEW_TITLES[name])
+        for nav_name, parts in self._nav.items():
+            self._set_nav_active(parts, nav_name == name)
+        if name == "dashboard":
+            # Showing the whole tag un-hides items the dashboard deliberately
+            # keeps hidden (the timer/size readout and Pause button when nothing
+            # is recording), so re-apply the current state's own visibility.
+            self._set_hero_state(self._hero_state)
+        elif name == "recordings":
+            self._refresh_recordings()
+        elif name == "games":
+            self._refresh_games()
+
     # ---- content column: geometry ----
     # The main column lives to the right of the nav rail. Everything here is in
     # base design units; x0 is the left gutter of the content area.
     def _content_x0(self):
         return SIDEBAR_W + MARGIN
+
+    def _build_dashboard(self):
+        self._build_hero()
+        self._build_stats()
+        self._build_activity()
+
+    # ---- shared building blocks for the secondary views ----
+    def _view_panel(self, title, subtitle):
+        """Full-height glass panel with a heading, used by every non-dashboard
+        view. Returns (x, y, w, h) of the area left for content below the head,
+        plus the canvas id of the subtitle so it can be updated live."""
+        x0, y = self._content_x0(), 62
+        w, h = WIDTH - MARGIN - x0, HEIGHT - MARGIN - 62
+        self._glass(x0, y, w, h, tint=LOG_TINT, radius=16, tint_alpha=170)
+        self.bg.create_text(x0 + 20, y + 26, anchor="w", text=title,
+                            fill=TEXT, font=("Segoe UI Semibold", 15))
+        sub = self.bg.create_text(x0 + 20, y + 48, anchor="w", text=subtitle,
+                                  fill=FAINT, font=("Segoe UI", 11), width=w - 300)
+        return (x0, y, w, h), sub
+
+    def _view_button(self, x, y, w, text, command, accent=False):
+        button = ctk.CTkButton(
+            self.root, text=text, command=command,
+            fg_color=ACCENT_TINT if accent else SURFACE,
+            hover_color=SURFACE_HOVER, text_color=ACCENT_LIGHT if accent else MUTED,
+            bg_color=self._bg_at(x + w / 2, y + 15), border_width=1,
+            border_color=EDGE, corner_radius=9, font=ctk.CTkFont(size=12),
+        )
+        self.bg.create_window(x, y, anchor="nw", window=button, width=w, height=30)
+        return button
+
+    def _scroll_list(self, x, y, w, h):
+        """A scrollable region for list rows. Same rounded-plate-plus-square-
+        widget trick the activity log uses, so the corners stay clean."""
+        plate = make_solid_tile(self._S(w), self._S(h), LOG_BG, radius=self._S(10))
+        photo = to_photo(plate)
+        self._images.append(photo)
+        self.bg.create_image(x, y, anchor="nw", image=photo)
+        self._composite.paste(plate, (self._S(x), self._S(y)), plate)
+        # A CTkScrollableFrame is internally a child of its own private canvas
+        # and only re-parents itself through pack/grid/place - so handing it
+        # straight to create_window() fails ("can't use ... in a window item of
+        # this canvas"). Place a plain holder instead and pack the scroller into
+        # it, which is the arrangement CTk expects.
+        holder = ctk.CTkFrame(self.root, fg_color=LOG_BG, bg_color=LOG_BG,
+                              corner_radius=0)
+        self.bg.create_window(x + 8, y + 8, anchor="nw", window=holder,
+                              width=w - 16, height=h - 16)
+        frame = ctk.CTkScrollableFrame(
+            holder, fg_color=LOG_BG, corner_radius=0,
+            scrollbar_button_color=SURFACE, scrollbar_button_hover_color=SURFACE_HOVER,
+        )
+        frame.pack(fill="both", expand=True)
+        return frame
+
+    def _list_row(self, parent, title, detail, meta, command=None):
+        row = ctk.CTkFrame(parent, fg_color=CARD_TINT, corner_radius=9)
+        row.pack(fill="x", padx=2, pady=3)
+        ctk.CTkLabel(row, text=title, text_color=TEXT, anchor="w",
+                     font=ctk.CTkFont(size=13, weight="bold")).pack(
+            anchor="w", padx=12, pady=(8, 0))
+        ctk.CTkLabel(row, text=detail, text_color=MUTED, anchor="w",
+                     font=ctk.CTkFont(size=11)).pack(anchor="w", padx=12, pady=(0, 8))
+        if meta:
+            ctk.CTkLabel(row, text=meta, text_color=FAINT,
+                         font=ctk.CTkFont(size=11)).place(relx=1.0, rely=0.5,
+                                                          anchor="e", x=-12)
+        if command:
+            for widget in (row, *row.winfo_children()):
+                widget.bind("<Button-1>", lambda _e: command())
+                widget.configure(cursor="hand2")
+        return row
+
+    def _empty_note(self, parent, text):
+        ctk.CTkLabel(parent, text=text, text_color=FAINT, justify="left",
+                     font=ctk.CTkFont(size=12), wraplength=700).pack(
+            anchor="w", padx=14, pady=14)
+
+    # ---- Recordings ----
+    def _build_recordings(self):
+        (x, y, w, h), sub = self._view_panel(
+            "Per-game folders", self.config.get("recording_root", ""))
+        self._rec_sub = sub
+        self._view_button(x + w - 136, y + 20, 116, "Open folder",
+                          self._open_recording_root)
+        self._view_button(x + w - 262, y + 20, 116, "↻  Refresh",
+                          self._refresh_recordings)
+        self._rec_list = self._scroll_list(x + 16, y + 74, w - 32, h - 90)
+        self._rec_loaded = False
+
+    def _refresh_recordings(self):
+        root_dir = self.config.get("recording_root", "")
+        for child in self._rec_list.winfo_children():
+            child.destroy()
+        self._empty_note(self._rec_list, "Scanning…")
+
+        def worker():
+            folders, error = [], None
+            try:
+                with os.scandir(root_dir) as it:
+                    for entry in it:
+                        if not entry.is_dir(follow_symlinks=False):
+                            continue
+                        clips, size, newest = 0, 0, 0
+                        try:
+                            with os.scandir(entry.path) as inner:
+                                for f in inner:
+                                    if f.is_file() and f.name.lower().endswith(VIDEO_EXTS):
+                                        st = f.stat()
+                                        clips += 1
+                                        size += st.st_size
+                                        newest = max(newest, st.st_mtime)
+                        except OSError:
+                            pass
+                        folders.append((entry.name, entry.path, clips, size, newest))
+            except Exception as exc:
+                error = exc
+            folders.sort(key=lambda f: (-f[4], f[0].lower()))
+            self._ui(lambda: self._render_recordings(folders, error, root_dir))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _render_recordings(self, folders, error, root_dir):
+        for child in self._rec_list.winfo_children():
+            child.destroy()
+        if error is not None:
+            self._empty_note(self._rec_list, f"Couldn't read {root_dir}\n{error}")
+            return
+        if not folders:
+            self._empty_note(
+                self._rec_list,
+                f"No per-game folders in {root_dir} yet.\n\n"
+                "Nebula creates one the first time it records a game.")
+            return
+        total = sum(f[3] for f in folders)
+        self.bg.itemconfigure(
+            self._rec_sub,
+            text=f"{root_dir}   ·   {len(folders)} folders   ·   {_format_bytes(total)}")
+        for name, path, clips, size, newest in folders:
+            when = time.strftime("%d %b %Y", time.localtime(newest)) if newest else "—"
+            self._list_row(
+                self._rec_list, name,
+                f"{clips} clip{'' if clips == 1 else 's'}   ·   {_format_bytes(size)}",
+                when, command=lambda p=path: self._open_path(p))
+
+    def _open_recording_root(self):
+        self._open_path(self.config.get("recording_root", ""))
+
+    def _open_path(self, path):
+        try:
+            if os.path.exists(path):
+                os.startfile(path)
+            else:
+                tkinter.messagebox.showwarning("Missing", f"{path} not found.")
+        except OSError as exc:
+            self._log(f"[Manual] Could not open {path}: {exc}")
+
+    # ---- Games ----
+    def _build_games(self):
+        (x, y, w, h), sub = self._view_panel(
+            "Known games", "What the classifier has learned to record.")
+        self._games_sub = sub
+        self._view_button(x + w - 136, y + 20, 116, "Game data",
+                          self._open_game_data)
+        self._view_button(x + w - 262, y + 20, 116, "↻  Rescan",
+                          self._rescan_steam)
+        self._games_list = self._scroll_list(x + 16, y + 74, w - 32, h - 90)
+
+    def _refresh_games(self):
+        for child in self._games_list.winfo_children():
+            child.destroy()
+        try:
+            data = self.classifier._data
+            games, non_games = data.get("games", {}), data.get("non_games", {})
+        except Exception as exc:
+            self._empty_note(self._games_list, f"Couldn't read the game list: {exc}")
+            return
+
+        # Collapse the exe->entry map down to one row per actual game.
+        by_name = {}
+        for key, value in games.items():
+            if isinstance(value, dict):
+                name = value.get("display_name") or key
+                source = value.get("source", "")
+            else:
+                name, source = key, ""
+            entry = by_name.setdefault(name, {"exes": [], "source": source})
+            entry["exes"].append(key)
+
+        self.bg.itemconfigure(
+            self._games_sub,
+            text=f"{len(by_name)} game{'' if len(by_name) == 1 else 's'} recorded automatically"
+                 f"   ·   {len(non_games)} app{'' if len(non_games) == 1 else 's'} ignored")
+        if not by_name:
+            self._empty_note(
+                self._games_list,
+                "Nothing classified yet.\n\nHit Rescan to pull in your installed "
+                "Steam library, or just launch a game — Nebula asks once and "
+                "remembers the answer.")
+            return
+        for name in sorted(by_name, key=str.lower):
+            entry = by_name[name]
+            exes = ", ".join(sorted(entry["exes"])[:3])
+            if len(entry["exes"]) > 3:
+                exes += f"  +{len(entry['exes']) - 3} more"
+            self._list_row(self._games_list, name, exes,
+                           entry["source"] or "manual")
+
+    # ---- Activity (full height) ----
+    def _build_activity_view(self):
+        (x, y, w, h), _ = self._view_panel(
+            "Activity", "Everything Nebula has done this session.")
+        box_x, box_y = x + 16, y + 74
+        box_w, box_h = w - 32, h - 90
+        plate = make_solid_tile(self._S(box_w), self._S(box_h), LOG_BG, radius=self._S(10))
+        photo = to_photo(plate)
+        self._images.append(photo)
+        self.bg.create_image(box_x, box_y, anchor="nw", image=photo)
+        self._composite.paste(plate, (self._S(box_x), self._S(box_y)), plate)
+        self.console_full = ctk.CTkTextbox(
+            self.root, state="disabled", wrap="word", fg_color=LOG_BG,
+            corner_radius=0, bg_color=LOG_BG,
+            font=ctk.CTkFont(family="Consolas", size=12), text_color=MUTED,
+        )
+        self.bg.create_window(box_x + 10, box_y + 10, anchor="nw",
+                              window=self.console_full,
+                              width=box_w - 20, height=box_h - 20)
+        self._prepare_log_tags(self.console_full)
+        # Replay anything logged before this view existed.
+        for line in self._log_lines:
+            self._append_log(self.console_full, line)
+
+    # ---- Macropad ----
+    def _build_macropad(self):
+        (x, y, w, h), _ = self._view_panel(
+            "Macropad", "Bind physical keys to Nebula actions.")
+        self.bg.create_text(
+            x + 20, y + 110, anchor="nw", width=w - 40,
+            text="Not wired up yet.\n\n"
+                 "The design pairs this with a custom HID macropad: bind keys to "
+                 "start/stop, pause, mark clip and scene switches, with per-game "
+                 "profiles that follow whatever you launch.\n\n"
+                 "Nothing here is connected to hardware, so rather than show a "
+                 "mock keypad that does nothing, this page is deliberately empty "
+                 "until the binding layer exists.",
+            fill=MUTED, font=("Segoe UI", 13))
+        self.bg.create_text(
+            x + 20, y + h - 60, anchor="nw",
+            text=f"Meanwhile the global hotkey  {self.config.get('toggle_hotkey') or '—'}  "
+                 "toggles monitoring from anywhere.",
+            fill=FAINT, font=("Segoe UI", 12))
+
+    # ---- Settings ----
+    def _build_settings(self):
+        (x, y, w, h), _ = self._view_panel(
+            "Settings", "Read from config.json next to the executable.")
+        self._view_button(x + w - 136, y + 20, 116, "Open config",
+                          self._open_config_file)
+        self._view_button(x + w - 262, y + 20, 116, "Open logs",
+                          self._open_logs_folder)
+
+        rows = [
+            ("OBS", f"{self.config.get('obs_host')}:{self.config.get('obs_port')}"),
+            ("OBS executable", self.config.get("obs_path") or "— not set —"),
+            ("Recording root", self.config.get("recording_root") or "—"),
+            ("Sync folder", self.config.get("sync_folder") or "— local only —"),
+            ("Idle timeout", f"{self.config.get('idle_timeout_seconds')}s"),
+            ("Minimum clip", f"{self.config.get('min_clip_seconds')}s"),
+            ("Poll interval", f"{self.config.get('poll_interval_seconds')}s"),
+            ("Toggle hotkey", self.config.get("toggle_hotkey") or "— none —"),
+        ]
+        row_y = y + 88
+        for label, value in rows:
+            self.bg.create_text(x + 24, row_y, anchor="w", text=label,
+                                fill=FAINT, font=("Segoe UI", 12))
+            self.bg.create_text(x + 210, row_y, anchor="w", text=str(value),
+                                fill=TEXT_SOFT, font=("Consolas", 12),
+                                width=w - 240)
+            row_y += 34
+        self.bg.create_text(
+            x + 24, row_y + 16, anchor="nw", width=w - 48,
+            text="Editing these in the app isn't implemented yet — change them in "
+                 "config.json and restart. The idle timeout is the exception: the "
+                 "dashboard slider writes it straight through.",
+            fill=FAINT, font=("Segoe UI", 12))
+
+    def _open_config_file(self):
+        from .paths import APP_DIR
+        self._open_path(os.path.join(APP_DIR, "config.json"))
+
+    def _open_logs_folder(self):
+        from .paths import APP_DIR
+        self._open_path(os.path.join(APP_DIR, "logs"))
 
     # ---- hero recording card ----
     def _build_hero(self):
@@ -906,6 +1321,9 @@ class AppWindow:
     def _animate_hero(self):
         """Drives the scene-preview equaliser: lively while recording, a low
         idle shimmer otherwise. One cheap timer, a handful of canvas updates."""
+        if not self._visible:
+            self.root.after(IDLE_TICK_MS, self._animate_hero)
+            return
         t = self._anim_t
         active = self._is_recording and not self._is_paused
         for i, (bar, bx, floor_y, bar_w) in enumerate(self._eq_bars):
@@ -1075,13 +1493,7 @@ class AppWindow:
         )
         self.bg.create_window(box_x + box_r, box_y + box_r, anchor="nw", window=self.console,
                               width=box_w - box_r * 2, height=box_h - box_r * 2)
-        try:
-            tb = self.console._textbox
-            for tag, color in LOG_TAG_COLORS.items():
-                tb.tag_config(f"t_{tag}", foreground=color)
-            tb.configure(spacing1=2, spacing3=2)
-        except Exception:
-            pass
+        self._prepare_log_tags(self.console)
 
     # ---- disk / clip stats ----
     def _poll_disk_stats(self):
@@ -1172,22 +1584,44 @@ class AppWindow:
             # this rather than crashing the monitor thread that logged it.
             pass
         log_to_file(message)
-        self.console.configure(state="normal")
-        # Color the [Subsystem] prefix if it's one we know; plain otherwise.
+        # Kept so the Activity view can replay history when it's first shown,
+        # and bounded so a long session can't grow this without limit.
+        self._log_lines.append(message)
+        if len(self._log_lines) > LOG_HISTORY:
+            del self._log_lines[:-LOG_HISTORY]
+        for box in (self.console, getattr(self, "console_full", None)):
+            if box is not None:
+                self._append_log(box, message)
+
+    def _prepare_log_tags(self, box):
+        """Colour-code the [Subsystem] prefix and give lines breathing room.
+        Reaches into CTkTextbox's underlying tk.Text (private but stable across
+        ctk 5.x) since CTkTextbox doesn't proxy tag configuration - guarded so a
+        ctk update can't crash the app."""
+        try:
+            tb = box._textbox
+            for tag, color in LOG_TAG_COLORS.items():
+                tb.tag_config(f"t_{tag}", foreground=color)
+            tb.configure(spacing1=2, spacing3=2)
+        except Exception:
+            pass
+
+    def _append_log(self, box, message):
+        box.configure(state="normal")
         tagged = False
         try:
             m = re.match(r"\[(\w+)\]", message)
             if m and m.group(1) in LOG_TAG_COLORS:
-                tb = self.console._textbox
+                tb = box._textbox
                 tb.insert("end", m.group(0), (f"t_{m.group(1)}",))
                 tb.insert("end", message[m.end():] + "\n")
                 tagged = True
         except Exception:
             tagged = False
         if not tagged:
-            self.console.insert("end", message + "\n")
-        self.console.see("end")
-        self.console.configure(state="disabled")
+            box.insert("end", message + "\n")
+        box.see("end")
+        box.configure(state="disabled")
 
     # ---- recording indicator (pulsing dot + elapsed timer + live storage) ----
     def _poll_obs_status(self):
@@ -1241,7 +1675,10 @@ class AppWindow:
                 text="●  Record now", fg_color=GREEN_TINT, hover_color=GREEN_TINT_HOVER, text_color=GREEN,
             )
 
-        self.root.after(1000, self._poll_obs_status)
+        # A second is right when you're watching the timer tick; while hidden in
+        # the tray nothing renders it, so back off. The monitor thread drives the
+        # actual recording independently of this poll.
+        self.root.after(1000 if self._visible else 5000, self._poll_obs_status)
 
     def _pulse_dot(self, bright=True):
         if not self._is_recording:
@@ -1826,12 +2263,19 @@ class AppWindow:
         return result["value"]
 
     def _animate_taskbar_icon(self):
+        # Only meaningful while the window is mapped - a withdrawn window has no
+        # taskbar button or Alt-Tab entry to animate, so this was ~12 icon swaps
+        # a second painting something that wasn't on screen. The tray icon has
+        # its own animation thread and is unaffected.
+        if not self._visible:
+            self.root.after(IDLE_TICK_MS, self._animate_taskbar_icon)
+            return
         try:
             self.root.iconphoto(False, self._taskbar_icon_frames[self._taskbar_icon_index % len(self._taskbar_icon_frames)])
         except Exception:
             pass
         self._taskbar_icon_index += 1
-        self.root.after(80, self._animate_taskbar_icon)
+        self.root.after(ACTIVE_TICK_MS, self._animate_taskbar_icon)
 
     def _poll_manual_review(self):
         for key, basenames, suggested_name in self.classifier.pop_pending_reviews():
