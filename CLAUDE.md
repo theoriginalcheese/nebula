@@ -69,6 +69,18 @@ Only **Dashboard** is implemented; the other nav destinations render as inactive
 - `idle_timeout_seconds` **4** · `min_clip_seconds` 10 · `poll_interval_seconds` 1
   (defaults per `obsauto/config.py`'s `DEFAULTS` — the live `config.json` may differ)
 
+## Deferred-callback trap (bit us 2026-07-23 — check for it in review)
+`except SomeError as e:` **unbinds `e` when the block exits** (Python deletes the except
+target). So anything that captures `e` and runs *later* — a `lambda` handed to `root.after()`
+or `_ui()` — dies with `NameError: cannot access free variable 'e'`. Bind it to a normal
+local first (`error = exc`) before building the closure. This hit both the OBS connect
+failure path and the Steam-rescan failure path.
+
+Why it's dangerous here specifically: under `pythonw` (how the app really runs) Tk prints
+callback tracebacks to a **stderr that doesn't exist**, so the crash is invisible. `AppWindow`
+now installs `report_callback_exception` → `_on_callback_exception`, which writes them to the
+app log instead. Don't remove that.
+
 ## Performance gotchas (fixed 2026-07-23 — don't reintroduce)
 - **Never connect to OBS on the Tk thread.** `obs.connect()` blocks for up to its 5s socket
   timeout, and at startup that's the *normal* case (we've just launched OBS, it's still
@@ -90,7 +102,9 @@ Only **Dashboard** is implemented; the other nav destinations render as inactive
   own `~`, so the same `config.json` works despite different Windows usernames.
 - **Silent runs:** intended to run as `pythonw` (no console), so all diagnostics go through
   `app_log` to a file — don't rely on `print()`.
-- **No test suite** currently. Verify changes by running the app against a live OBS instance.
+- **Tests:** `python tests/test_async_connect.py` (needs a desktop session; creates a hidden
+  Tk window, no OBS required). Covers the connect path, deferred-callback error handling and
+  reconnect state. Beyond that, verify changes by running the app against a live OBS instance.
 
 ## Codebase knowledge graph (token-saving)
 A graphify graph of this project lives in `graphify-out/` (232 nodes, 441 edges). To answer

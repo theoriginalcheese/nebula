@@ -8,6 +8,7 @@ import threading
 import time
 import tkinter as tk
 import tkinter.messagebox
+import traceback
 
 import customtkinter as ctk
 from PIL import Image, ImageDraw, ImageFilter
@@ -308,6 +309,12 @@ class AppWindow:
         ctk.set_window_scaling(1.0)
 
         self.root = ctk.CTk()
+        # Tk reports exceptions raised inside callbacks (timers, bindings, the
+        # after() handlers everything here runs on) by printing to stderr - which
+        # doesn't exist under pythonw, how this app actually runs day to day. So
+        # a crash in any timer would be completely silent and invisible. Route
+        # them into the app log instead.
+        self.root.report_callback_exception = self._on_callback_exception
         self.root.title("Nebula")
         self.root.update_idletasks()
         self.scale = _compute_ui_scale(self.root)
@@ -429,6 +436,20 @@ class AppWindow:
     def _S(self, v):
         """Scale a base design-unit value to physical pixels by the UI scale."""
         return int(round(v * self.scale))
+
+    def _on_callback_exception(self, exc_type, exc_value, exc_tb):
+        """Tk's callback-error hook. Deliberately does NOT touch the console
+        widget or any other UI - if the UI is what just failed, doing so would
+        recurse. Writes straight to the log file, which works under pythonw."""
+        text = "".join(traceback.format_exception(exc_type, exc_value, exc_tb))
+        try:
+            log_to_file("[Error] Unhandled exception in a UI callback:\n" + text)
+        except Exception:
+            pass
+        try:
+            print(text)
+        except Exception:
+            pass
 
     def _animate_backdrop(self):
         """Drives the whole living backdrop from one timer: the nebula drifts on
@@ -1532,9 +1553,24 @@ class AppWindow:
             try:
                 ensure_obs_running(self.config.get("obs_path"), log=self._log)
                 self.obs.connect()
-            except (OBSError, OSError) as e:
-                self._ui(lambda: self._connect_failed(e))
+            except Exception as exc:
+                # Deliberately broad: anything escaping here would strand
+                # _connecting=True and permanently block every future
+                # reconnect attempt. websocket's own errors aren't all OSError.
+                #
+                # `exc` is unbound the instant this block exits (Python 3
+                # deletes the except target), and this callback runs later on
+                # the Tk thread - so bind it to a normal local first.
+                error = exc
+                self._ui(lambda: self._connect_failed(error))
                 return
+            finally:
+                # Cleared here, in the worker, rather than only in the UI
+                # callbacks: _ui() drops its callback if Tk won't accept a
+                # cross-thread after() (window tearing down, or no mainloop
+                # running yet). A _connecting left stuck at True would block
+                # every future reconnect for the life of the process.
+                self._connecting = False
             self._ui(self._connect_succeeded)
 
         threading.Thread(target=worker, daemon=True).start()
@@ -1547,7 +1583,6 @@ class AppWindow:
             pass
 
     def _connect_failed(self, error):
-        self._connecting = False
         if self._abort_connect:
             return
         self._log(f"[Monitor] OBS not available yet ({error}); retrying in 10s...")
@@ -1555,7 +1590,6 @@ class AppWindow:
         self.root.after(10000, self.autostart)
 
     def _connect_succeeded(self):
-        self._connecting = False
         if self._abort_connect:
             # Monitoring was stopped while this attempt was still in flight -
             # don't quietly restart it behind the user's back.
@@ -1624,8 +1658,11 @@ class AppWindow:
                 self.root.after(0, lambda: self._log(
                     f"[Steam] Rescan complete - {len(registered)} game(s) registered."
                 ))
-            except Exception as e:
-                self.root.after(0, lambda: self._log(f"[Steam] Rescan failed: {e}"))
+            except Exception as exc:
+                # Same late-binding trap as the connect worker: `exc` is gone by
+                # the time Tk runs this callback, so capture it in a local.
+                error = exc
+                self.root.after(0, lambda: self._log(f"[Steam] Rescan failed: {error}"))
             finally:
                 self._scanning = False
                 self.root.after(0, lambda: self.rescan_btn.configure(state="normal", text="↻  Rescan"))
