@@ -12,8 +12,9 @@ import re
 import threading
 
 from . import steam_scanner
+from .paths import APP_DIR
 
-DATA_FILE = os.path.join(os.path.dirname(__file__), "..", "games.json")
+DATA_FILE = os.path.join(APP_DIR, "games.json")
 
 # Common background/launcher/utility processes we never want to prompt about.
 # Keeps the "ask me once" flow from firing on every browser tab or launcher.

@@ -1,11 +1,19 @@
 # -*- mode: python ; coding: utf-8 -*-
+# Single-file build: `pyinstaller nebula.spec` -> dist/Nebula.exe
+#
+# customtkinter ships its own theme JSON + asset files that PyInstaller's
+# static analysis won't pick up on its own - collect_data_files() bundles
+# them so the exe doesn't crash at runtime looking for its default theme.
+from PyInstaller.utils.hooks import collect_data_files
 
+datas = [("nebula_icon.ico", ".")]
+datas += collect_data_files("customtkinter")
 
 a = Analysis(
-    ['obs_auto_game_folder.py'],
+    ["main.py"],
     pathex=[],
     binaries=[],
-    datas=[],
+    datas=datas,
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},
@@ -22,7 +30,7 @@ exe = EXE(
     a.binaries,
     a.datas,
     [],
-    name='obs_auto_game_folder',
+    name="Nebula",
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -35,5 +43,5 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=['black_obs.ico'],
+    icon=["nebula_icon.ico"],
 )

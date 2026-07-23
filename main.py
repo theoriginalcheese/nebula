@@ -36,8 +36,9 @@ from obsauto.classifier import Classifier
 from obsauto.gui import AppWindow
 from obsauto.tray_app import build_tray_icon
 from obsauto.app_log import setup_logging
+from obsauto.paths import RESOURCE_DIR
 
-ICON_PATH = os.path.join(os.path.dirname(__file__), "nebula_icon.ico")
+ICON_PATH = os.path.join(RESOURCE_DIR, "nebula_icon.ico")
 
 
 def _apply_sync_folder(config):

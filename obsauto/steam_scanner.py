@@ -17,13 +17,15 @@ import time
 
 import requests
 
+from .paths import APP_DIR
+
 try:
     import winreg
 except ImportError:  # pragma: no cover - non-Windows dev fallback
     winreg = None
 
 APPDETAILS_URL = "https://store.steampowered.com/api/appdetails"
-CACHE_FILE = os.path.join(os.path.dirname(__file__), "..", "steam_appid_cache.json")
+CACHE_FILE = os.path.join(APP_DIR, "steam_appid_cache.json")
 
 # Steam's own store API tags these as type "game" for store/algorithm
 # reasons even though they're actually utilities, not games - confirmed by

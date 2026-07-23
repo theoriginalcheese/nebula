@@ -19,8 +19,9 @@ from .theme_art import (
 )
 from .icon_art import generate_animation_frames
 from . import hotkey
+from .paths import RESOURCE_DIR
 
-ICON_PATH = os.path.join(os.path.dirname(__file__), "..", "nebula_icon.ico")
+ICON_PATH = os.path.join(RESOURCE_DIR, "nebula_icon.ico")
 
 # Inspired by BetterDiscord's ClearVision/Neutron: an atmospheric nebula
 # backdrop (not a flat gradient, not real OS blur - that's broken on this

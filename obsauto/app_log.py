@@ -6,7 +6,9 @@ import logging
 import os
 from logging.handlers import RotatingFileHandler
 
-LOG_DIR = os.path.join(os.path.dirname(__file__), "..", "logs")
+from .paths import APP_DIR
+
+LOG_DIR = os.path.join(APP_DIR, "logs")
 LOG_FILE = os.path.join(LOG_DIR, "obsauto.log")
 
 _logger = None

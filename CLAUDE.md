@@ -13,11 +13,18 @@ Starts minimized to the tray and auto-connects/monitors on launch (`AppWindow.au
 
 ## Build (packaging)
 ```
-pyinstaller obs_auto_game_folder.spec   # -> dist/obs_auto_game_folder.exe (windowed, UPX-compressed, icon black_obs.ico)
+pyinstaller nebula.spec   # -> dist/Nebula.exe (single-file, windowed, UPX-compressed, icon nebula_icon.ico)
 ```
-⚠️ **Gotcha:** the `.spec` still targets the legacy single-file `obs_auto_game_folder.py`,
-but real development is in `main.py` + `obsauto/`. Confirm which entry point is current
-before trusting a build — the spec may need updating to `main.py`.
+One onefile exe — no separate install of Python/dependencies needed to run it. Targets
+`main.py` (the real entry point; the legacy `obs_auto_game_folder.py`/`.spec` are gone).
+
+⚠️ **Gotcha:** don't reintroduce `os.path.dirname(__file__)` for user data paths
+(`config.json`, `games.json`, `steam_appid_cache.json`, `logs/`). Under a frozen onefile
+build, module `__file__` resolves inside PyInstaller's temp extraction dir
+(`sys._MEIPASS`), which is deleted on exit — anything written there vanishes every run.
+Use `obsauto/paths.py`'s `APP_DIR` (next to `sys.executable` when frozen) for user data,
+and `RESOURCE_DIR` (`sys._MEIPASS` when frozen) only for bundled read-only assets like
+`nebula_icon.ico`.
 
 ## Architecture (module map)
 | File | Key symbols | Role |
@@ -31,6 +38,7 @@ before trusting a build — the spec may need updating to `main.py`.
 | `obsauto/audio_detect.py` | `AudioKeepAlive` | Detect whether a watched app (e.g. Discord) is producing audio |
 | `obsauto/session_detect.py` | `moonlight_session_active()` | Detect a live Moonlight streaming session |
 | `obsauto/config.py` | `load_config()`, `save_config()` | Config persistence |
+| `obsauto/paths.py` | `APP_DIR`, `RESOURCE_DIR` | Dev vs. frozen-onefile path resolution |
 | `obsauto/app_log.py` | `setup_logging()`, `log_to_file()` | File logging (works under silent `pythonw`) |
 | `obsauto/tray_app.py`, `theme_art.py`, `icon_art.py` | — | Tray icon + generated icon/theme art |
 

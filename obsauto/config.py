@@ -1,7 +1,9 @@
 import json
 import os
 
-CONFIG_FILE = os.path.join(os.path.dirname(__file__), "..", "config.json")
+from .paths import APP_DIR
+
+CONFIG_FILE = os.path.join(APP_DIR, "config.json")
 
 DEFAULTS = {
     "obs_host": "localhost",
