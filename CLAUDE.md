@@ -69,6 +69,20 @@ Only **Dashboard** is implemented; the other nav destinations render as inactive
 - `idle_timeout_seconds` **4** · `min_clip_seconds` 10 · `poll_interval_seconds` 1
   (defaults per `obsauto/config.py`'s `DEFAULTS` — the live `config.json` may differ)
 
+## Performance gotchas (fixed 2026-07-23 — don't reintroduce)
+- **Never connect to OBS on the Tk thread.** `obs.connect()` blocks for up to its 5s socket
+  timeout, and at startup that's the *normal* case (we've just launched OBS, it's still
+  booting). `autostart()` used to do this inline and froze the whole window for seconds on
+  launch, then again on every 10s retry. It now runs on a worker and marshals back via
+  `_ui()`; `_abort_connect` stops a in-flight attempt from restarting monitoring after a stop.
+- **`_regen_glass()` results are cached** (`_glass_cache`). Regenerating the hero panel costs
+  ~35ms and it's re-rendered on every state change plus 5× per flash — uncached, a game
+  switch stalled the UI ~200ms *and* leaked a PhotoImage per frame.
+- **`generate_nebula` blurs downscaled** (`_blur_downscaled` in `theme_art.py`). Visually
+  identical (max 2/255 per-pixel difference), meaningfully cheaper.
+- **The Today-clips scan prunes by directory mtime** and polls every 5 min, so a terabyte-scale
+  `recording_root` isn't crawled in full on a timer.
+
 ## Conventions & gotchas
 - **Cross-machine sync:** `_apply_sync_folder()` repoints `games.json` and
   `steam_appid_cache.json` into `~/OneDrive/ObsAutoFolder` so classifications made on the

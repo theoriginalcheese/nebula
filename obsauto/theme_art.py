@@ -55,6 +55,22 @@ def _scatter_stars(img, width, height):
             draw.point((x, y), fill=(*color, alpha))
 
 
+# Big Gaussian blurs are the single most expensive thing in startup, and they
+# scale with image area. Since everything we blur here is a soft, low-frequency
+# shape (colour blobs, a vignette falloff), blurring a downscaled copy with a
+# proportionally smaller radius and scaling back up is visually indistinguishable
+# and roughly an order of magnitude cheaper. (make_accent_glow already did this.)
+_BLUR_DOWNSCALE = 4
+
+
+def _blur_downscaled(img, radius, size):
+    width, height = size
+    sw, sh = max(1, width // _BLUR_DOWNSCALE), max(1, height // _BLUR_DOWNSCALE)
+    small = img.resize((sw, sh), Image.BILINEAR)
+    small = small.filter(ImageFilter.GaussianBlur(radius / _BLUR_DOWNSCALE))
+    return small.resize((width, height), Image.BILINEAR)
+
+
 def _apply_vignette(img, width, height, max_alpha=80):
     """Gently darken the edges so the composition draws the eye inward and
     the window's own rounded corners sit in shadow rather than glow."""
@@ -63,7 +79,7 @@ def _apply_vignette(img, width, height, max_alpha=80):
     d.ellipse(
         [-width * 0.25, -height * 0.25, width * 1.25, height * 1.25], fill=255,
     )
-    mask = mask.filter(ImageFilter.GaussianBlur(120))
+    mask = _blur_downscaled(mask, 120, (width, height))
     edge = ImageOps.invert(mask).point(lambda p: int(p * (max_alpha / 255)))
     img.paste((0, 0, 0), (0, 0), edge)
     return img
@@ -77,7 +93,7 @@ def generate_nebula(width, height):
         cx, cy = int(width * fx), int(height * fy)
         r, g, b = _hex_to_rgb(color)
         draw.ellipse([cx - radius, cy - radius, cx + radius, cy + radius], fill=(r, g, b, alpha))
-    overlay = overlay.filter(ImageFilter.GaussianBlur(90))
+    overlay = _blur_downscaled(overlay, 90, (width, height))
     img = Image.alpha_composite(base, overlay)
     _scatter_stars(img, width, height)
     return _apply_vignette(img, width, height)

@@ -282,8 +282,11 @@ class AppWindow:
         self._is_recording = False  # tracked from OBS's own GetRecordStatus, not a client-side timestamp
         self._is_paused = False
         self._images = []  # keeps PhotoImage refs alive - Tk GCs them otherwise
+        self._glass_cache = {}  # (size, tint, alpha, radius, border...) -> PhotoImage
         self._dragging = False
         self._scanning = False
+        self._connecting = False      # a connect attempt is in flight on a worker
+        self._abort_connect = False   # set when monitoring is stopped mid-connect
         self._monitoring_on = False   # reflected in the sidebar toggle
         self._obs_connected = False   # reflected in the sidebar OBS card
         self._hero_state = "offline"  # offline | watching | recording | paused
@@ -477,13 +480,23 @@ class AppWindow:
 
     def _regen_glass(self, item_id, x, y, w, h, tint=CARD_TINT, radius=18, tint_alpha=150, border_hex=None, border_alpha=55):
         """Swap an existing glass panel's image (e.g. for a brief highlight
-        flash) without creating a duplicate canvas item."""
-        tile = make_glass_tile(
-            self._S(w), self._S(h), tint, tint_alpha=tint_alpha, radius=self._S(radius),
-            border_hex=border_hex or CARD_BORDER, border_alpha=border_alpha,
-        )
-        photo = to_photo(tile)
-        self._images.append(photo)
+        flash, or a hero state change) without creating a duplicate canvas item.
+
+        Results are cached by their visual parameters. Regenerating the hero
+        panel costs ~35ms, and it's re-rendered on every state change plus five
+        times per flash - so a game switch used to stall the UI for ~200ms and
+        leak a PhotoImage per frame. The set of distinct tiles is tiny and
+        fixed, so caching makes every repeat instant and bounds the memory."""
+        key = (self._S(w), self._S(h), tint, tint_alpha, self._S(radius),
+               border_hex or CARD_BORDER, border_alpha)
+        photo = self._glass_cache.get(key)
+        if photo is None:
+            tile = make_glass_tile(
+                key[0], key[1], tint, tint_alpha=tint_alpha, radius=key[4],
+                border_hex=key[5], border_alpha=border_alpha,
+            )
+            photo = to_photo(tile)
+            self._glass_cache[key] = photo
         self.bg.itemconfigure(item_id, image=photo)
 
     def _bg_at(self, x, y, glass_tint=None, glass_alpha=0):
@@ -1066,19 +1079,34 @@ class AppWindow:
             clips, total = 0, 0
             try:
                 today = time.localtime()
+
+                def is_today(ts):
+                    lt = time.localtime(ts)
+                    return (lt.tm_year, lt.tm_yday) == (today.tm_year, today.tm_yday)
+
                 exts = (".mkv", ".mp4", ".mov", ".flv", ".ts", ".m4v")
-                for dirpath, _dirs, files in os.walk(root_dir):
-                    for name in files:
-                        if name.lower().endswith(exts):
-                            fp = os.path.join(dirpath, name)
+                # Walk with scandir and prune whole subtrees that weren't touched
+                # today - a directory's mtime moves when a file is added to it, so
+                # yesterday's per-game folders can be skipped without stat-ing
+                # their contents. On a large archive (this recording root can hold
+                # terabytes across hundreds of folders) that turns a full-tree
+                # crawl every poll into a handful of directory reads.
+                stack = [root_dir]
+                while stack:
+                    current = stack.pop()
+                    with os.scandir(current) as it:
+                        for entry in it:
                             try:
-                                st = os.stat(fp)
+                                if entry.is_dir(follow_symlinks=False):
+                                    if is_today(entry.stat().st_mtime):
+                                        stack.append(entry.path)
+                                elif entry.name.lower().endswith(exts):
+                                    st = entry.stat()
+                                    if is_today(st.st_mtime):
+                                        clips += 1
+                                        total += st.st_size
                             except OSError:
                                 continue
-                            lt = time.localtime(st.st_mtime)
-                            if (lt.tm_year, lt.tm_yday) == (today.tm_year, today.tm_yday):
-                                clips += 1
-                                total += st.st_size
             except Exception:
                 pass
             try:
@@ -1087,7 +1115,7 @@ class AppWindow:
                 pass  # window torn down while the scan was still running
 
         threading.Thread(target=worker, daemon=True).start()
-        self.root.after(30000, self._poll_disk_stats)
+        self.root.after(300000, self._poll_disk_stats)  # 5 min; it's a slow-moving stat
 
     def _apply_disk_stats(self, clips, total, free_txt, drive):
         self.bg.itemconfigure(self._stat_today_val,
@@ -1489,16 +1517,50 @@ class AppWindow:
         already running, and retries quietly rather than popping a blocking
         error dialog. Once monitor.start() runs, the monitor's own loop takes
         over reconnecting if OBS later crashes/closes."""
-        if self.monitor._running:
+        if self.monitor._running or self._connecting:
             return
+        self._connecting = True
+        self._abort_connect = False
         self._set_obs_status("Connecting...", AMBER)
-        ensure_obs_running(self.config.get("obs_path"), log=self._log)
+
+        # Runs off the Tk thread. ensure_obs_running() may launch OBS, and
+        # obs.connect() blocks for up to its 5s socket timeout - which is the
+        # normal case at startup, since we've usually just launched OBS and it
+        # is still booting. Done inline (as it used to be) that froze the whole
+        # window for seconds on launch, and again on every 10s retry.
+        def worker():
+            try:
+                ensure_obs_running(self.config.get("obs_path"), log=self._log)
+                self.obs.connect()
+            except (OBSError, OSError) as e:
+                self._ui(lambda: self._connect_failed(e))
+                return
+            self._ui(self._connect_succeeded)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _ui(self, fn):
+        """Marshal `fn` onto the Tk thread, tolerating a torn-down window."""
         try:
-            self.obs.connect()
-        except (OBSError, OSError) as e:
-            self._log(f"[Monitor] OBS not available yet ({e}); retrying in 10s...")
+            self.root.after(0, fn)
+        except RuntimeError:
+            pass
+
+    def _connect_failed(self, error):
+        self._connecting = False
+        if self._abort_connect:
+            return
+        self._log(f"[Monitor] OBS not available yet ({error}); retrying in 10s...")
+        self._set_obs_status("Disconnected", RED)
+        self.root.after(10000, self.autostart)
+
+    def _connect_succeeded(self):
+        self._connecting = False
+        if self._abort_connect:
+            # Monitoring was stopped while this attempt was still in flight -
+            # don't quietly restart it behind the user's back.
+            self.obs.disconnect()
             self._set_obs_status("Disconnected", RED)
-            self.root.after(10000, self.autostart)
             return
         self._on_connected()
         self._log("[Monitor] Auto-started.")
@@ -1509,6 +1571,7 @@ class AppWindow:
         ))
 
     def _stop(self):
+        self._abort_connect = True  # cancel any connect attempt still in flight
         self.monitor.stop()
         self.obs.disconnect()
         self._set_obs_status("Disconnected", RED)
