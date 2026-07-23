@@ -58,7 +58,26 @@ for high-DPI — see the DPI notes below). Built by five `_build_*` methods:
   (holds the live slider), Sync.
 - `_build_activity` — the real colour-tagged log (`self.console`).
 
-Only **Dashboard** is implemented; the other nav destinations render as inactive placeholders.
+### View switching
+Every view's canvas items are tagged `view_<name>`, collected by diffing `find_all()` around
+each builder — so builders stay plain drawing code with no bookkeeping. Switching is one
+`itemconfigure` per tag. Two consequences to respect:
+- Showing a tag un-hides items a view deliberately keeps hidden. `_show_view("dashboard")`
+  re-applies `_set_hero_state()` and `_set_customise()` afterwards for exactly this reason.
+- Each view rewinds `self._composite` to `_base_composite` before building, so embedded
+  widgets sample the shell and not whichever view happened to paint there first.
+
+### Rearrangeable dashboard
+Dashboard panels are additionally tagged `blk_<name>`. A canvas `move()` shifts every item
+with a tag (embedded widget windows included), so reordering is pure translation — which is
+why block heights are **fixed** (`DEFAULT_BLOCKS`, `BLOCK_GAP`). Order persists as
+`dashboard_layout` in config.json; `_saved_layout()` drops unknown names and appends missing
+ones so a hand-edited file can never lose a panel.
+
+Views backed by real data: Recordings (scans `recording_root`), Games (reads the classifier),
+Activity, Settings (read-only). **Macropad is deliberately empty** — there's no binding layer,
+and a mock keypad that does nothing would be a lie.
+
 ⚠️ Don't put fabricated numbers in the UI — the Games badge reads the classifier
 (`_game_count()`) and returns `None` (no badge) rather than inventing a count.
 
