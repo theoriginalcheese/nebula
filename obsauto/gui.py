@@ -3,12 +3,14 @@ import math
 import os
 import random
 import re
+import shutil
 import threading
+import time
 import tkinter as tk
 import tkinter.messagebox
 
 import customtkinter as ctk
-from PIL import Image
+from PIL import Image, ImageDraw, ImageFilter
 
 from . import classifier as classifier_module
 from .obs_client import OBSClient, OBSError
@@ -42,17 +44,26 @@ EDGE = "#39325F"
 ACCENT = "#8B7CF6"
 ACCENT_HOVER = "#9D91F8"
 ACCENT_TINT = "#292254"
+ACCENT_LIGHT = "#B9AEF9"   # brighter violet for icons/links on the nav rail
+NAV_ACTIVE_TEXT = "#E9E5FF"
+TEXT_SOFT = "#C9C3E8"       # secondary body text (a touch dimmer than TEXT)
 GREEN = "#3DDC84"
+GREEN_LIGHT = "#8DE9B4"
 GREEN_TINT = "#14382B"
 GREEN_TINT_HOVER = "#1B4A38"
 GREEN_HOVER = GREEN_TINT_HOVER  # legacy alias
 RED = "#FF5C7A"
+RED_LIGHT = "#FF7D96"
 RED_TINT = "#3B1D2A"
 RED_TINT_HOVER = "#4C2434"
 RED_HOVER = RED_TINT_HOVER  # legacy alias
 RED_DIM = "#5A2836"
 AMBER = "#F5A623"
+AMBER_LIGHT = "#F5B84E"
 AMBER_TINT = "#3A2D14"
+TEAL = "#4FD1C5"            # accent hues used by the stat tiles / log tags
+BLUE = "#7FB7F0"
+PINK = "#F0A6CA"
 MUTED = "#9A93C4"
 FAINT = "#6E6896"
 TEXT = "#F5F3FF"
@@ -70,9 +81,14 @@ LOG_TAG_COLORS = {
     "Audio": GREEN,
 }
 
-WIDTH, HEIGHT = 860, 660
-TITLEBAR_HEIGHT = 44
-MARGIN = 24
+# Aurora shell: a full app window with a left nav rail and a main content
+# column, instead of the old single 860x660 card stack. Everything below is in
+# base design units (multiplied up by self.scale on high-DPI monitors).
+WIDTH, HEIGHT = 1180, 760
+SIDEBAR_W = 236            # left nav rail width
+TOPBAR_HEIGHT = 56         # content-column header strip
+TITLEBAR_HEIGHT = 56       # draggable region height (top bar); kept name for _start_move
+MARGIN = 24                # gutter inside the content column
 
 # ---- living backdrop tuning (all in base design units) ----
 DRIFT = 14          # how far the nebula may wander; it's rendered this much
@@ -245,40 +261,6 @@ def _tint_for(color):
     return STATUS_TINTS.get(color, _blend_hex(color, BASE_BG, 0.78))
 
 
-class Pill(ctk.CTkLabel):
-    """A small rounded status badge - dark tint of the status color as the
-    fill with the bright color as text (the calm 'badge' look, not a loud
-    solid chip) - that crossfades between states instead of snapping."""
-
-    def __init__(self, master, text, color, width=88, bg_color=CARD_SURFACE):
-        super().__init__(
-            master, text=f"●  {text}", text_color=color, fg_color=_tint_for(color),
-            bg_color=bg_color, corner_radius=11, width=width, height=22,
-            font=ctk.CTkFont(size=11, weight="bold"),
-        )
-        self._current_color = color
-
-    def set(self, text, color, steps=8, delay=20):
-        self.configure(text=f"●  {text}")
-        if color == self._current_color:
-            return
-        start = self._current_color
-        start_tint, end_tint = _tint_for(start), _tint_for(color)
-
-        def step(i=0):
-            t = i / steps
-            self.configure(
-                fg_color=_blend_hex(start_tint, end_tint, t),
-                text_color=_blend_hex(start, color, t),
-            )
-            if i < steps:
-                self.after(delay, lambda: step(i + 1))
-            else:
-                self._current_color = color
-
-        step()
-
-
 class AppWindow:
     def __init__(self, config, classifier, on_close_to_tray):
         self.config = config
@@ -302,6 +284,11 @@ class AppWindow:
         self._images = []  # keeps PhotoImage refs alive - Tk GCs them otherwise
         self._dragging = False
         self._scanning = False
+        self._monitoring_on = False   # reflected in the sidebar toggle
+        self._obs_connected = False   # reflected in the sidebar OBS card
+        self._hero_state = "offline"  # offline | watching | recording | paused
+        self._current_game = None
+        self._eq_bars = []            # scene-preview equaliser bar canvas ids
 
         ctk.set_appearance_mode("dark")
         ctk.set_default_color_theme("dark-blue")
@@ -423,16 +410,18 @@ class AppWindow:
         self.bg.bind("<ButtonPress-1>", self._start_move)
         self.bg.bind("<B1-Motion>", self._on_move)
 
-        self._build_titlebar()
-        self._build_status_card()
-        self._build_controls()
-        self._build_log()
-        self._build_idle_row()
+        self._build_sidebar()
+        self._build_topbar()
+        self._build_hero()
+        self._build_stats()
+        self._build_activity()
 
         self._poll_manual_review()
         self._poll_obs_status()
+        self._poll_disk_stats()
         self._register_hotkey()
         self._animate_backdrop()
+        self._animate_hero()
 
     def _S(self, v):
         """Scale a base design-unit value to physical pixels by the UI scale."""
@@ -469,20 +458,6 @@ class AppWindow:
 
         self._anim_t = t + 0.085
         self.root.after(80, self._animate_backdrop)
-
-    def _item_right_base(self, item_id, fallback_base):
-        """Right edge of a canvas item in BASE design units (bbox is in real
-        px, so divide back out the UI scale). Lets neighbouring elements be
-        placed just past real, measured text width - so nothing overlaps no
-        matter the font metrics, UI scale, or how long the text is. Falls back
-        to a fixed offset if the item isn't measurable yet."""
-        try:
-            bbox = self.bg.bbox(item_id)
-            if bbox:
-                return bbox[2] / self.scale
-        except Exception:
-            pass
-        return fallback_base
 
     # ---- glass panel helper ----
     # x/y/w/h/radius are base design units; the placement coordinate is scaled
@@ -558,37 +533,161 @@ class AppWindow:
             self.bg.tag_bind(item, "<Leave>", on_leave)
             self.bg.tag_bind(item, "<Button-1>", on_click)
 
-    def _build_titlebar(self):
-        cy = TITLEBAR_HEIGHT / 2
-        title_id = self.bg.create_text(
-            MARGIN, cy, anchor="w", text="Nebula",
-            fill=TEXT, font=("Segoe UI Semibold", 13),
-        )
-        # Subtitle sits just past the wordmark - measured, not a fixed offset,
-        # so the "·" separator keeps a clean gap at any font metric or scale.
-        self.bg.create_text(
-            self._item_right_base(title_id, MARGIN + 62) + 16, cy, anchor="w",
-            text="·   auto-record by game, auto-sorted by folder",
-            fill=FAINT, font=("Segoe UI", 11),
-        )
+    # ---- brand mark ----
+    def _draw_logo(self, cx, cy, size):
+        """The Nebula mark drawn straight on the canvas: an amber orbital ring
+        (tilted ellipse) with a violet four-point sparkle at its centre - the
+        same emblem the design mockups use in the header and nav rail."""
+        r = size / 2
+        # Tilted orbital ring (approximate the SVG's rotated ellipse via an arc-
+        # less oval that we squash + rotate by drawing as a thin polygon ring).
+        self.bg.create_oval(cx - r, cy - r * 0.62, cx + r, cy + r * 0.62,
+                            outline=AMBER, width=max(1, size // 12), fill="")
+        # Four-point sparkle (a plump star) in accent violet.
+        s = r * 0.86
+        w = r * 0.30
+        pts = [
+            cx, cy - s,  cx + w, cy - w,  cx + s, cy,  cx + w, cy + w,
+            cx, cy + s,  cx - w, cy + w,  cx - s, cy,  cx - w, cy - w,
+        ]
+        self.bg.create_polygon(*pts, fill=ACCENT, outline="")
 
-        # Window controls pinned to the right edge.
-        self._make_circle_button(WIDTH - 28, cy, 13, SURFACE, RED, "✕", self._hide)
-        self._make_circle_button(WIDTH - 62, cy, 13, SURFACE, SURFACE_HOVER, "−", self._hide)
+    # ---- left nav rail ----
+    def _build_sidebar(self):
+        # Faint divider between rail and content, drawn as a 1px line all the
+        # way down (the design's border-right on the sidebar).
+        self.bg.create_line(SIDEBAR_W, 0, SIDEBAR_W, HEIGHT, fill=EDGE, width=1)
 
-        # Discoverable hotkey hint (keycap + "toggle"), packed to the left of
-        # the window controls and sized to the binding text - so a short "F6"
-        # or a long "ALT GR" both sit cleanly without overlapping anything.
+        # Brand: logo + wordmark + tagline.
+        self._draw_logo(38, 40, 26)
+        self.bg.create_text(60, 33, anchor="w", text="Nebula",
+                            fill=TEXT, font=("Segoe UI Semibold", 15))
+        self.bg.create_text(60, 50, anchor="w", text="auto-folder recorder",
+                            fill=FAINT, font=("Segoe UI", 10))
+
+        # Section label.
+        self.bg.create_text(28, 92, anchor="w", text="WORKSPACE",
+                            fill=FAINT, font=("Segoe UI", 9, "bold"))
+
+        # Nav items. Only Dashboard is wired in this pass; the rest render as
+        # calm, inactive destinations (the shell the design is built around).
+        nav = [
+            ("▦", "Dashboard", None, True),
+            ("▷", "Recordings", None, False),
+            ("◉", "Games", self._game_count(), False),
+            ("∿", "Activity", None, False),
+            ("⌨", "Macropad", None, False),
+            ("⚙", "Settings", None, False),
+        ]
+        y = 108
+        for glyph, label, badge, active in nav:
+            self._nav_item(12, y, SIDEBAR_W - 24, 40, glyph, label, badge, active)
+            y += 46
+
+        # ---- bottom status stack (OBS connection + monitoring toggle) ----
+        self._build_sidebar_status()
+
+    def _game_count(self):
+        """How many distinct games the classifier knows about - shown as the
+        Games nav badge. Counts display names, not executables, since one game
+        can register several exes."""
+        try:
+            games = self.classifier._data.get("games", {})
+            names = {
+                (v.get("display_name") or k) if isinstance(v, dict) else k
+                for k, v in games.items()
+            }
+            return str(len(names)) if names else None
+        except Exception:
+            return None
+
+    def _nav_item(self, x, y, w, h, glyph, label, badge, active):
+        cy = y + h / 2
+        if active:
+            self._glass(x, y, w, h, tint=ACCENT, radius=10, tint_alpha=36,
+                        border_hex=ACCENT, border_alpha=0)
+            self.bg.create_rectangle(x, y + 9, x + 3, y + h - 9, fill=ACCENT, outline="")
+            text_color, icon_color = NAV_ACTIVE_TEXT, ACCENT_LIGHT
+            font = ("Segoe UI Semibold", 13)
+        else:
+            text_color, icon_color = MUTED, MUTED
+            font = ("Segoe UI", 13)
+        self.bg.create_text(x + 20, cy, anchor="w", text=glyph,
+                            fill=icon_color, font=("Segoe UI Symbol", 15))
+        self.bg.create_text(x + 42, cy, anchor="w", text=label,
+                            fill=text_color, font=font)
+        if badge:
+            bx = x + w - 34
+            self._glass(bx, cy - 9, 26, 18, tint=ACCENT, radius=8, tint_alpha=40,
+                        border_hex=ACCENT, border_alpha=0)
+            self.bg.create_text(bx + 13, cy, text=badge, fill=ACCENT_LIGHT,
+                                font=("Segoe UI", 9, "bold"))
+
+    def _build_sidebar_status(self):
+        # OBS connection card, near the bottom of the rail.
+        cx, cw = 12, SIDEBAR_W - 24
+        oy = HEIGHT - 118
+        self._glass(cx, oy, cw, 50, tint=GREEN_TINT, radius=11, tint_alpha=90,
+                    border_hex=GREEN, border_alpha=45)
+        self._obs_card_dot = self.bg.create_oval(cx + 15, oy + 21, cx + 23, oy + 29,
+                                                fill=RED, outline="")
+        self._obs_card_title = self.bg.create_text(
+            cx + 34, oy + 19, anchor="w", text="OBS disconnected",
+            fill=RED_LIGHT, font=("Segoe UI Semibold", 12))
+        host = f"localhost:{self.config.get('obs_port', 4455)}"
+        self._obs_card_sub = self.bg.create_text(
+            cx + 34, oy + 33, anchor="w", text=host,
+            fill=FAINT, font=("Segoe UI", 10))
+
+        # Monitoring toggle row - clickable, flips monitoring on/off (same
+        # action as the hotkey), with the bound key shown as a keycap.
+        my = HEIGHT - 60
+        self._mon_tile = self._glass(cx, my, cw, 44, tint=CARD_TINT, radius=11,
+                                     tint_alpha=110, border_hex=CARD_BORDER, border_alpha=30)
+        self._mon_icon = self.bg.create_text(cx + 16, my + 22, anchor="w", text="◉",
+                                            fill=ACCENT, font=("Segoe UI Symbol", 14))
+        self._mon_label = self.bg.create_text(cx + 36, my + 22, anchor="w",
+                                            text="Monitoring off", fill=TEXT_SOFT,
+                                            font=("Segoe UI", 12))
         binding = self.config.get("toggle_hotkey")
         if binding:
-            label = binding.upper()
-            keycap_w = 2 * (5 + len(label) * 4)      # mirrors _draw_keycap's width
-            keycap_cx = (WIDTH - 84) - keycap_w / 2  # right edge clears the − button
-            self._draw_keycap(keycap_cx, cy, label)
-            self.bg.create_text(
-                keycap_cx - keycap_w / 2 - 12, cy, anchor="e", text="toggle",
-                fill=FAINT, font=("Segoe UI", 10),
-            )
+            self._draw_keycap(cx + cw - 24, my + 22, binding.upper())
+        # Whole tile is the hit target.
+        hit = self.bg.create_rectangle(cx, my, cx + cw, my + 44, fill="", outline="")
+        for item in (hit, self._mon_icon, self._mon_label):
+            self.bg.tag_bind(item, "<Button-1>", lambda _e: self._toggle_monitoring())
+            self.bg.tag_bind(item, "<Enter>", lambda _e: self.bg.configure(cursor="hand2"))
+            self.bg.tag_bind(item, "<Leave>", lambda _e: self.bg.configure(cursor=""))
+
+    # ---- content-column top bar ----
+    def _build_topbar(self):
+        x0 = SIDEBAR_W
+        cy = TOPBAR_HEIGHT / 2
+        self.bg.create_text(x0 + MARGIN, cy, anchor="w", text="Dashboard",
+                            fill=TEXT, font=("Segoe UI Semibold", 15))
+
+        # Window controls pinned to the right edge.
+        self._make_circle_button(WIDTH - 26, cy, 14, SURFACE, RED, "✕", self._hide)
+        self._make_circle_button(WIDTH - 60, cy, 14, SURFACE, SURFACE_HOVER, "−", self._hide)
+
+        # Real tool actions that don't have a home yet in this pass (their full
+        # pages are later work): rescan Steam + open game data, as ghost buttons.
+        self.rescan_btn = ctk.CTkButton(
+            self.root, text="↻  Rescan", command=self._rescan_steam,
+            fg_color=SURFACE, hover_color=SURFACE_HOVER, text_color=MUTED,
+            bg_color=self._bg_at(WIDTH - 190, cy), border_width=1, border_color=EDGE,
+            corner_radius=9, font=ctk.CTkFont(size=12),
+        )
+        self.bg.create_window(WIDTH - 244, cy - 15, anchor="nw", window=self.rescan_btn,
+                              width=108, height=30)
+        self.gamedata_btn = ctk.CTkButton(
+            self.root, text="Game data", command=self._open_game_data,
+            fg_color=SURFACE, hover_color=SURFACE_HOVER, text_color=MUTED,
+            bg_color=self._bg_at(WIDTH - 300, cy), border_width=1, border_color=EDGE,
+            corner_radius=9, font=ctk.CTkFont(size=12),
+        )
+        self.bg.create_window(WIDTH - 356, cy - 15, anchor="nw", window=self.gamedata_btn,
+                              width=104, height=30)
 
     def _draw_keycap(self, cx, cy, label):
         """A small rounded keycap chip on the canvas - the sampled-corner
@@ -619,120 +718,315 @@ class AppWindow:
         y = event.y_root - self._drag_offset_y
         self.root.geometry(f"+{x}+{y}")
 
-    def _build_status_card(self):
-        # Everything here is either a canvas-native text/item (blends
-        # seamlessly with the glass tile behind it, and can be recolored/
-        # retexted live via itemconfigure) or a genuinely opaque widget
-        # (the status Pills and record button, which are meant to look like
-        # solid controls, not glass) - no "transparent" CTkFrame wrappers,
-        # which don't actually composite against arbitrary canvas art.
-        x, y, w, h = MARGIN, 60, WIDTH - MARGIN * 2, 142
-        self._status_card_geom = (x, y, w, h)
-        self._status_card_item = self._glass(x, y, w, h)
+    # ---- content column: geometry ----
+    # The main column lives to the right of the nav rail. Everything here is in
+    # base design units; x0 is the left gutter of the content area.
+    def _content_x0(self):
+        return SIDEBAR_W + MARGIN
 
-        # OBS + IDLE flow left-to-right, each pill measured to sit just past
-        # its label, and the IDLE group placed just past the OBS pill - so the
-        # labels never disappear behind the pills at any font width or scale.
-        LABEL_GAP, GROUP_GAP = 12, 28
-        OBS_PILL_W, IDLE_PILL_W = 140, 84  # OBS wide enough for "Reconnecting..."
+    # ---- hero recording card ----
+    def _build_hero(self):
+        x, y = self._content_x0(), 62
+        w, h = WIDTH - MARGIN - x, 300
+        self._status_card_geom = (x, y, w, h)   # reused by _flash_status_card
+        self._status_card_item = self._glass(x, y, w, h, radius=18)
 
-        obs_label = self.bg.create_text(x + 20, y + 26, anchor="w", text="OBS", fill=FAINT, font=("Segoe UI", 10, "bold"))
-        obs_pill_x = self._item_right_base(obs_label, x + 44) + LABEL_GAP
-        obs_bg = self._bg_at(obs_pill_x + OBS_PILL_W / 2, y + 26)
-        self.obs_pill = Pill(self.root, "Disconnected", RED, width=OBS_PILL_W, bg_color=obs_bg)
-        self.bg.create_window(obs_pill_x, y + 15, anchor="nw", window=self.obs_pill, width=OBS_PILL_W, height=22)
+        pad = 24
+        left_x = x + pad
+        preview_w, preview_h = 372, 209
+        preview_x = x + w - pad - preview_w
+        preview_y = y + pad
+        left_w = preview_x - 20 - left_x
 
-        idle_label_x = obs_pill_x + OBS_PILL_W + GROUP_GAP
-        idle_label = self.bg.create_text(idle_label_x, y + 26, anchor="w", text="IDLE", fill=FAINT, font=("Segoe UI", 10, "bold"))
-        idle_pill_x = self._item_right_base(idle_label, idle_label_x + 34) + LABEL_GAP
-        idle_bg = self._bg_at(idle_pill_x + IDLE_PILL_W / 2, y + 26)
-        self.idle_pill = Pill(self.root, "No", GREEN, width=IDLE_PILL_W, bg_color=idle_bg)
-        self.bg.create_window(idle_pill_x, y + 15, anchor="nw", window=self.idle_pill, width=IDLE_PILL_W, height=22)
+        # --- status badge (state pill) ---
+        self._hero_badge_geom = (left_x, y + 16, 120, 24)
+        self._hero_badge_item = self._glass(left_x, y + 16, 120, 24, tint=ACCENT,
+                                            radius=12, tint_alpha=40, border_alpha=0)
+        self.rec_dot_id = self.bg.create_text(left_x + 15, y + 28, text="●",
+                                              fill=ACCENT, font=("Segoe UI", 9))
+        self._hero_badge_text = self.bg.create_text(left_x + 28, y + 28, anchor="w",
+                                                    text="WATCHING", fill=ACCENT_LIGHT,
+                                                    font=("Segoe UI", 10, "bold"))
+        self._hero_sub_id = self.bg.create_text(left_x + 132, y + 28, anchor="w",
+                                                text="", fill=MUTED, font=("Segoe UI", 12))
 
-        # Manual override - independent of auto-detection, so recording can
-        # be started/stopped directly regardless of whether a game is
-        # currently being monitored.
-        rec_bg = self._bg_at(x + w - 90, y + 26)
+        # --- game name ---
+        self.game_label_id = self.bg.create_text(
+            left_x, y + 82, anchor="w", text="No game detected",
+            fill=MUTED, font=("Segoe UI Semibold", 32),
+        )
+
+        # --- folder chip ---
+        self._glass(left_x, y + 112, left_w, 30, tint=LOG_TINT, radius=9,
+                    tint_alpha=170, border_hex=CARD_BORDER, border_alpha=24)
+        self.bg.create_text(left_x + 12, y + 127, anchor="w", text="▸",
+                            fill=ACCENT, font=("Segoe UI", 12))
+        self.folder_label_id = self.bg.create_text(
+            left_x + 28, y + 127, anchor="w", text=self.config["recording_root"],
+            fill=MUTED, font=("Consolas", 11), width=left_w - 40,
+        )
+
+        # --- elapsed + size readouts ---
+        self._elapsed_label_id = self.bg.create_text(
+            left_x, y + 162, anchor="w", text="ELAPSED", fill=FAINT,
+            font=("Segoe UI", 10, "bold"))
+        self.timer_label_id = self.bg.create_text(
+            left_x, y + 194, anchor="w", text="--:--:--", fill=TEXT,
+            font=("Consolas", 40, "bold"))
+        self._size_label_id = self.bg.create_text(
+            left_x + 250, y + 162, anchor="w", text="SIZE", fill=FAINT,
+            font=("Segoe UI", 10, "bold"))
+        self.storage_label_id = self.bg.create_text(
+            left_x + 250, y + 192, anchor="w", text="--", fill=TEXT_SOFT,
+            font=("Consolas", 22))
+        # Shown instead of the readout while nothing is being recorded, so the
+        # card reads as calm-and-ready rather than simply empty.
+        self._hero_hint_id = self.bg.create_text(
+            left_x, y + 180, anchor="w", text="", fill=FAINT,
+            font=("Segoe UI", 13), width=left_w)
+
+        # --- transport buttons ---
+        bt_y = y + h - pad - 40
+        rec_bg = self._bg_at(left_x + 78, bt_y + 20)
         self.record_toggle_btn = ctk.CTkButton(
             self.root, text="●  Record now", command=self._toggle_record, state="disabled",
             fg_color=GREEN_TINT, hover_color=GREEN_TINT_HOVER, text_color=GREEN,
-            bg_color=rec_bg,
-            border_width=1, border_color=EDGE, corner_radius=13,
-            font=ctk.CTkFont(size=11, weight="bold"),
+            bg_color=rec_bg, border_width=1, border_color=EDGE, corner_radius=11,
+            font=ctk.CTkFont(size=13, weight="bold"),
         )
-        self.bg.create_window(x + w - 160, y + 13, anchor="nw", window=self.record_toggle_btn, width=140, height=26)
+        self._record_btn_win = self.bg.create_window(
+            left_x, bt_y, anchor="nw", window=self.record_toggle_btn, width=156, height=40)
+        pause_bg = self._bg_at(left_x + 166 + 60, bt_y + 20)
+        self.pause_btn = ctk.CTkButton(
+            self.root, text="❚❚  Pause", command=self._toggle_pause,
+            fg_color=AMBER_TINT, hover_color="#4A3A1A", text_color=AMBER_LIGHT,
+            bg_color=pause_bg, border_width=1, border_color=EDGE, corner_radius=11,
+            font=ctk.CTkFont(size=13, weight="bold"),
+        )
+        self._pause_btn_win = self.bg.create_window(
+            left_x + 166, bt_y, anchor="nw", window=self.pause_btn, width=120, height=40)
 
-        self.rec_dot_id = self.bg.create_text(x + 20, y + 74, anchor="w", text="●", fill=FAINT, font=("Segoe UI", 16))
-        self.game_label_id = self.bg.create_text(
-            x + 42, y + 74, anchor="w", text="No game detected", fill=MUTED, font=("Segoe UI Semibold", 20),
-        )
-        self.timer_label_id = self.bg.create_text(
-            x + 42, y + 102, anchor="w", text="", fill=FAINT, font=("Consolas", 12),
-        )
-        self.storage_label_id = self.bg.create_text(
-            x + 116, y + 102, anchor="w", text="", fill=FAINT, font=("Consolas", 12),
+        # --- scene preview + info row (right column) ---
+        self._build_preview(preview_x, preview_y, preview_w, preview_h)
+        self._glass(preview_x, preview_y + preview_h + 12, preview_w, 40,
+                    tint=CARD_TINT, radius=11, tint_alpha=120,
+                    border_hex=CARD_BORDER, border_alpha=26)
+        self.bg.create_text(preview_x + 15, preview_y + preview_h + 32, anchor="w",
+                            text="◆", fill=ACCENT, font=("Segoe UI", 12))
+        self._preview_info_id = self.bg.create_text(
+            preview_x + 33, preview_y + preview_h + 32, anchor="w",
+            text="Scene capture idle", fill=TEXT_SOFT, font=("Segoe UI", 12))
+
+        self._set_hero_state("offline")
+
+    def _build_preview(self, x, y, w, h):
+        """A stylised 16:9 'scene preview' tile - a violet gradient stand-in for
+        the live capture (rendering real OBS frames is out of scope), with the
+        source label and a little equaliser that comes alive while recording."""
+        tile = self._make_preview_tile(w, h)
+        photo = to_photo(tile)
+        self._images.append(photo)
+        self.bg.create_image(x, y, anchor="nw", image=photo)
+
+        # Source label chip, top-left.
+        self._glass(x + 12, y + 12, 168, 24, tint=BASE_BG, radius=8,
+                    tint_alpha=150, border_alpha=0)
+        self._preview_dot_id = self.bg.create_text(x + 22, y + 24, anchor="w", text="●",
+                                                   fill=FAINT, font=("Segoe UI", 9))
+        self.bg.create_text(x + 34, y + 24, anchor="w", text="Game Capture (Auto)",
+                            fill=NAV_ACTIVE_TEXT, font=("Segoe UI", 10, "bold"))
+
+        # Equaliser bars along the bottom - animated in _animate_hero.
+        self._eq_bars = []
+        n = 11
+        bar_w = 5
+        span = w - 28
+        gap = (span - n * bar_w) / (n - 1)
+        base_x = x + 14
+        floor_y = y + h - 14
+        for i in range(n):
+            bx = base_x + i * (bar_w + gap)
+            bar = self.bg.create_rectangle(bx, floor_y - 6, bx + bar_w, floor_y,
+                                           fill="#EDEAFF", outline="")
+            self._eq_bars.append((bar, bx, floor_y, bar_w))
+
+    def _make_preview_tile(self, w, h):
+        sw, sh = self._S(w), self._S(h)
+        img = Image.new("RGBA", (sw, sh), (0, 0, 0, 0))
+        draw = ImageDraw.Draw(img)
+        for i in range(sh):
+            col = _blend_hex("#2A1C4D", "#7C3AED", i / max(1, sh - 1))
+            r, g, b = int(col[1:3], 16), int(col[3:5], 16), int(col[5:7], 16)
+            draw.line([(0, i), (sw, i)], fill=(r, g, b, 255))
+        # Soft top-left light bloom for a touch of depth.
+        bloom = Image.new("RGBA", (sw, sh), (0, 0, 0, 0))
+        ImageDraw.Draw(bloom).ellipse(
+            [-sw * 0.2, -sh * 0.4, sw * 0.7, sh * 0.6], fill=(255, 255, 255, 26))
+        img = Image.alpha_composite(img, bloom.filter(ImageFilter.GaussianBlur(self._S(30))))
+        mask = Image.new("L", (sw, sh), 0)
+        ImageDraw.Draw(mask).rounded_rectangle(
+            [0, 0, sw - 1, sh - 1], radius=self._S(13), fill=255)
+        img.putalpha(mask)
+        return img
+
+    def _animate_hero(self):
+        """Drives the scene-preview equaliser: lively while recording, a low
+        idle shimmer otherwise. One cheap timer, a handful of canvas updates."""
+        t = self._anim_t
+        active = self._is_recording and not self._is_paused
+        for i, (bar, bx, floor_y, bar_w) in enumerate(self._eq_bars):
+            if active:
+                level = (math.sin(t * 3.2 + i * 0.7) + 1) / 2
+                height = 4 + level * 26
+            else:
+                height = 3 + (math.sin(t * 0.9 + i * 0.5) + 1) * 1.5
+            self.bg.coords(bar, bx, floor_y - height, bx + bar_w, floor_y)
+        self.root.after(90, self._animate_hero)
+
+    def _set_hero_state(self, state):
+        """Recolours the whole hero card for one of: offline / watching /
+        recording / paused. Timer + size text are filled in by
+        _poll_obs_status; this owns the badge, subtitle, border and buttons."""
+        self._hero_state = state
+        spec = {
+            "offline":   (RED,    RED_LIGHT,    "OFFLINE",   "OBS not connected"),
+            "watching":  (ACCENT, ACCENT_LIGHT, "WATCHING",  "Monitoring · auto-records on launch"),
+            "recording": (RED,    RED_LIGHT,    "REC",       "Now recording · auto-detected"),
+            "paused":    (AMBER,  AMBER_LIGHT,  "PAUSED",    "Idle — auto-paused, resumes on input"),
+        }[state]
+        base, light, badge_text, sub = spec
+        bx, by, bw, bh = self._hero_badge_geom
+        self._regen_glass(self._hero_badge_item, bx, by, bw, bh, tint=base,
+                          radius=12, tint_alpha=40, border_alpha=0)
+        self.bg.itemconfigure(self._hero_badge_text, text=badge_text, fill=light)
+        self.bg.itemconfigure(self.rec_dot_id, fill=base)
+        self.bg.itemconfigure(self._hero_sub_id, text=sub)
+
+        # Card border tint follows the state (calm violet vs. hot red/amber).
+        hx, hy, hw, hh = self._status_card_geom
+        border = {"offline": RED, "watching": CARD_BORDER, "recording": RED,
+                  "paused": AMBER}[state]
+        self._regen_glass(self._status_card_item, hx, hy, hw, hh, radius=18,
+                          border_hex=border, border_alpha=70)
+
+        # Timer / size only carry meaning while a recording exists.
+        show_readout = state in ("recording", "paused")
+        for item in (self._elapsed_label_id, self._size_label_id,
+                     self.timer_label_id, self.storage_label_id):
+            self.bg.itemconfigure(item, state="normal" if show_readout else "hidden")
+        self.bg.itemconfigure(self.timer_label_id,
+                              fill=AMBER_LIGHT if state == "paused" else TEXT)
+        self.bg.itemconfigure(
+            self._hero_hint_id,
+            state="hidden" if show_readout else "normal",
+            text="" if show_readout else (
+                "Start monitoring to connect to OBS and watch for a game."
+                if state == "offline" else
+                "Standing by — recording starts by itself the moment a game launches."
+            ),
         )
 
-        self.folder_label_id = self.bg.create_text(
-            x + 20, y + h - 18, anchor="w", text=self.config["recording_root"],
-            fill=FAINT, font=("Segoe UI", 11), width=w - 40,
-        )
+        # Scene-preview caption follows the capture, so the right column isn't
+        # claiming "idle" while a recording is plainly running.
+        if state == "recording":
+            info = f"Game Capture → {self._current_game}" if self._current_game else "Capturing"
+        elif state == "paused":
+            info = "Capture held — paused"
+        elif state == "watching":
+            info = "Scene capture idle"
+        else:
+            info = "No scene — OBS offline"
+        self.bg.itemconfigure(self._preview_info_id, text=info)
+        self.bg.itemconfigure(self._preview_dot_id,
+                              fill=RED if state == "recording" else
+                              (AMBER if state == "paused" else FAINT))
 
-    def _build_controls(self):
-        y = 218
-        x = MARGIN
-        gap = 12
+        # Buttons: primary record/stop always shown; pause only mid-recording.
+        self.bg.itemconfigure(self._pause_btn_win,
+                              state="normal" if show_readout else "hidden")
+        if state == "paused":
+            self.pause_btn.configure(text="▶  Resume")
+        else:
+            self.pause_btn.configure(text="❚❚  Pause")
 
-        def make_button(width, **kwargs):
-            nonlocal x
-            bg = self._bg_at(x + width / 2, y + 18)
-            button = ctk.CTkButton(
-                self.root, bg_color=bg,
-                border_width=1, border_color=EDGE, corner_radius=10, **kwargs,
-            )
-            self.bg.create_window(x, y, anchor="nw", window=button, width=width, height=36)
-            x += width + gap
-            return button
+    # ---- stat tiles ----
+    def _build_stats(self):
+        x0, y = self._content_x0(), 380
+        total_w = WIDTH - MARGIN - x0
+        gap = 14
+        tw = (total_w - gap * 3) / 4
+        h = 92
 
-        self.start_btn = make_button(
-            164, text="▶  Start monitoring", command=self._start,
-            fg_color=GREEN_TINT, hover_color=GREEN_TINT_HOVER, text_color=GREEN,
-            font=ctk.CTkFont(size=12, weight="bold"),
-        )
-        self.stop_btn = make_button(
-            164, text="■  Stop monitoring", command=self._stop, state="disabled",
-            fg_color=RED_TINT, hover_color=RED_TINT_HOVER, text_color=RED,
-            font=ctk.CTkFont(size=12, weight="bold"),
-        )
-        self.rescan_btn = make_button(
-            186, text="⟳  Rescan Steam games", command=self._rescan_steam,
-            fg_color=SURFACE, hover_color=SURFACE_HOVER, text_color=MUTED,
-            font=ctk.CTkFont(size=12),
-        )
-        make_button(
-            150, text="Open game data", command=self._open_game_data,
-            fg_color=SURFACE, hover_color=SURFACE_HOVER, text_color=MUTED,
-            font=ctk.CTkFont(size=12),
-        )
+        def tile(i):
+            return x0 + i * (tw + gap)
 
-    def _build_log(self):
-        y = 272
-        self.bg.create_text(
-            MARGIN, y, anchor="nw", text="ACTIVITY", fill=FAINT, font=("Segoe UI", 10, "bold"),
+        # 1) Today's clips (filled in by _poll_disk_stats)
+        self._stat_tile(tile(0), y, tw, h, "▤", ACCENT, "Today")
+        self._stat_today_val = self.bg.create_text(
+            tile(0) + 16, y + 48, anchor="w", text="–", fill=TEXT,
+            font=("Segoe UI Semibold", 22))
+        self._stat_today_sub = self.bg.create_text(
+            tile(0) + 16, y + 72, anchor="w", text="scanning…", fill=MUTED,
+            font=("Segoe UI", 12))
+
+        # 2) Disk free
+        self._stat_tile(tile(1), y, tw, h, "▥", TEAL, "Disk free")
+        self._stat_disk_val = self.bg.create_text(
+            tile(1) + 16, y + 48, anchor="w", text="–", fill=TEXT,
+            font=("Segoe UI Semibold", 22))
+        self._stat_disk_sub = self.bg.create_text(
+            tile(1) + 16, y + 72, anchor="w", text="", fill=MUTED,
+            font=("Segoe UI", 12))
+
+        # 3) Idle timeout - value + live slider (keeps the old control alive)
+        self._stat_tile(tile(2), y, tw, h, "◔", AMBER, "Idle timeout")
+        self.timeout_value_id = self.bg.create_text(
+            tile(2) + 16, y + 48, anchor="w",
+            text=f"{self.config['idle_timeout_seconds']}s", fill=TEXT,
+            font=("Segoe UI Semibold", 22))
+        slider_bg = self._bg_at(tile(2) + tw / 2, y + 74)
+        slider = ctk.CTkSlider(
+            self.root, from_=1, to=60, number_of_steps=59, command=self._on_timeout_change,
+            fg_color=SURFACE, progress_color=AMBER, button_color=AMBER,
+            button_hover_color=AMBER_LIGHT, bg_color=slider_bg, height=14,
         )
+        slider.set(self.config["idle_timeout_seconds"])
+        self.bg.create_window(tile(2) + 16, y + 68, anchor="w", window=slider,
+                              width=int(tw - 32), height=14)
+
+        # 4) Sync target
+        self._stat_tile(tile(3), y, tw, h, "⟳", BLUE, "Sync")
+        sync = self.config.get("sync_folder") or ""
+        sync_val = "OneDrive" if "onedrive" in sync.lower() else (
+            os.path.basename(sync.rstrip("/\\")) or "Local")
+        self.bg.create_text(tile(3) + 16, y + 48, anchor="w", text=sync_val,
+                            fill=TEXT, font=("Segoe UI Semibold", 22))
+        self.bg.create_text(tile(3) + 16, y + 72, anchor="w",
+                            text="synced" if sync else "local only", fill=MUTED,
+                            font=("Segoe UI", 12))
+
+    def _stat_tile(self, x, y, w, h, glyph, color, label):
+        self._glass(x, y, w, h, tint=CARD_TINT, radius=14, tint_alpha=120,
+                    border_hex=CARD_BORDER, border_alpha=26)
+        self.bg.create_text(x + 16, y + 20, anchor="w", text=glyph, fill=color,
+                            font=("Segoe UI Symbol", 14))
+        self.bg.create_text(x + 36, y + 20, anchor="w", text=label, fill=FAINT,
+                            font=("Segoe UI", 11))
+
+    # ---- activity log ----
+    def _build_activity(self):
+        x0, y = self._content_x0(), 490
+        w = WIDTH - MARGIN - x0
+        self.bg.create_text(x0, y, anchor="nw", text="ACTIVITY", fill=FAINT,
+                            font=("Segoe UI", 10, "bold"))
         y += 22
+        panel_h = HEIGHT - MARGIN - y
+        self._glass(x0, y, w, panel_h, tint=LOG_TINT, radius=14, tint_alpha=195)
 
-        log_height = HEIGHT - y - 64
-        self._glass(MARGIN, y, WIDTH - MARGIN * 2, log_height, tint=LOG_TINT, tint_alpha=195)
-
-        # The text area is the one widget tall enough to span the panel's whole
-        # sheen gradient, so no single bg_color could match its top AND bottom
-        # corners - that's what showed up as a square fringe inside the rounded
-        # panel. Draw the rounded shape on the canvas instead and inset a flat,
-        # square textbox inside it: the rounding is the tile's, and the widget
-        # (same colour, corner_radius 0) never paints a corner cut-away at all.
-        box_x, box_y = MARGIN + 10, y + 9
-        box_w, box_h = WIDTH - MARGIN * 2 - 20, log_height - 18
+        # Rounded plate + a flat square textbox inset inside it (see the note in
+        # the old build - a tall widget can't match a sheen gradient's corners).
+        box_x, box_y = x0 + 10, y + 10
+        box_w, box_h = w - 20, panel_h - 20
         box_r = 10
         backing = make_solid_tile(self._S(box_w), self._S(box_h), LOG_BG, radius=self._S(box_r))
         backing_photo = to_photo(backing)
@@ -747,10 +1041,6 @@ class AppWindow:
         )
         self.bg.create_window(box_x + box_r, box_y + box_r, anchor="nw", window=self.console,
                               width=box_w - box_r * 2, height=box_h - box_r * 2)
-        # Color-code the [Subsystem] prefix of each log line + give lines
-        # some breathing room. Reaches into CTkTextbox's underlying tk.Text
-        # (private but stable across ctk 5.x) since CTkTextbox doesn't proxy
-        # tag configuration - guarded so a ctk update can't crash the app.
         try:
             tb = self.console._textbox
             for tag, color in LOG_TAG_COLORS.items():
@@ -759,30 +1049,68 @@ class AppWindow:
         except Exception:
             pass
 
-    def _build_idle_row(self):
-        y = HEIGHT - 44
-        label_id = self.bg.create_text(
-            MARGIN, y + 10, anchor="w", text="Idle timeout",
-            fill=FAINT, font=("Segoe UI", 11),
-        )
-        # Slider starts just past the label (measured) and ends with room for
-        # the value readout - so the label and slider never collide at scale.
-        slider_x = self._item_right_base(label_id, MARGIN + 96) + 20
-        slider_right = WIDTH - MARGIN - 52
-        slider_bg = self._bg_at((slider_x + slider_right) / 2, y + 10)
-        slider = ctk.CTkSlider(
-            self.root, from_=1, to=60, number_of_steps=59, command=self._on_timeout_change,
-            fg_color=SURFACE, progress_color=ACCENT, button_color=ACCENT,
-            button_hover_color=ACCENT_HOVER, bg_color=slider_bg, height=16,
-        )
-        slider.set(self.config["idle_timeout_seconds"])
-        self.bg.create_window(slider_x, y + 2, anchor="nw", window=slider,
-                              width=slider_right - slider_x, height=16)
-        self.timeout_value_id = self.bg.create_text(
-            WIDTH - MARGIN, y + 10, anchor="e",
-            text=f"{self.config['idle_timeout_seconds']}s",
-            fill=TEXT, font=("Segoe UI Semibold", 11),
-        )
+    # ---- disk / clip stats ----
+    def _poll_disk_stats(self):
+        """Fill the Today + Disk-free tiles from the real recording folder,
+        off the Tk thread (a recursive scan + disk query can be slow)."""
+        root_dir = self.config.get("recording_root", "")
+
+        def worker():
+            free_txt, drive = "", ""
+            try:
+                usage = shutil.disk_usage(root_dir if os.path.isdir(root_dir) else os.path.expanduser("~"))
+                free_txt = _format_bytes(usage.free)
+                drive = os.path.splitdrive(os.path.abspath(root_dir))[0] or ""
+            except Exception:
+                pass
+            clips, total = 0, 0
+            try:
+                today = time.localtime()
+                exts = (".mkv", ".mp4", ".mov", ".flv", ".ts", ".m4v")
+                for dirpath, _dirs, files in os.walk(root_dir):
+                    for name in files:
+                        if name.lower().endswith(exts):
+                            fp = os.path.join(dirpath, name)
+                            try:
+                                st = os.stat(fp)
+                            except OSError:
+                                continue
+                            lt = time.localtime(st.st_mtime)
+                            if (lt.tm_year, lt.tm_yday) == (today.tm_year, today.tm_yday):
+                                clips += 1
+                                total += st.st_size
+            except Exception:
+                pass
+            try:
+                self.root.after(0, lambda: self._apply_disk_stats(clips, total, free_txt, drive))
+            except RuntimeError:
+                pass  # window torn down while the scan was still running
+
+        threading.Thread(target=worker, daemon=True).start()
+        self.root.after(30000, self._poll_disk_stats)
+
+    def _apply_disk_stats(self, clips, total, free_txt, drive):
+        self.bg.itemconfigure(self._stat_today_val,
+                              text=f"{clips} clip" + ("" if clips == 1 else "s"))
+        self.bg.itemconfigure(self._stat_today_sub,
+                              text=f"{_format_bytes(total)} recorded" if clips else "nothing yet")
+        if free_txt:
+            self.bg.itemconfigure(self._stat_disk_val, text=free_txt)
+            self.bg.itemconfigure(self._stat_disk_sub, text=f"on {drive}" if drive else "free")
+
+    # ---- sidebar status updaters ----
+    def _set_obs_status(self, text, color):
+        """Update the sidebar OBS card (replaces the old OBS status pill)."""
+        light = {RED: RED_LIGHT, GREEN: GREEN_LIGHT, AMBER: AMBER_LIGHT}.get(color, color)
+        self.bg.itemconfigure(self._obs_card_dot, fill=color)
+        self.bg.itemconfigure(self._obs_card_title, text=f"OBS {text.lower()}", fill=light)
+
+    def _set_monitoring(self, on):
+        self._monitoring_on = on
+        self.bg.itemconfigure(self._mon_label,
+                              text="Monitoring on" if on else "Monitoring off",
+                              fill=NAV_ACTIVE_TEXT if on else TEXT_SOFT)
+        self.bg.itemconfigure(self._mon_icon, fill=ACCENT if on else FAINT)
 
     # ---- logging ----
     def _log(self, message):
@@ -828,25 +1156,31 @@ class AppWindow:
                 is_paused = bool(status.get("outputPaused"))
                 if is_recording:
                     total_seconds = status.get("outputDuration", 0) // 1000
-                    mm, ss = divmod(total_seconds, 60)
-                    self.bg.itemconfigure(self.timer_label_id, text=f"{mm:02d}:{ss:02d}")
+                    hh, rem = divmod(total_seconds, 3600)
+                    mm, ss = divmod(rem, 60)
+                    self.bg.itemconfigure(self.timer_label_id, text=f"{hh:02d}:{mm:02d}:{ss:02d}")
                     self.bg.itemconfigure(self.storage_label_id, text=_format_bytes(status.get("outputBytes", 0)))
             except OBSError:
                 pass
 
-        if not is_recording:
-            self.bg.itemconfigure(self.timer_label_id, text="")
-            self.bg.itemconfigure(self.storage_label_id, text="")
-
         was_paused = self._is_paused
         self._is_paused = is_paused
-        if is_recording and is_paused:
-            self.bg.itemconfigure(self.rec_dot_id, fill=AMBER)
-        elif is_recording and (not self._is_recording or was_paused):
+        if is_recording and (not self._is_recording or was_paused) and not is_paused:
             self._pulse_dot(True)  # just started, or just resumed from pause
-        elif not is_recording:
-            self.bg.itemconfigure(self.rec_dot_id, fill=FAINT)
         self._is_recording = is_recording
+
+        # The hero card owns the badge/border/readout visibility; pick the state
+        # that matches what OBS and the monitor are actually doing right now.
+        if not self.obs.connected:
+            state = "offline"
+        elif is_recording and is_paused:
+            state = "paused"
+        elif is_recording:
+            state = "recording"
+        else:
+            state = "watching"
+        if state != self._hero_state:
+            self._set_hero_state(state)
 
         self.record_toggle_btn.configure(state="normal" if self.obs.connected else "disabled")
         if is_recording:
@@ -887,19 +1221,40 @@ class AppWindow:
         except OBSError as e:
             tkinter.messagebox.showerror("OBS Error", f"Could not toggle recording: {e}")
 
+    def _toggle_pause(self):
+        """Pause/resume the in-progress recording. The monitor also pauses on
+        idle by itself; this is the manual equivalent from the hero card."""
+        if not self._is_recording:
+            return
+        try:
+            if self._is_paused:
+                self.obs.resume_record()
+                self._log("[Manual] Recording resumed.")
+            else:
+                self.obs.pause_record()
+                self._log("[Manual] Recording paused.")
+        except OBSError as e:
+            tkinter.messagebox.showerror("OBS Error", f"Could not pause recording: {e}")
+
     def _flash_status_card(self):
         """A brief brighter-border pulse on the status card glass panel
         whenever the detected game changes, so a switch is visually
         confirmed even if you're not staring at the timer/name text."""
         x, y, w, h = self._status_card_geom
         steps = [1.0, 0.6, 0.25, 0.0]
+        border = {"offline": RED, "watching": CARD_BORDER, "recording": RED,
+                  "paused": AMBER}.get(self._hero_state, CARD_BORDER)
 
         def step(i=0):
             if i >= len(steps):
-                self._regen_glass(self._status_card_item, x, y, w, h)
+                # Settle back on the border the current hero state owns, not the
+                # generic default - otherwise a flash would wash out the state tint.
+                self._regen_glass(self._status_card_item, x, y, w, h, radius=18,
+                                  border_hex=border, border_alpha=70)
                 return
-            border_alpha = int(55 + (230 - 55) * steps[i])
-            self._regen_glass(self._status_card_item, x, y, w, h, border_alpha=min(border_alpha, 255))
+            border_alpha = int(70 + (230 - 70) * steps[i])
+            self._regen_glass(self._status_card_item, x, y, w, h, radius=18,
+                              border_hex=border, border_alpha=min(border_alpha, 255))
             self.root.after(110, lambda: step(i + 1))
 
         step()
@@ -1072,6 +1427,11 @@ class AppWindow:
                     fill=TEXT if game else MUTED,  # empty state whispers, active state speaks
                 )
                 self._tray_game = game
+                self._current_game = game
+                # Refresh the hero in place so the scene caption picks up the
+                # new title (the state itself is unchanged, so this is a no-op
+                # visually apart from that caption).
+                self._set_hero_state(self._hero_state)
                 self._flash_status_card()
                 # The timer/storage/pulsing dot are driven by _poll_obs_status
                 # from OBS's own GetRecordStatus, not from this event - that
@@ -1080,7 +1440,8 @@ class AppWindow:
             if "folder" in kwargs:
                 self.bg.itemconfigure(self.folder_label_id, text=kwargs["folder"] or self.config["recording_root"])
             if "idle" in kwargs:
-                self.idle_pill.set(*(("Yes", AMBER) if kwargs["idle"] else ("No", GREEN)))
+                # Idle no longer has its own pill - it reads as the hero card's
+                # "PAUSED" state, which _poll_obs_status derives from OBS itself.
                 self._tray_idle = kwargs["idle"]
             self._update_tray_tooltip()
         self.root.after(0, apply)
@@ -1113,14 +1474,12 @@ class AppWindow:
         # (launch-if-needed, connect, retry every 10s) instead of a one-shot
         # attempt that pops a discouraging error dialog while OBS is still
         # mid-launch.
-        self.start_btn.configure(state="disabled", text="Connecting...")
+        self._set_obs_status("Connecting...", AMBER)
         self.autostart()
 
     def _on_connected(self):
-        self.start_btn.configure(text="▶  Start monitoring")
-        self.obs_pill.set("Connected", GREEN)
-        self.start_btn.configure(state="disabled")
-        self.stop_btn.configure(state="normal")
+        self._set_obs_status("Connected", GREEN)
+        self._set_monitoring(True)
         self.monitor.start()
 
     def autostart(self):
@@ -1132,29 +1491,29 @@ class AppWindow:
         over reconnecting if OBS later crashes/closes."""
         if self.monitor._running:
             return
-        self.obs_pill.set("Connecting...", AMBER)
+        self._set_obs_status("Connecting...", AMBER)
         ensure_obs_running(self.config.get("obs_path"), log=self._log)
         try:
             self.obs.connect()
         except (OBSError, OSError) as e:
             self._log(f"[Monitor] OBS not available yet ({e}); retrying in 10s...")
-            self.obs_pill.set("Disconnected", RED)
+            self._set_obs_status("Disconnected", RED)
             self.root.after(10000, self.autostart)
             return
         self._on_connected()
         self._log("[Monitor] Auto-started.")
 
     def _on_connection_change(self, connected):
-        self.root.after(0, lambda: self.obs_pill.set(
+        self.root.after(0, lambda: self._set_obs_status(
             *(("Connected", GREEN) if connected else ("Reconnecting...", RED))
         ))
 
     def _stop(self):
         self.monitor.stop()
         self.obs.disconnect()
-        self.obs_pill.set("Disconnected", RED)
-        self.start_btn.configure(state="normal", text="▶  Start monitoring")
-        self.stop_btn.configure(state="disabled")
+        self._set_obs_status("Disconnected", RED)
+        self._set_monitoring(False)
+        self._set_hero_state("offline")
 
     def _register_hotkey(self):
         binding = self.config.get("toggle_hotkey")
@@ -1185,7 +1544,7 @@ class AppWindow:
     def _animate_scanning(self, n=0):
         if not self._scanning:
             return
-        self.rescan_btn.configure(text="⟳  Scanning" + "." * (n % 4))
+        self.rescan_btn.configure(text="Scanning" + "." * (n % 4))
         self.root.after(350, lambda: self._animate_scanning(n + 1))
 
     def _rescan_steam(self):
@@ -1206,7 +1565,7 @@ class AppWindow:
                 self.root.after(0, lambda: self._log(f"[Steam] Rescan failed: {e}"))
             finally:
                 self._scanning = False
-                self.root.after(0, lambda: self.rescan_btn.configure(state="normal", text="⟳  Rescan Steam games"))
+                self.root.after(0, lambda: self.rescan_btn.configure(state="normal", text="↻  Rescan"))
 
         threading.Thread(target=worker, daemon=True).start()
 
