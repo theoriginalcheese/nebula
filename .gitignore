@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.pyc
+
+# Build output
+build/
+dist/
+
+# Logs
+logs/
+*.log
+
+# Machine-specific config & data (per-machine paths/prefs; regenerated on first run)
+config.json
+games.json
+steam_appid_cache.json
+
+# graphify knowledge graph (regenerate locally; not source)
+graphify-out/
+graphify-cluster.log
+graphify-extract.log
+
+# Misc runtime/output files
+obs_auto_record_log.txt
+obs_websocket.log
+SORTED NON-GAMES.txt
+
+# Unrelated stray file (RoboCopy shell-extension reg tweak, not part of Nebula)
+Windows Registry Editor Version 5.0.reg

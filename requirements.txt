@@ -1,0 +1,10 @@
+customtkinter
+websocket-client
+requests
+psutil
+pywin32
+pystray
+Pillow
+pycaw
+comtypes
+keyboard

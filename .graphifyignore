@@ -1,0 +1,16 @@
+# Keep the knowledge graph code-only so extraction runs fully local (no LLM key).
+# Non-code artifacts, logs, build output, and text data files:
+*.txt
+*.log
+*.html
+*.ico
+*.exe
+*.zip
+*.reg
+*.spec
+*.toc
+*.pyz
+*.pkg
+build/
+logs/
+graphify-out/
