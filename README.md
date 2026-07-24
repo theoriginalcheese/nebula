@@ -25,8 +25,13 @@ when you go idle, and stops when you're done.
   it doesn't pause mid-conversation just because you stopped moving the mouse.
 - **Stays out of the way.** Runs from the tray with an animated icon, silent slide-in
   notifications instead of Windows toasts, and a global hotkey to toggle monitoring.
-- **Syncs across machines.** Game classifications can live in a synced folder (e.g. OneDrive)
-  so a game you classify on the laptop is already known on the desktop.
+- **Syncs your game list across machines via GitHub.** Classifications live in a private
+  GitHub repo; Nebula pulls on startup and pushes after each change, so a game you classify
+  on one PC is instantly known on the others. Merge-safe (two machines can't wipe each other)
+  and fails soft when offline.
+- **Offloads recordings to a NAS.** Finished clips are copied to a NAS path and **byte-verified
+  (SHA-256)** before the local original is removed — a recording is never deleted without a
+  confirmed good copy. Survives the NAS going offline (queues and retries) and app restarts.
 
 ## The interface
 
@@ -103,9 +108,22 @@ Settings live in `config.json` next to the executable (created on first run):
 | `min_clip_seconds` | `10` | Clips shorter than this are auto-deleted (catches a window that just flickered) |
 | `obs_path` | — | OBS executable, used to auto-launch it if it isn't running |
 | `toggle_hotkey` | — | Global key to toggle monitoring on/off |
+| `github_token` | *(empty)* | Token with `repo` scope for the game-list sync. **Local only — never committed or synced.** |
+| `github_gamedata_repo` | *(empty)* | `owner/name` of the private repo holding `games.json` |
+| `github_gamedata_path` | `games.json` | File path within that repo |
+| `nas_offload_root` | *(empty)* | Destination for finished clips, e.g. a mapped drive `Z:/OBS Recordings` or a UNC path. Blank = offload off. |
+| `nas_offload_mode` | `copy` | `copy` keeps both copies; `move` deletes the local original **after** the NAS copy is byte-verified |
 
-A *relative* `sync_folder` resolves against each machine's own home directory, so the same
-config file works on machines with different Windows usernames.
+### Cross-device sync setup
+
+- **Game list (GitHub):** create a private repo, set `github_gamedata_repo` and a `github_token`
+  (`repo` scope) in each machine's `config.json`. The token stays local — it's never committed
+  (`config.json` is gitignored) and never travels in the synced `games.json`.
+- **Recordings (NAS):** set `nas_offload_root` to a path each machine can reach. On a machine
+  where the NAS is a mapped drive that's just `Z:/OBS Recordings`; over Tailscale it's a UNC
+  path like `\\<nas-ip>\<share>\OBS Recordings` (mount it once with saved credentials). Nebula
+  keeps clips local and retries whenever the path isn't reachable, so it's safe to set ahead of
+  mounting.
 
 ## How it fits together
 
@@ -116,10 +134,26 @@ config file works on machines with different Windows usernames.
 | `obsauto/obs_client.py` | Minimal obs-websocket v5 client |
 | `obsauto/classifier.py` | Game vs non-game classification (Steam-aware) |
 | `obsauto/steam_scanner.py` | Scans Steam libraries, parses VDF, classifies AppIDs |
-| `obsauto/gui.py` | The Aurora UI |
+| `obsauto/gui.py` | The Aurora UI (nav-rail shell, tile-grid dashboard) |
+| `obsauto/gamesync.py` | Game-list sync via the GitHub contents API (merge-safe, fails soft) |
+| `obsauto/offload.py` | Copy-verify-delete recording offload to the NAS |
 | `obsauto/theme_art.py` | Generates the nebula backdrop and glass panels |
 | `obsauto/audio_detect.py` | Detects whether a watched app (e.g. Discord) is producing audio |
 | `obsauto/tray_app.py` | Tray icon and menu |
+
+## Tests
+
+```bash
+python tests/test_async_connect.py   # async OBS connect, error handling
+python tests/test_views.py           # nav views + tile-grid dashboard
+python tests/test_list_views.py      # Recordings/Games populate
+python tests/test_frame_pacing.py    # visible-window frame budget
+python tests/test_gamesync.py        # game-list sync (mocked GitHub API)
+python tests/test_offload.py         # NAS offload safety invariants
+python tests/stress_test.py          # integrated stress under adverse load
+```
+
+All need a desktop session (they create a hidden Tk window); none need OBS.
 
 ## Licence
 

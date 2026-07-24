@@ -34,7 +34,9 @@ and `RESOURCE_DIR` (`sys._MEIPASS` when frozen) only for bundled read-only asset
 | `obsauto/obs_client.py` | `OBSClient`, `OBSError` | Minimal obs-websocket **v5** client |
 | `obsauto/classifier.py` | `Classifier` | Game vs non-game classification (Steam-aware hybrid) |
 | `obsauto/steam_scanner.py` | `build_steam_game_index()` | Scan Steam libraries, parse VDF, classify AppIDs |
-| `obsauto/gui.py` | `AppWindow` | CustomTkinter UI: "Aurora" shell (nav rail + hero dashboard), glass/rounded chrome |
+| `obsauto/gui.py` | `AppWindow` | CustomTkinter UI: "Aurora" shell (nav rail + tile-grid dashboard), glass/rounded chrome |
+| `obsauto/gamesync.py` | `GameSync` | Game-list sync via GitHub contents API — pull on start, push on change, merge-never-clobber, fails soft |
+| `obsauto/offload.py` | `Offloader` | NAS recording offload — copy → SHA-256 verify → (move mode) delete local; persisted queue, retries |
 | `obsauto/audio_detect.py` | `AudioKeepAlive` | Detect whether a watched app (e.g. Discord) is producing audio |
 | `obsauto/session_detect.py` | `moonlight_session_active()` | Detect a live Moonlight streaming session |
 | `obsauto/config.py` | `load_config()`, `save_config()` | Config persistence |
@@ -87,6 +89,21 @@ and a mock keypad that does nothing would be a lie.
   set to `OneDrive/ObsAutoFolder` on this user's machines
 - `idle_timeout_seconds` **4** · `min_clip_seconds` 10 · `poll_interval_seconds` 1
   (defaults per `obsauto/config.py`'s `DEFAULTS` — the live `config.json` may differ)
+
+## Sync & offload invariants (don't weaken)
+- **`GameSync.push()` must never PUT against an unknown remote.** If `fetch()` fails it
+  returns None (refuse) rather than treating the remote as empty — otherwise a failed read
+  overwrites and clobbers other devices' classifications (the stress test caught 156/160 lost).
+  It loops fetch-merge-PUT on 409. `main.py` always pushes the **full** `classifier.snapshot()`
+  and retries failures with backoff, so a dropped push is recovered by the next.
+- **`Offloader` never deletes a local clip without a byte-verified NAS copy.** Copy → SHA-256
+  both ends → only then (move mode) remove local. NAS unreachable / hash mismatch / short write
+  → keep local, retry. Queue persists to `APP_DIR/offload_queue.json` (survives restart). This
+  encodes [[obs-footage-sacred]] in code — don't relax it.
+- **Logging is coalesced and thread-safe.** Workers call `_log` from their own threads; it only
+  appends to a buffer under a lock, and `_flush_log` (Tk thread, ~80ms) batches the textbox
+  write, capped to LOG_HISTORY with top-trim. A per-line textbox write is a window composite
+  each — a burst pegged the UI at 371ms before this. Don't write the textbox from `_log` directly.
 
 ## Deferred-callback trap (bit us 2026-07-23 — check for it in review)
 `except SomeError as e:` **unbinds `e` when the block exits** (Python deletes the except
