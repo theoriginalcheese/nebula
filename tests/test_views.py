@@ -108,56 +108,85 @@ check("Activity replayed earlier lines", "before activity view was opened" in fu
 # Visibility gating: hidden window must skip animation work.
 check("animations gated while hidden", app._visible is False, app._visible)
 
-# ---- modular dashboard ----
+# ---- tile-grid dashboard ----
 app._show_view("dashboard")
 settle()
+
+
+def rects_ok(rects):
+    """No two blocks overlap, and everything stays inside the content area."""
+    x0 = app._content_x0()
+    boxes = [(n, r[0], r[1], r[0] + r[2], r[1] + r[3]) for n, r in rects.items()]
+    for i in range(len(boxes)):
+        for j in range(i + 1, len(boxes)):
+            _, ax0, ay0, ax1, ay1 = boxes[i]
+            _, bx0, by0, bx1, by1 = boxes[j]
+            if ax0 < bx1 - 0.5 and bx0 < ax1 - 0.5 and ay0 < by1 - 0.5 and by0 < ay1 - 0.5:
+                return False, f"overlap {boxes[i][0]} / {boxes[j][0]}"
+    for n, rx0, ry0, rx1, ry1 in boxes:
+        if rx0 < x0 - 0.5 or rx1 > gui.WIDTH - gui.MARGIN + 0.5 or ry1 > gui.HEIGHT + 0.5:
+            return False, f"{n} out of bounds"
+    return True, "ok"
+
+
 check("customise off by default", app._customising is False)
 check("grips hidden when not customising",
-      app.bg.itemcget(app._grips["hero"]["tile"], "state") == "hidden",
-      app.bg.itemcget(app._grips["hero"]["tile"], "state"))
+      app.bg.itemcget(app._grips["hero"]["tile"], "state") == "hidden")
 
 app._toggle_customise()
 settle(120)
 check("grips shown in customise mode",
-      app.bg.itemcget(app._grips["hero"]["tile"], "state") == "normal",
-      app.bg.itemcget(app._grips["hero"]["tile"], "state"))
+      app.bg.itemcget(app._grips["hero"]["tile"], "state") == "normal")
 
-default_order = list(app._layout_order)
-hero_y_before = app._blocks["hero"]["y"]
+# Default full-width layout: no overlaps, in bounds.
+ok, why = rects_ok(app._grid_rects)
+check("default grid has no overlaps", ok, why)
 
-# Reorder and confirm blocks actually move and stack without overlapping.
-app._apply_dashboard_layout(["activity", "stats", "hero"])
-settle(120)
-check("reorder applied", app._layout_order == ["activity", "stats", "hero"],
-      app._layout_order)
-check("hero physically moved", app._blocks["hero"]["y"] != hero_y_before,
-      f"{hero_y_before} -> {app._blocks['hero']['y']}")
-ys = [(app._blocks[b]["y"], app._blocks[b]["y"] + app._blocks[b]["h"])
-      for b in app._layout_order]
-check("blocks stack without overlap",
-      all(ys[i][1] <= ys[i + 1][0] for i in range(len(ys) - 1)), ys)
-check("layout stays inside the window",
-      ys[0][0] >= 56 and ys[-1][1] <= 760, (ys[0][0], ys[-1][1]))
-check("layout persisted to config",
-      app.config.get("dashboard_layout") == ["activity", "stats", "hero"],
-      app.config.get("dashboard_layout"))
+# Put stats and activity SIDE BY SIDE (both half). This is the whole point of
+# the grid over the old vertical reorder.
+app._relayout_grid([
+    {"name": "hero", "span": 2},
+    {"name": "stats", "span": 1},
+    {"name": "activity", "span": 1},
+])
+settle(150)
+sr, ar = app._grid_rects["stats"], app._grid_rects["activity"]
+check("stats & activity share a row (same y)", abs(sr[1] - ar[1]) < 1, (sr[1], ar[1]))
+check("stats left, activity right", sr[0] < ar[0], (sr[0], ar[0]))
+check("both are half width", sr[2] < (gui.WIDTH - gui.MARGIN - app._content_x0()) * 0.6)
+ok, why = rects_ok(app._grid_rects)
+check("side-by-side grid has no overlaps", ok, why)
+check("layout persisted as grid",
+      isinstance(app.config.get("dashboard_grid"), list)
+      and {"name": "stats", "span": 1} in app.config["dashboard_grid"],
+      app.config.get("dashboard_grid"))
+check("old dashboard_layout key retired", "dashboard_layout" not in app.config)
 
-# A corrupt/partial saved layout must never lose a panel.
-app.config["dashboard_layout"] = ["stats", "nonsense"]
-recovered = app._saved_layout()
-check("bad saved layout recovers all blocks",
-      sorted(recovered) == sorted(gui.DEFAULT_BLOCKS) and recovered[0] == "stats",
-      recovered)
+# Width toggle flips a block back to full.
+app._toggle_block_span("stats")
+settle(150)
+check("toggle made stats full width again",
+      app._grid_rects["stats"][2] > (gui.WIDTH - gui.MARGIN - app._content_x0()) * 0.9)
+
+# Every embedded widget survived the rebuilds (destroyed + recreated cleanly).
+check("record button rebuilt", str(app.record_toggle_btn.winfo_exists()) == "1")
+check("console rebuilt", str(app.console.winfo_exists()) == "1")
+
+# A corrupt/partial saved grid must never lose a panel.
+app.config["dashboard_grid"] = [{"name": "stats", "span": 1}, {"name": "nonsense"}]
+recovered = app._saved_grid()
+names = [it["name"] for it in recovered]
+check("bad saved grid recovers all blocks",
+      sorted(names) == sorted(gui.DEFAULT_BLOCKS) and names[0] == "stats", names)
 
 # Leaving the dashboard must drop customise mode rather than strand the grips.
-app._toggle_customise() if not app._customising else None
 app._set_customise(True)
 app._show_view("games")
 settle(120)
 check("customise cleared when leaving dashboard", app._customising is False)
 
 app._show_view("dashboard")
-app._apply_dashboard_layout(list(default_order))
+app._relayout_grid([dict(it) for it in gui.DEFAULT_GRID])
 settle(120)
 
 passed_all = all(p for _, p, _ in results)

@@ -121,6 +121,21 @@ LOG_HISTORY = 500  # lines kept for replay into the Activity view
 DEFAULT_BLOCKS = ("hero", "stats", "activity")
 BLOCK_LABELS = {"hero": "Now recording", "stats": "Stats", "activity": "Activity"}
 BLOCK_GAP = 18
+GRID_COL_GAP = 18
+HERO_H = 300
+# Fixed footprint heights per (block, span). span 2 = full width; span 1 = half
+# width (stats reflows to 2x2, so it's taller). Heights are fixed so laying the
+# grid out is pure arithmetic - no measuring, nothing to resize. Activity's 246
+# includes its 22px header.
+BLOCK_HEIGHTS = {
+    "hero": {2: HERO_H, 1: HERO_H},   # hero is full-width only; 1 is never used
+    "stats": {2: 92, 1: 198},
+    "activity": {2: 246, 1: 246},
+}
+# The dashboard layout is an ordered list of {"name", "span"}. Consecutive
+# half-span blocks pair left-to-right into one row; anything else takes a full
+# row. Persisted to config as "dashboard_grid".
+DEFAULT_GRID = [{"name": b, "span": 2} for b in DEFAULT_BLOCKS]
 
 
 # ---- DPI / UI scaling ----------------------------------------------------
@@ -873,73 +888,155 @@ class AppWindow:
     def _content_x0(self):
         return SIDEBAR_W + MARGIN
 
-    # ---- dashboard blocks (rearrangeable) ----
-    # Each block is built at its natural origin, then tagged. Because a canvas
-    # move() shifts every item carrying a tag - embedded widget windows included
-    # - rearranging the dashboard is pure translation of whole groups, with no
-    # rebuilding and nothing to keep in sync.
+    # ---- dashboard tile grid ----
+    # The dashboard is a 2-column grid. Its layout is an ordered list of
+    # {"name", "span"} (span 2 = full width, 1 = half); consecutive half blocks
+    # pair left-to-right into one row. Changing the layout REBUILDS the affected
+    # blocks at their new rects (they carry embedded widgets sized to their
+    # width, so they can't just be slid around like the old full-width-only
+    # reorder could). Heights are fixed per (block, span), so placement is pure
+    # arithmetic - see _compute_grid.
     def _build_dashboard(self):
-        self._blocks = {}
-        for name, builder, origin, height in (
-            ("hero", self._build_hero, 62, 300),
-            ("stats", self._build_stats, 380, 92),
-            ("activity", self._build_activity, 490, 246),
-        ):
+        self._grid_layout = self._saved_grid()
+        self._render_dashboard()
+
+    def _saved_grid(self):
+        """The grid layout from config, defended against a hand-edited or
+        older-format file. Unknown blocks dropped, missing ones appended full-
+        width, so a bad file can never lose a panel."""
+        def normalise(items, span_of):
+            cleaned, seen = [], set()
+            for it in items:
+                name = it if isinstance(it, str) else (it or {}).get("name")
+                if name in BLOCK_HEIGHTS and name not in seen:
+                    span = 2 if name == "hero" else span_of(it)
+                    cleaned.append({"name": name, "span": span})
+                    seen.add(name)
+            for b in DEFAULT_BLOCKS:
+                if b not in seen:
+                    cleaned.append({"name": b, "span": 2})
+            return cleaned
+
+        grid = self.config.get("dashboard_grid")
+        if isinstance(grid, list):
+            return normalise(grid, lambda it: 1 if isinstance(it, dict) and it.get("span") == 1 else 2)
+        # migrate the older name-only "dashboard_layout"
+        old = self.config.get("dashboard_layout")
+        if isinstance(old, list):
+            return normalise(old, lambda it: 2)
+        return [dict(it) for it in DEFAULT_GRID]
+
+    def _compute_grid(self, layout):
+        """Map an ordered layout to {name: (x, y, w, h)}. Full-span blocks take a
+        row; two consecutive half-span blocks share one."""
+        x0 = self._content_x0()
+        cw = WIDTH - MARGIN - x0
+        half_w = (cw - GRID_COL_GAP) / 2
+        rects = {}
+        y = 62
+        i, n = 0, len(layout)
+        while i < n:
+            name = layout[i]["name"]
+            span = 2 if name == "hero" else layout[i].get("span", 2)
+            partner = None
+            if span == 1 and i + 1 < n:
+                pn = layout[i + 1]["name"]
+                if pn != "hero" and layout[i + 1].get("span", 2) == 1:
+                    partner = layout[i + 1]["name"]
+            if partner:
+                hl, hr = BLOCK_HEIGHTS[name][1], BLOCK_HEIGHTS[partner][1]
+                rects[name] = (x0, y, half_w, hl)
+                rects[partner] = (x0 + half_w + GRID_COL_GAP, y, half_w, hr)
+                y += max(hl, hr) + BLOCK_GAP
+                i += 2
+            else:
+                h = BLOCK_HEIGHTS[name][2]  # a lone half falls back to full width
+                rects[name] = (x0, y, cw, h)
+                y += h + BLOCK_GAP
+                i += 1
+        return rects
+
+    def _render_dashboard(self):
+        self._dashboard_widgets = []
+        rects = self._compute_grid(self._grid_layout)
+        self._grid_rects = rects
+        builders = {"hero": lambda r: self._build_hero(r[0], r[1], r[2]),
+                    "stats": lambda r: self._build_stats(r[0], r[1], r[2]),
+                    "activity": lambda r: self._build_activity(r[0], r[1], r[2], r[3])}
+        for name in ("hero", "stats", "activity"):
             before = set(self.bg.find_all())
-            builder()
+            builders[name](rects[name])
             for item in set(self.bg.find_all()) - before:
                 self.bg.addtag_withtag(f"blk_{name}", item)
-            self._blocks[name] = {"origin": origin, "y": origin, "h": height}
-        self._build_customise_controls()
-        self._apply_dashboard_layout(self._saved_layout(), save=False)
+        self._build_customise_controls(rects)
 
-    def _saved_layout(self):
-        """Block order from config, defended against a hand-edited file."""
-        order = self.config.get("dashboard_layout")
-        if not isinstance(order, list):
-            return list(DEFAULT_BLOCKS)
-        cleaned = [b for b in order if b in self._blocks]
-        # Anything missing is appended, so a partial list can't lose a panel.
-        cleaned += [b for b in DEFAULT_BLOCKS if b not in cleaned]
-        return cleaned
+    def _relayout_grid(self, new_layout):
+        """Apply a new layout by tearing the dashboard down and rebuilding it at
+        the new rects. Only ever runs on a user action (drag / width toggle), so
+        the rebuild cost is irrelevant."""
+        for wdg in getattr(self, "_dashboard_widgets", []):
+            try:
+                wdg.destroy()
+            except Exception:
+                pass
+        self._dashboard_widgets = []
+        self.bg.delete("view_dashboard")  # blk_ items are a subset, gone too
+        # Rebuild against a pristine shell snapshot so embedded widgets sample
+        # the right backdrop (see _build_views).
+        self._composite = self._base_composite.copy()
+        self._grid_layout = [dict(it) for it in new_layout]
+        before = set(self.bg.find_all())
+        self._render_dashboard()
+        for item in set(self.bg.find_all()) - before:
+            self.bg.addtag_withtag("view_dashboard", item)
+        self._composite = self._base_composite
+        self._persist_grid(self._grid_layout)
+        self._set_hero_state(self._hero_state)
+        self._set_customise(self._customising)
+        self._log("[Manual] Dashboard layout changed.")
 
-    def _apply_dashboard_layout(self, order, save=True):
-        y = 62
-        for name in order:
-            block = self._blocks[name]
-            delta = y - block["y"]
-            if delta:
-                self.bg.move(f"blk_{name}", 0, delta)
-                block["y"] = y
-            y += block["h"] + BLOCK_GAP
-        self._layout_order = list(order)
-        if save:
-            self.config["dashboard_layout"] = list(order)
-            from .config import save_config
-            save_config(self.config)
+    def _persist_grid(self, layout):
+        self.config["dashboard_grid"] = [dict(it) for it in layout]
+        self.config.pop("dashboard_layout", None)  # retire the old key
+        from .config import save_config
+        save_config(self.config)
 
-    def _build_customise_controls(self):
-        """A grip per block plus a hint strip, all hidden until Customise is on."""
+    def _build_customise_controls(self, rects):
+        """A drag grip on each block plus a Full/Half toggle, hidden until
+        Customise is on. Built into the dashboard so they tag/relayout with it."""
         self._grips = {}
-        x0 = self._content_x0()
-        w = WIDTH - MARGIN - x0
-        for name in DEFAULT_BLOCKS:
-            block = self._blocks[name]
-            tile = self._glass(x0, block["origin"], w, 26, tint=ACCENT, radius=8,
-                               tint_alpha=70, border_hex=ACCENT, border_alpha=90)
+        for it in self._grid_layout:
+            name = it["name"]
+            x, y, w, _h = rects[name]
+            tile = self._glass(x, y, w, 26, tint=ACCENT, radius=8, tint_alpha=70,
+                               border_hex=ACCENT, border_alpha=90)
             label = self.bg.create_text(
-                x0 + 14, block["origin"] + 13, anchor="w",
-                text=f"⣿   {BLOCK_LABELS[name]}   —   drag to reorder",
+                x + 12, y + 13, anchor="w", text=f"⣿  {BLOCK_LABELS[name]}",
                 fill=NAV_ACTIVE_TEXT, font=("Segoe UI Semibold", 11))
             for item in (tile, label):
                 self.bg.tag_bind(item, "<ButtonPress-1>",
                                  lambda e, n=name: self._grip_press(e, n))
                 self.bg.tag_bind(item, "<B1-Motion>", self._grip_drag)
                 self.bg.tag_bind(item, "<ButtonRelease-1>", self._grip_release)
-            self._grips[name] = {"tile": tile, "label": label}
-            self.bg.addtag_withtag(f"blk_{name}", tile)
-            self.bg.addtag_withtag(f"blk_{name}", label)
-        self._set_customise(False)
+            parts = {"tile": tile, "label": label}
+            if name != "hero":  # hero is full-width only
+                chip_w = 52
+                cx = x + w - chip_w - 8
+                chip = self._glass(cx, y + 4, chip_w, 18, tint=BASE_BG, radius=6,
+                                   tint_alpha=140, border_alpha=0)
+                ctext = self.bg.create_text(
+                    cx + chip_w / 2, y + 13,
+                    text="Full" if it["span"] == 2 else "Half",
+                    fill=ACCENT_LIGHT, font=("Segoe UI", 9, "bold"))
+                for item in (chip, ctext):
+                    self.bg.tag_bind(item, "<Button-1>",
+                                     lambda e, n=name: self._toggle_block_span(n))
+                parts["chip"] = chip
+                parts["ctext"] = ctext
+            for item in parts.values():
+                self.bg.addtag_withtag(f"blk_{name}", item)
+            self._grips[name] = parts
+        self._set_customise(getattr(self, "_customising", False))
 
     def _set_customise(self, on):
         self._customising = on
@@ -954,37 +1051,49 @@ class AppWindow:
     def _toggle_customise(self):
         self._set_customise(not self._customising)
 
+    def _toggle_block_span(self, name):
+        if name == "hero" or not self._customising:
+            return
+        layout = [dict(it) for it in self._grid_layout]
+        for it in layout:
+            if it["name"] == name:
+                it["span"] = 1 if it["span"] == 2 else 2
+        self._relayout_grid(layout)
+
     def _grip_press(self, event, name):
         if not self._customising:
             return
         self._drag_block = name
-        self._drag_from_y = event.y / self.scale
-        self._drag_moved = 0
+        self._drag_last_y = event.y / self.scale
+        self._drag_live_y = self._grid_rects[name][1]
 
     def _grip_drag(self, event):
         if not getattr(self, "_drag_block", None):
             return
         now = event.y / self.scale
-        delta = now - self._drag_from_y
-        self.bg.move(f"blk_{self._drag_block}", 0, delta)
-        self._blocks[self._drag_block]["y"] += delta
-        self._drag_moved += delta
-        self._drag_from_y = now
+        delta = now - self._drag_last_y
+        self.bg.move(f"blk_{self._drag_block}", 0, delta)  # live feedback only
+        self._drag_live_y += delta
+        self._drag_last_y = now
 
     def _grip_release(self, _event):
         name = getattr(self, "_drag_block", None)
         if not name:
             return
         self._drag_block = None
-        # Snap: order the blocks by where their centres now sit, then re-lay out.
-        centres = [(self._blocks[b]["y"] + self._blocks[b]["h"] / 2, b)
-                   for b in self._layout_order]
-        centres.sort()
-        self._apply_dashboard_layout([b for _, b in centres])
-        self._log(f"[Manual] Dashboard layout: {' → '.join(self._layout_order)}")
+
+        def centre(bn):
+            r = self._grid_rects[bn]
+            top = self._drag_live_y if bn == name else r[1]
+            return top + r[3] / 2
+
+        # Stable sort by vertical centre: a side-by-side pair shares a centre, so
+        # their left-right order (list order) is preserved.
+        new_layout = sorted(self._grid_layout, key=lambda it: centre(it["name"]))
+        self._relayout_grid(new_layout)
 
     def _reset_dashboard(self):
-        self._apply_dashboard_layout(list(DEFAULT_BLOCKS))
+        self._relayout_grid([dict(it) for it in DEFAULT_GRID])
 
     # ---- shared building blocks for the secondary views ----
     def _view_panel(self, title, subtitle):
@@ -1275,9 +1384,11 @@ class AppWindow:
         self._open_path(os.path.join(APP_DIR, "logs"))
 
     # ---- hero recording card ----
-    def _build_hero(self):
-        x, y = self._content_x0(), 62
-        w, h = WIDTH - MARGIN - x, 300
+    def _build_hero(self, x, y, w):
+        # The hero always spans the full content width (its internal layout -
+        # readouts on the left, scene preview pinned right - is tuned for it), so
+        # the grid only ever varies its y. h is fixed.
+        h = HERO_H
         self._status_card_geom = (x, y, w, h)   # reused by _flash_status_card
         self._status_card_item = self._glass(x, y, w, h, radius=18)
 
@@ -1346,6 +1457,7 @@ class AppWindow:
         )
         self._record_btn_win = self.bg.create_window(
             left_x, bt_y, anchor="nw", window=self.record_toggle_btn, width=156, height=40)
+        self._dashboard_widgets.append(self.record_toggle_btn)
         pause_bg = self._bg_at(left_x + 166 + 60, bt_y + 20)
         self.pause_btn = ctk.CTkButton(
             self.root, text="❚❚  Pause", command=self._toggle_pause,
@@ -1355,6 +1467,7 @@ class AppWindow:
         )
         self._pause_btn_win = self.bg.create_window(
             left_x + 166, bt_y, anchor="nw", window=self.pause_btn, width=120, height=40)
+        self._dashboard_widgets.append(self.pause_btn)
 
         # --- scene preview + info row (right column) ---
         self._build_preview(preview_x, preview_y, preview_w, preview_h)
@@ -1490,61 +1603,69 @@ class AppWindow:
             self.pause_btn.configure(text="❚❚  Pause")
 
     # ---- stat tiles ----
-    def _build_stats(self):
-        x0, y = self._content_x0(), 380
-        total_w = WIDTH - MARGIN - x0
+    def _build_stats(self, x0, y, w):
+        # 4 tiles across when there's room (full-width), 2x2 when the panel is in
+        # a half-width grid slot. Every tile's contents are laid out relative to
+        # its own (tx, ty), so both arrangements just work.
         gap = 14
-        tw = (total_w - gap * 3) / 4
+        cols = 4 if w >= 480 else 2
+        tw = (w - gap * (cols - 1)) / cols
         h = 92
 
-        def tile(i):
-            return x0 + i * (tw + gap)
+        def cell(i):
+            col, row = i % cols, i // cols
+            return x0 + col * (tw + gap), y + row * (h + gap)
 
         # 1) Today's clips (filled in by _poll_disk_stats)
-        self._stat_tile(tile(0), y, tw, h, "▤", ACCENT, "Today")
+        tx, ty = cell(0)
+        self._stat_tile(tx, ty, tw, h, "▤", ACCENT, "Today")
         self._stat_today_val = self.bg.create_text(
-            tile(0) + 16, y + 48, anchor="w", text="–", fill=TEXT,
+            tx + 16, ty + 48, anchor="w", text="–", fill=TEXT,
             font=("Segoe UI Semibold", 22))
         self._stat_today_sub = self.bg.create_text(
-            tile(0) + 16, y + 72, anchor="w", text="scanning…", fill=MUTED,
+            tx + 16, ty + 72, anchor="w", text="scanning…", fill=MUTED,
             font=("Segoe UI", 12))
 
         # 2) Disk free
-        self._stat_tile(tile(1), y, tw, h, "▥", TEAL, "Disk free")
+        tx, ty = cell(1)
+        self._stat_tile(tx, ty, tw, h, "▥", TEAL, "Disk free")
         self._stat_disk_val = self.bg.create_text(
-            tile(1) + 16, y + 48, anchor="w", text="–", fill=TEXT,
+            tx + 16, ty + 48, anchor="w", text="–", fill=TEXT,
             font=("Segoe UI Semibold", 22))
         self._stat_disk_sub = self.bg.create_text(
-            tile(1) + 16, y + 72, anchor="w", text="", fill=MUTED,
+            tx + 16, ty + 72, anchor="w", text="", fill=MUTED,
             font=("Segoe UI", 12))
 
         # 3) Idle timeout - value + live slider (keeps the old control alive)
-        self._stat_tile(tile(2), y, tw, h, "◔", AMBER, "Idle timeout")
+        tx, ty = cell(2)
+        self._stat_tile(tx, ty, tw, h, "◔", AMBER, "Idle timeout")
         self.timeout_value_id = self.bg.create_text(
-            tile(2) + 16, y + 48, anchor="w",
+            tx + 16, ty + 48, anchor="w",
             text=f"{self.config['idle_timeout_seconds']}s", fill=TEXT,
             font=("Segoe UI Semibold", 22))
-        slider_bg = self._bg_at(tile(2) + tw / 2, y + 74)
+        slider_bg = self._bg_at(tx + tw / 2, ty + 74)
         slider = ctk.CTkSlider(
             self.root, from_=1, to=60, number_of_steps=59, command=self._on_timeout_change,
             fg_color=SURFACE, progress_color=AMBER, button_color=AMBER,
             button_hover_color=AMBER_LIGHT, bg_color=slider_bg, height=14,
         )
         slider.set(self.config["idle_timeout_seconds"])
-        self.bg.create_window(tile(2) + 16, y + 68, anchor="w", window=slider,
+        self.bg.create_window(tx + 16, ty + 68, anchor="w", window=slider,
                               width=int(tw - 32), height=14)
+        self._dashboard_widgets.append(slider)
 
         # 4) Sync + offload status. Top line: game-list sync (GitHub). Sub line:
         # NAS offload state, updated live by on_offload_state().
-        self._stat_tile(tile(3), y, tw, h, "⟳", BLUE, "Sync")
+        tx, ty = cell(3)
+        self._stat_tile(tx, ty, tw, h, "⟳", BLUE, "Sync")
         gh_on = bool(self.gamesync and self.gamesync.enabled)
         offload_on = bool(self.offloader and self.offloader.enabled)
-        self.bg.create_text(tile(3) + 16, y + 48, anchor="w",
+        self.bg.create_text(tx + 16, ty + 48, anchor="w",
                             text="GitHub" if gh_on else "Local",
                             fill=TEXT if gh_on else MUTED,
                             font=("Segoe UI Semibold", 22))
         self._stat_sync_sub = self.bg.create_text(
-            tile(3) + 16, y + 72, anchor="w",
+            tx + 16, ty + 72, anchor="w",
             text=("NAS offload on" if offload_on else "game list") if gh_on
                  else "local only",
             fill=MUTED, font=("Segoe UI", 12))
@@ -1572,18 +1693,18 @@ class AppWindow:
                             font=("Segoe UI", 11))
 
     # ---- activity log ----
-    def _build_activity(self):
-        x0, y = self._content_x0(), 490
-        w = WIDTH - MARGIN - x0
+    def _build_activity(self, x0, y, w, h):
+        # h is the whole footprint (header + panel). Header sits on top; the log
+        # panel fills the rest, so the block works at any grid height/width.
         self.bg.create_text(x0, y, anchor="nw", text="ACTIVITY", fill=FAINT,
                             font=("Segoe UI", 10, "bold"))
-        y += 22
-        panel_h = HEIGHT - MARGIN - y
-        self._glass(x0, y, w, panel_h, tint=LOG_TINT, radius=14, tint_alpha=195)
+        py = y + 22
+        panel_h = h - 22
+        self._glass(x0, py, w, panel_h, tint=LOG_TINT, radius=14, tint_alpha=195)
 
         # Rounded plate + a flat square textbox inset inside it (see the note in
         # the old build - a tall widget can't match a sheen gradient's corners).
-        box_x, box_y = x0 + 10, y + 10
+        box_x, box_y = x0 + 10, py + 10
         box_w, box_h = w - 20, panel_h - 20
         box_r = 10
         backing = make_solid_tile(self._S(box_w), self._S(box_h), LOG_BG, radius=self._S(box_r))
@@ -1600,6 +1721,11 @@ class AppWindow:
         self.bg.create_window(box_x + box_r, box_y + box_r, anchor="nw", window=self.console,
                               width=box_w - box_r * 2, height=box_h - box_r * 2)
         self._prepare_log_tags(self.console)
+        self._dashboard_widgets.append(self.console)
+        # Replay history so switching layouts (which rebuilds this) doesn't wipe
+        # the visible log.
+        for line in self._log_lines[-LOG_HISTORY:]:
+            self._append_log(self.console, line)
 
     # ---- disk / clip stats ----
     def _poll_disk_stats(self):
