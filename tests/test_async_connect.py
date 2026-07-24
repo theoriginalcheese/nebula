@@ -36,6 +36,11 @@ from obsauto import gui, hotkey
 
 hotkey.register = lambda *a, **k: None            # don't grab a global hotkey
 gui.ensure_obs_running = lambda *a, **k: time.sleep(0.2)  # don't launch OBS
+# Make the OBS-running check deterministic. A failed connect reports differently
+# depending on whether OBS is up ("enable WS") vs absent ("Disconnected"); the
+# real machine may have OBS running, so pin it False for the base cases and
+# flip it True where we specifically test the running-but-refused path.
+gui.is_obs_running = lambda: False
 
 from obsauto.classifier import Classifier
 from obsauto.config import load_config
@@ -138,12 +143,37 @@ def case_rescan_failure():
         check("rescan failure raised nothing", not callback_errors, first_error())
         check("rescan button re-enabled", app.rescan_btn.cget("state") == "normal",
               app.rescan_btn.cget("state"))
-        app.root.quit()
+        case_obs_running_refused()
 
     app.root.after(900, assert_recovered)
 
 
-EXPECTED_CHECKS = 9
+def case_obs_running_refused():
+    """OBS is running but its WebSocket port refuses: distinct, actionable
+    status rather than the generic 'Disconnected'."""
+    callback_errors.clear()
+    app._connecting = False
+    app.monitor._running = False
+    gui.is_obs_running = lambda: True   # simulate OBS up but not serving
+
+    def refused():
+        raise OBSError("simulated: connection refused")
+
+    app.obs.connect = refused
+    app.autostart()
+
+    def assert_actionable():
+        title = obs_title().lower()
+        check("running-but-refused gives WS hint",
+              "ws" in title or "enable" in title, obs_title())
+        check("refused path raised nothing", not callback_errors, first_error())
+        gui.is_obs_running = lambda: False  # restore
+        app.root.quit()
+
+    app.root.after(700, assert_actionable)
+
+
+EXPECTED_CHECKS = 11
 
 app.root.after(10, case_slow_failure)
 app.root.after(20000, app.root.quit)  # safety net so a hang can't block forever

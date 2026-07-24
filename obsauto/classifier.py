@@ -62,8 +62,12 @@ def _looks_like_installer_helper(basename):
 
 
 class Classifier:
-    def __init__(self, on_log=None):
+    def __init__(self, on_log=None, on_saved=None):
         self.on_log = on_log or (lambda msg: None)
+        # Fired (best-effort) right after the local games.json is written, so a
+        # sync layer can push the change up to GitHub. Kept decoupled: the
+        # classifier neither knows nor cares what's on the other end.
+        self.on_saved = on_saved or (lambda data: None)
         self._lock = threading.Lock()
         self._data = self._load()
         self._steam_index = {}  # installdir_lower -> display name
@@ -106,6 +110,38 @@ class Classifier:
         }
         with open(DATA_FILE, "w", encoding="utf-8") as f:
             json.dump(self._data, f, indent=2, sort_keys=True)
+        try:
+            self.on_saved(self._data)
+        except Exception as exc:
+            self.log(f"[Sync] on_saved hook failed: {exc}")
+
+    def snapshot(self):
+        """A copy of the current classification data, safe to hand to the sync
+        layer without it seeing mid-mutation state."""
+        with self._lock:
+            return {
+                "games": dict(self._data.get("games", {})),
+                "non_games": dict(self._data.get("non_games", {})),
+            }
+
+    def absorb(self, external):
+        """Merge a classification set pulled from elsewhere (GitHub) into the
+        local one. Local entries win on conflict - a decision made on this
+        machine isn't second-guessed by the remote. Returns how many new
+        entries were added, and persists if anything changed."""
+        if not external:
+            return 0
+        with self._lock:
+            before = len(self._data.get("games", {})) + len(self._data.get("non_games", {}))
+            self._data = {
+                "games": {**external.get("games", {}), **self._data.get("games", {})},
+                "non_games": {**external.get("non_games", {}), **self._data.get("non_games", {})},
+            }
+            after = len(self._data["games"]) + len(self._data["non_games"])
+        added = after - before
+        if added:
+            self._save()
+        return added
 
     # ---- Steam index (lazy, refreshed on demand) ----
     def refresh_steam_index(self):

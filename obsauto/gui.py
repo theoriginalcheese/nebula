@@ -15,7 +15,7 @@ from PIL import Image, ImageDraw, ImageFilter
 
 from . import classifier as classifier_module
 from .obs_client import OBSClient, OBSError
-from .monitor import Monitor, ensure_obs_running
+from .monitor import Monitor, ensure_obs_running, is_obs_running
 from .app_log import log_to_file
 from .theme_art import (
     generate_nebula, make_accent_glow, make_glass_tile, make_solid_tile, to_photo,
@@ -286,10 +286,12 @@ def _tint_for(color):
 
 
 class AppWindow:
-    def __init__(self, config, classifier, on_close_to_tray):
+    def __init__(self, config, classifier, on_close_to_tray, offloader=None, gamesync=None):
         self.config = config
         self.classifier = classifier
         self.on_close_to_tray = on_close_to_tray
+        self.offloader = offloader
+        self.gamesync = gamesync
 
         self.obs = OBSClient(
             config["obs_host"], config["obs_port"], config["obs_password"],
@@ -298,6 +300,7 @@ class AppWindow:
         self.monitor = Monitor(
             self.obs, classifier, config, on_log=self._log, on_state=self._on_state,
             on_notify=self._show_notification, on_connection_change=self._on_connection_change,
+            offloader=offloader,
         )
         self._notification = None
         self.tray_icon = None  # set by main.py after the tray icon is built
@@ -1531,16 +1534,34 @@ class AppWindow:
         self.bg.create_window(tile(2) + 16, y + 68, anchor="w", window=slider,
                               width=int(tw - 32), height=14)
 
-        # 4) Sync target
+        # 4) Sync + offload status. Top line: game-list sync (GitHub). Sub line:
+        # NAS offload state, updated live by on_offload_state().
         self._stat_tile(tile(3), y, tw, h, "⟳", BLUE, "Sync")
-        sync = self.config.get("sync_folder") or ""
-        sync_val = "OneDrive" if "onedrive" in sync.lower() else (
-            os.path.basename(sync.rstrip("/\\")) or "Local")
-        self.bg.create_text(tile(3) + 16, y + 48, anchor="w", text=sync_val,
-                            fill=TEXT, font=("Segoe UI Semibold", 22))
-        self.bg.create_text(tile(3) + 16, y + 72, anchor="w",
-                            text="synced" if sync else "local only", fill=MUTED,
-                            font=("Segoe UI", 12))
+        gh_on = bool(self.gamesync and self.gamesync.enabled)
+        offload_on = bool(self.offloader and self.offloader.enabled)
+        self.bg.create_text(tile(3) + 16, y + 48, anchor="w",
+                            text="GitHub" if gh_on else "Local",
+                            fill=TEXT if gh_on else MUTED,
+                            font=("Segoe UI Semibold", 22))
+        self._stat_sync_sub = self.bg.create_text(
+            tile(3) + 16, y + 72, anchor="w",
+            text=("NAS offload on" if offload_on else "game list") if gh_on
+                 else "local only",
+            fill=MUTED, font=("Segoe UI", 12))
+
+    def on_offload_state(self, pending):
+        """Called (from the offloader's thread) as the NAS queue drains."""
+        def apply():
+            if not hasattr(self, "_stat_sync_sub"):
+                return
+            if pending > 0:
+                text = f"NAS: {pending} queued"
+            elif self.offloader and self.offloader.enabled:
+                text = "NAS: up to date"
+            else:
+                text = "game list"
+            self.bg.itemconfigure(self._stat_sync_sub, text=text)
+        self._ui(apply)
 
     def _stat_tile(self, x, y, w, h, glyph, color, label):
         self._glass(x, y, w, h, tint=CARD_TINT, radius=14, tint_alpha=120,
@@ -2095,8 +2116,21 @@ class AppWindow:
     def _connect_failed(self, error):
         if self._abort_connect:
             return
-        self._log(f"[Monitor] OBS not available yet ({error}); retrying in 10s...")
-        self._set_obs_status("Disconnected", RED)
+        # Distinguish the two very different failures that both surface as a
+        # refused socket: OBS isn't running at all, vs OBS IS running but its
+        # WebSocket server isn't listening (server disabled in OBS, or the
+        # setting was changed without restarting). The second one is a
+        # dead-end retry loop unless the user does something in OBS, so say so
+        # clearly rather than looping "not available" forever.
+        if is_obs_running():
+            self._log("[Monitor] OBS is running but its WebSocket server isn't "
+                      "accepting connections. In OBS: Tools -> WebSocket Server "
+                      "Settings -> tick 'Enable WebSocket server' (or restart OBS). "
+                      "Retrying in 10s...")
+            self._set_obs_status("Enable WS in OBS", AMBER)
+        else:
+            self._log(f"[Monitor] OBS not available yet ({error}); retrying in 10s...")
+            self._set_obs_status("Disconnected", RED)
         self.root.after(10000, self.autostart)
 
     def _connect_succeeded(self):

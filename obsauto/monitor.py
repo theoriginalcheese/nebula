@@ -195,10 +195,11 @@ def get_foreground_window_info():
 
 class Monitor:
     def __init__(self, obs_client, classifier, config, on_log=None, on_state=None, on_notify=None,
-                 on_connection_change=None):
+                 on_connection_change=None, offloader=None):
         self.obs = obs_client
         self.classifier = classifier
         self.config = config
+        self.offloader = offloader  # optional NAS offloader; None = feature off
         self.on_log = on_log or (lambda msg: None)
         self.on_state = on_state or (lambda **kwargs: None)  # game, folder, idle
         self.on_notify = on_notify or (lambda event, display_name, details=None: None)  # event: "start"|"stop"|"pause"|"resume"
@@ -278,7 +279,8 @@ class Monitor:
         self.on_notify("stop", prev_name, {"duration": elapsed, "size": file_size})
 
         min_seconds = self.config.get("min_clip_seconds", 0)
-        if elapsed is not None and output_path and elapsed < min_seconds:
+        too_short = elapsed is not None and output_path and elapsed < min_seconds
+        if too_short:
             # OBS still holds the file open for a moment after StopRecord
             # returns (finalizing the container), so an immediate delete can
             # fail with "file in use" - retry briefly before giving up.
@@ -296,6 +298,12 @@ class Monitor:
                 self.log(f"[Monitor] Discarded clip under {min_seconds}s: {output_path}")
             else:
                 self.log(f"[Monitor] Failed to discard tiny clip {output_path}: {last_error}")
+        elif output_path and self.offloader is not None:
+            # A real clip that we're keeping: hand it to the NAS offloader (a
+            # no-op unless nas_offload_root is configured). This only queues -
+            # the copy/verify/delete happens on the offloader's own thread, so
+            # it never delays the monitor loop.
+            self.offloader.queue(output_path, prev_name)
 
         self._recording_started_at = None
         self._auto_paused = False  # a stop finalizes the file; any pause state is moot
