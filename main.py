@@ -89,11 +89,22 @@ class _GameListSync:
             self._timer.daemon = True
             self._timer.start()
 
-    def _push_now(self):
+    def _push_now(self, attempt=0):
+        # Always push the FULL local snapshot, so a push carries every
+        # classification this machine knows - a dropped push is then fully
+        # recovered by the next one (or by the startup push), never losing a
+        # game. On failure, retry with backoff instead of waiting for the next
+        # classification, which might be a long time coming.
         try:
-            self._sync.push(self._classifier.snapshot())
+            result = self._sync.push(self._classifier.snapshot())
         except Exception as exc:
             self._log(f"[Sync] push failed: {exc}")
+            result = None
+        if result is None and attempt < 4:
+            delay = min(60.0, 5.0 * (2 ** attempt))
+            t = threading.Timer(delay, lambda: self._push_now(attempt + 1))
+            t.daemon = True
+            t.start()
 
 
 def main():

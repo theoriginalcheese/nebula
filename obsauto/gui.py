@@ -335,6 +335,9 @@ class AppWindow:
         self._current_game = None
         self._eq_bars = []            # scene-preview equaliser bar canvas ids
         self._log_lines = []          # replayed into the Activity view when shown
+        self._log_pending = []        # buffered lines awaiting a coalesced flush
+        self._log_flush_scheduled = False
+        self._log_lock = threading.Lock()
         self.console = None           # set by _build_activity
         self.console_full = None      # set by _build_activity_view
 
@@ -1318,8 +1321,7 @@ class AppWindow:
                               width=box_w - 20, height=box_h - 20)
         self._prepare_log_tags(self.console_full)
         # Replay anything logged before this view existed.
-        for line in self._log_lines:
-            self._append_log(self.console_full, line)
+        self._append_log_batch(self.console_full, list(self._log_lines))
 
     # ---- Macropad ----
     def _build_macropad(self):
@@ -1724,8 +1726,7 @@ class AppWindow:
         self._dashboard_widgets.append(self.console)
         # Replay history so switching layouts (which rebuilds this) doesn't wipe
         # the visible log.
-        for line in self._log_lines[-LOG_HISTORY:]:
-            self._append_log(self.console, line)
+        self._append_log_batch(self.console, list(self._log_lines[-LOG_HISTORY:]))
 
     # ---- disk / clip stats ----
     def _poll_disk_stats(self):
@@ -1816,14 +1817,44 @@ class AppWindow:
             # this rather than crashing the monitor thread that logged it.
             pass
         log_to_file(message)
-        # Kept so the Activity view can replay history when it's first shown,
-        # and bounded so a long session can't grow this without limit.
-        self._log_lines.append(message)
-        if len(self._log_lines) > LOG_HISTORY:
-            del self._log_lines[:-LOG_HISTORY]
+        # Two things happen here, both cheap and thread-safe (this is called
+        # from the monitor/offload/sync worker threads): keep a bounded history
+        # for the Activity view to replay, and buffer the line for the UI. The
+        # actual textbox write is coalesced onto the Tk thread by _flush_log, so
+        # a burst of hundreds of lines becomes one textbox update per ~80ms
+        # instead of one window composite per line (which pegged the UI under a
+        # log flood), and Tk is only ever touched from the main thread.
+        with self._log_lock:
+            self._log_lines.append(message)
+            if len(self._log_lines) > LOG_HISTORY:
+                del self._log_lines[:-LOG_HISTORY]
+            self._log_pending.append(message)
+            schedule = not self._log_flush_scheduled
+            self._log_flush_scheduled = True
+        if schedule:
+            try:
+                self.root.after(80, self._flush_log)
+            except RuntimeError:
+                with self._log_lock:
+                    self._log_flush_scheduled = False
+
+    def _flush_log(self):
+        """Drain the pending buffer into the log textbox(es) in one batch. Runs
+        on the Tk thread (scheduled by _log)."""
+        with self._log_lock:
+            pending = self._log_pending
+            self._log_pending = []
+            self._log_flush_scheduled = False
+        if not pending:
+            return
+        # Under a burst, more lines can queue in one flush window than the log
+        # even keeps - anything older than the last LOG_HISTORY has already
+        # scrolled out of the bounded history, so there's no point rendering it.
+        if len(pending) > LOG_HISTORY:
+            pending = pending[-LOG_HISTORY:]
         for box in (self.console, getattr(self, "console_full", None)):
             if box is not None:
-                self._append_log(box, message)
+                self._append_log_batch(box, pending)
 
     def _prepare_log_tags(self, box):
         """Colour-code the [Subsystem] prefix and give lines breathing room.
@@ -1838,20 +1869,32 @@ class AppWindow:
         except Exception:
             pass
 
-    def _append_log(self, box, message):
+    def _append_log_batch(self, box, messages):
+        """Write many log lines with a single state toggle + one scroll, so the
+        cost is per-flush, not per-line."""
         box.configure(state="normal")
-        tagged = False
-        try:
-            m = re.match(r"\[(\w+)\]", message)
-            if m and m.group(1) in LOG_TAG_COLORS:
-                tb = box._textbox
-                tb.insert("end", m.group(0), (f"t_{m.group(1)}",))
-                tb.insert("end", message[m.end():] + "\n")
-                tagged = True
-        except Exception:
+        for message in messages:
             tagged = False
-        if not tagged:
-            box.insert("end", message + "\n")
+            try:
+                m = re.match(r"\[(\w+)\]", message)
+                if m and m.group(1) in LOG_TAG_COLORS:
+                    tb = box._textbox
+                    tb.insert("end", m.group(0), (f"t_{m.group(1)}",))
+                    tb.insert("end", message[m.end():] + "\n")
+                    tagged = True
+            except Exception:
+                tagged = False
+            if not tagged:
+                box.insert("end", message + "\n")
+        # Keep the widget bounded too, or a long session's textbox grows without
+        # limit and every insert gets slower. Trim from the top to LOG_HISTORY.
+        try:
+            tb = box._textbox
+            line_count = int(tb.index("end-1c").split(".")[0])
+            if line_count > LOG_HISTORY:
+                tb.delete("1.0", f"{line_count - LOG_HISTORY + 1}.0")
+        except Exception:
+            pass
         box.see("end")
         box.configure(state="disabled")
 

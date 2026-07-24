@@ -89,38 +89,44 @@ class GameSync:
         survives instead of being overwritten."""
         if not self.enabled:
             return None
-        remote = self.fetch()
-        if remote is None:
-            remote = {"games": {}, "non_games": {}}
-        merged = {
-            "games": {**remote.get("games", {}), **local_data.get("games", {})},
-            "non_games": {**remote.get("non_games", {}), **local_data.get("non_games", {})},
-        }
-        # Nothing to do if the remote already matches - avoids an empty commit
-        # every startup.
-        if merged == remote and self._sha is not None:
-            return merged
-        body = json.dumps(merged, indent=2, sort_keys=True) + "\n"
-        params = {
-            "message": "Update game classifications",
-            "content": base64.b64encode(body.encode("utf-8")).decode("ascii"),
-        }
-        if self._sha:
-            params["sha"] = self._sha
-        try:
-            resp = requests.put(self._url(), headers=self._headers(),
-                                json=params, timeout=_TIMEOUT)
-            # 409 = our cached sha is stale (another device pushed). Re-fetch and
-            # retry once against the new head.
-            if resp.status_code == 409:
-                self.fetch()
-                if self._sha:
-                    params["sha"] = self._sha
+        # Fetch-merge-PUT in a loop. Each PUT is tagged with the exact sha we
+        # just read, so a 409 (someone else pushed in between) sends us round to
+        # re-fetch and re-merge against the new head instead of losing their
+        # change. Bounded so a hot-contended file can't spin forever.
+        for _ in range(6):
+            remote = self.fetch()
+            if remote is None:
+                # We could NOT read the current remote. Pushing now would base a
+                # write on an unknown state - if _sha is stale/None the contents
+                # API would overwrite whatever is really there, clobbering other
+                # devices. So refuse; the caller retries later (data stays safe
+                # in the local games.json meanwhile). This was the concurrency
+                # data-loss the stress test caught.
+                return None
+            merged = {
+                "games": {**remote.get("games", {}), **local_data.get("games", {})},
+                "non_games": {**remote.get("non_games", {}), **local_data.get("non_games", {})},
+            }
+            # Remote already has everything - no empty commit.
+            if merged == remote and self._sha is not None:
+                return merged
+            body = json.dumps(merged, indent=2, sort_keys=True) + "\n"
+            params = {
+                "message": "Update game classifications",
+                "content": base64.b64encode(body.encode("utf-8")).decode("ascii"),
+            }
+            if self._sha:
+                params["sha"] = self._sha
+            try:
                 resp = requests.put(self._url(), headers=self._headers(),
                                     json=params, timeout=_TIMEOUT)
-            resp.raise_for_status()
-            self._sha = resp.json().get("content", {}).get("sha")
-            return merged
-        except Exception as exc:
-            self._log(f"[Sync] GitHub push failed: {exc}")
-            return None
+                if resp.status_code == 409:
+                    continue  # stale sha; loop to re-fetch + re-merge
+                resp.raise_for_status()
+                self._sha = resp.json().get("content", {}).get("sha")
+                return merged
+            except Exception as exc:
+                self._log(f"[Sync] GitHub push failed: {exc}")
+                return None
+        self._log("[Sync] GitHub push gave up after repeated conflicts.")
+        return None

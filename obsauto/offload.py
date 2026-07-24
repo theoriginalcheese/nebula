@@ -30,6 +30,7 @@ import threading
 import time
 
 _CHUNK = 4 * 1024 * 1024  # 4 MiB
+_RETRY_BACKOFF = 10       # seconds to wait before retrying a failed item
 
 
 def _sanitize(name):
@@ -139,8 +140,12 @@ class Offloader:
                 self._notify()
             else:
                 # Leave it at the head of the queue and back off before retrying;
-                # the NAS is probably offline or full.
-                time.sleep(30)
+                # the NAS is probably offline or full. Interruptible, so a fresh
+                # enqueue (or stop) wakes us immediately rather than waiting out
+                # the whole backoff - and short enough that a NAS coming back is
+                # picked up promptly.
+                self._wake.wait(timeout=_RETRY_BACKOFF)
+                self._wake.clear()
 
     def _process(self, item):
         src = item["path"]
