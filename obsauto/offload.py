@@ -79,6 +79,15 @@ class Offloader:
         self._stop = True
         self._wake.set()
 
+    def refresh(self):
+        """Called after the offload settings are edited. `root`/`mode` are
+        properties over the live config dict, so the new values are already in
+        effect - what this adds is waking the worker, so a queue that had backed
+        off against an unset/unreachable root retries immediately instead of
+        sitting out the rest of its backoff."""
+        self._wake.set()
+        self._notify()
+
     # ---- public: enqueue a finished clip ----
     def queue(self, path, game):
         if not self.enabled or not path:
