@@ -16,6 +16,7 @@ from PIL import Image, ImageDraw, ImageFilter
 
 from . import classifier as classifier_module
 from . import design_v3 as dv
+from . import settings_spec
 from .obs_client import OBSClient, OBSError
 from .monitor import Monitor, ensure_obs_running, is_obs_running
 from .app_log import log_to_file
@@ -1736,153 +1737,188 @@ class AppWindow:
 
     # ---- Settings ----
     # ---- Settings (frame 2c) ----
-    # v2 was read-only. v3 writes config.json, and the frame's rules are exact:
+    # v2 was read-only. This writes config.json, following the frame's rules:
+    # write on blur (not per keystroke), the saved timestamp in the pane header,
+    # a unit suffix on every *_seconds field, and the mono config-key caption
+    # under every label - which is part of the design, not a debug aid.
     #
-    #   "Writes config.json on blur"      - not per keystroke
-    #   "Saved 21:12:04"                  - the timestamp lives in the header
-    #   every *_seconds field renders its unit suffix
-    #   "Never silently drop an unknown key - merge over DEFAULTS and keep the rest"
+    # The fields come from obsauto/settings_spec.py rather than from
+    # dv.CONFIG_MAP. That module arrived from a parallel Cursor branch and is
+    # the better source: it is pure and testable without a Tk window, it covers
+    # every key in config.DEFAULTS rather than only the thirteen the v3 table
+    # lists, and each field carries validation bounds plus a `restart` reason
+    # when a value can't be applied live. dv.CONFIG_MAP stays as the transcribed
+    # spec table (test_design_v3 checks it against BUILD-SPEC.md); this pane
+    # renders the superset, because a Settings page that cannot edit
+    # github_token or nas_offload_root would be worse than one that departs
+    # from the frame's five section names.
     #
-    # The mono config-key caption under each label is part of the design, not a
-    # debug aid, so it is rendered for every field from dv.CONFIG_MAP.
-    SETTINGS_ROW_H = 62
+    # ⚠️ A text field costs one full window composite per keystroke on this
+    # window. That is unavoidable for a text field, so the design spends exactly
+    # that and no more: no live validation, no status updates while typing.
+    # tests/test_settings_typing.py measures it - and note p50 frame time is
+    # blind to it, because keystrokes are sparse relative to the heartbeat.
 
     def _build_settings(self):
-        (x, y, w, h), sub = self._view_panel(
-            "Settings", "Writes config.json on blur")
+        (x, y, w, h), sub = self._view_panel("Settings", "Writes config.json on blur")
         self._settings_sub = sub
         self._settings_saved_at = None
-        self._settings_fields = {}     # key -> (widget, kind)
+        self._settings_fields = {}          # key -> (widget, field)
 
         self._view_button(x + w - 136, y + 20, 116, "Open config",
                           self._open_config_file)
         self._view_button(x + w - 262, y + 20, 116, "Open logs",
                           self._open_logs_folder)
 
-        # Section rail, then the fields for the active section.
-        self._settings_section = dv.SETTINGS_SECTIONS[0]
-        self._settings_body = (x + 200, y + 76, w - 224, h - 92)
+        self._settings_group = settings_spec.GROUPS[0][0]
         self._settings_nav = {}
         ny = y + 78
-        for name in dv.SETTINGS_SECTIONS:
-            self._settings_nav[name] = self._settings_nav_item(x + 20, ny, 164, 34, name)
+        for key, title, _blurb in settings_spec.GROUPS:
+            self._settings_nav[key] = self._settings_nav_item(x + 20, ny, 172, 34, title, key)
             ny += 38
 
-        # _scroll_list, not a bare CTkScrollableFrame: one can't go straight
-        # into canvas.create_window() ("can't use ... in a window item of this
-        # canvas"). _scroll_list already does the rounded-plate-plus-inset trick.
-        bx, by, bw, bh = self._settings_body
+        bx, by = x + 208, y + 76
+        bw, bh = w - 232, h - 92
+        # _scroll_list, not a bare CTkScrollableFrame: the latter cannot go into
+        # canvas.create_window() ("can't use ... in a window item of this canvas").
         self._settings_host = self._scroll_list(bx, by, bw, bh)
+        self._render_settings_group()
 
-        self._render_settings_section()
-
-    def _settings_nav_item(self, x, y, w, h, name):
+    def _settings_nav_item(self, x, y, w, h, title, key):
         tile = self._glass(x, y, w, h, tint=ACCENT, radius=dv.RADIUS_CONTROL,
                            tint_alpha=36, border_alpha=0)
-        label = self.bg.create_text(x + 14, y + h / 2, anchor="w", text=name,
+        label = self.bg.create_text(x + 14, y + h / 2, anchor="w", text=title,
                                     fill=MUTED, font=dv.type_font("body"))
         hit = self.bg.create_rectangle(x, y, x + w, y + h, fill="", outline="")
-        parts = {"tile": tile, "text": label}
         for item in (hit, label):
             self.bg.tag_bind(item, "<Button-1>",
-                             lambda _e, n=name: self._show_settings_section(n))
+                             lambda _e, k=key: self._show_settings_group(k))
             self.bg.tag_bind(item, "<Enter>", lambda _e: self.bg.configure(cursor="hand2"))
             self.bg.tag_bind(item, "<Leave>", lambda _e: self.bg.configure(cursor=""))
-        return parts
+        return {"tile": tile, "text": label}
 
-    def _show_settings_section(self, name):
-        self._settings_section = name
-        self._render_settings_section()
+    def _show_settings_group(self, key):
+        self._settings_group = key
+        self._render_settings_group()
 
-    def _render_settings_section(self):
-        for name, parts in self._settings_nav.items():
-            active = name == self._settings_section
+    def _render_settings_group(self):
+        for key, parts in self._settings_nav.items():
+            active = key == self._settings_group
             self.bg.itemconfigure(parts["tile"], state="normal" if active else "hidden")
-            self.bg.itemconfigure(parts["text"],
-                                  fill=NAV_ACTIVE_TEXT if active else MUTED)
+            self.bg.itemconfigure(parts["text"], fill=NAV_ACTIVE_TEXT if active else MUTED)
 
         for child in self._settings_host.winfo_children():
             child.destroy()
         self._settings_fields = {}
-        for label, key, section, unit in dv.CONFIG_MAP:
-            if section == self._settings_section:
-                self._settings_field(label, key, unit)
 
-    def _settings_field(self, label, key, unit):
-        value = self.config.get(key, "")
+        blurb = next((b for k, _t, b in settings_spec.GROUPS if k == self._settings_group), "")
+        if blurb:
+            ctk.CTkLabel(self._settings_host, text=blurb, anchor="w", justify="left",
+                         wraplength=520, text_color=FAINT,
+                         font=ctk.CTkFont(size=11)).pack(anchor="w", padx=12, pady=(10, 2))
+        for field in settings_spec.fields_in(self._settings_group):
+            self._settings_field(field)
+
+    def _settings_field(self, field):
         row = ctk.CTkFrame(self._settings_host, fg_color="transparent")
-        row.pack(fill="x", padx=10, pady=(8, 2))
+        row.pack(fill="x", padx=12, pady=(8, 2))
 
         head = ctk.CTkFrame(row, fg_color="transparent")
         head.pack(fill="x")
-        ctk.CTkLabel(head, text=label, anchor="w", text_color=TEXT,
+        ctk.CTkLabel(head, text=field.label, anchor="w", text_color=TEXT,
                      font=ctk.CTkFont(size=12)).pack(side="left")
-        # The config key, in mono, under the label - part of the design.
-        ctk.CTkLabel(head, text=key, anchor="w", text_color=FAINT,
+        # The config key in mono under the label - part of the design.
+        ctk.CTkLabel(head, text=field.key, anchor="w", text_color=FAINT,
                      font=ctk.CTkFont(family="Consolas", size=10)).pack(side="left", padx=8)
-        if unit:
-            ctk.CTkLabel(head, text=unit, anchor="e", text_color=FAINT,
+        if field.key.endswith("_seconds"):
+            ctk.CTkLabel(head, text="seconds", text_color=FAINT,
                          font=ctk.CTkFont(size=10)).pack(side="right")
 
-        if isinstance(value, bool):
-            widget = ctk.CTkSwitch(
-                row, text="", progress_color=ACCENT, button_color=SURFACE,
-                command=lambda k=key: self._settings_commit(k))
-            widget.select() if value else widget.deselect()
+        value = self.config.get(field.key)
+        if field.kind == "choice":
+            widget = ctk.CTkOptionMenu(
+                row, values=list(field.choices), fg_color=SURFACE,
+                button_color=SURFACE, button_hover_color=SURFACE_HOVER,
+                text_color=TEXT, corner_radius=dv.RADIUS_CONTROL,
+                font=ctk.CTkFont(size=12),
+                command=lambda _v, k=field.key: self._settings_commit(k))
+            widget.set(settings_spec.render(field, value) or field.choices[0])
             widget.pack(anchor="w", pady=(4, 0))
-            kind = "bool"
         else:
-            shown = ", ".join(value) if isinstance(value, list) else str(value)
             widget = ctk.CTkEntry(
                 row, fg_color=dv.GROUND, border_color=EDGE, border_width=1,
                 text_color=TEXT, corner_radius=dv.RADIUS_CONTROL, height=30,
                 font=ctk.CTkFont(family="Consolas", size=12),
-                show="*" if "password" in key else "")
-            widget.insert(0, shown)
+                show="*" if field.kind == "secret" else "")
+            widget.insert(0, settings_spec.render(field, value))
             widget.pack(fill="x", pady=(4, 0))
-            # "Write on blur, not per keystroke." Return commits too - a field
-            # you finish typing in and hit Enter on should not need defocusing.
-            widget.bind("<FocusOut>", lambda _e, k=key: self._settings_commit(k))
-            widget.bind("<Return>", lambda _e, k=key: self._settings_commit(k))
-            kind = "list" if isinstance(value, list) else type(value).__name__
+            # "Write on blur, not per keystroke." Return commits too, so a field
+            # you finish typing in doesn't need defocusing first.
+            widget.bind("<FocusOut>", lambda _e, k=field.key: self._settings_commit(k))
+            widget.bind("<Return>", lambda _e, k=field.key: self._settings_commit(k))
 
-        self._settings_fields[key] = (widget, kind)
+        hint = field.hint
+        if field.restart:
+            hint = (hint + "  " if hint else "") + f"Takes effect after a restart — {field.restart}."
+        if hint:
+            ctk.CTkLabel(row, text=hint, anchor="w", justify="left", wraplength=520,
+                         text_color=FAINT, font=ctk.CTkFont(size=10)).pack(
+                anchor="w", pady=(2, 0))
+
+        self._settings_fields[field.key] = (widget, field)
 
     def _settings_commit(self, key):
-        widget, kind = self._settings_fields[key]
+        widget, field = self._settings_fields[key]
         old = self.config.get(key)
-        if kind == "bool":
-            new = bool(widget.get())
-        else:
-            raw = widget.get().strip()
-            if kind == "list":
-                new = [p.strip() for p in raw.split(",") if p.strip()]
-            elif kind == "int":
-                try:
-                    new = int(raw)
-                except ValueError:
-                    # Put the old value back rather than writing nonsense.
-                    widget.delete(0, "end")
-                    widget.insert(0, str(old))
-                    self._log(f"[Manual] {key} needs a whole number - kept {old}")
-                    return
-            elif kind == "NoneType":
-                new = None if not raw else (int(raw) if raw.isdigit() else raw)
-            else:
-                new = raw
-        if new == old:
+        value, error = settings_spec.parse(field, widget.get())
+        if error:
+            # Put the stored value back rather than writing nonsense. Reported
+            # to the log, not inline, so typing stays one composite per key.
+            if field.kind != "choice":
+                widget.delete(0, "end")
+                widget.insert(0, settings_spec.render(field, old))
+            self._log(f"[Manual] {field.label}: {error} — kept {old!r}")
             return
-        self.config[key] = new
+        if value == old:
+            return
+        self.config[key] = value
         self._save_settings()
-        self._log(f"[Manual] {key} = {new!r}")
+        self._log(f"[Manual] {key} = {value!r}")
+        self._settings_apply_live(key, value)
+
+    def _settings_apply_live(self, key, value):
+        """Push an edited value into the object that owns it.
+
+        Most config is read live off the shared dict, so nothing is needed. The
+        exceptions are the objects holding OS-level or cached state: a hotkey
+        hook must be taken down before a new one is bound (a lingering
+        suppress=True hook keeps swallowing the old key system-wide), and the
+        offload worker needs waking so a queue that backed off against an
+        unreachable root retries at once. Fields that genuinely can't apply live
+        carry a `restart` reason and say so under the field.
+        """
+        try:
+            if key in ("toggle_hotkey", "toggle_hotkey_scancode"):
+                self._register_hotkey()
+            elif key.startswith("nas_offload") and self.offloader:
+                self.offloader.refresh()
+            elif key == "keep_alive_audio_processes":
+                keepalive = getattr(self.monitor, "audio_keepalive", None)
+                if keepalive and hasattr(keepalive, "set_processes"):
+                    keepalive.set_processes(value)
+            elif key.startswith("github_") and self.gamesync:
+                self.gamesync.configure(self.config)
+        except Exception as exc:
+            error = exc
+            self._log(f"[Manual] Couldn't apply {key} live: {error}")
 
     def _save_settings(self):
         """Merge over DEFAULTS and keep everything else.
 
-        load_config() already starts from DEFAULTS and updates from the file, so
+        load_config() starts from DEFAULTS and updates from the file, so
         self.config carries any key a hand-edited config.json had - including
         ones this app has never heard of. Writing it back whole is what keeps
-        the spec's "never silently drop an unknown key" true.
+        "never silently drop an unknown key" true.
         """
         from .config import save_config
         try:
@@ -1892,8 +1928,9 @@ class AppWindow:
             self._log(f"[Manual] Couldn't write config.json: {error}")
             return
         self._settings_saved_at = time.strftime("%H:%M:%S")
-        self.bg.itemconfigure(self._settings_sub,
-                              text=f"Writes config.json on blur  ·  Saved {self._settings_saved_at}")
+        self.bg.itemconfigure(
+            self._settings_sub,
+            text=f"Writes config.json on blur  ·  Saved {self._settings_saved_at}")
 
     def _open_config_file(self):
         from .paths import APP_DIR

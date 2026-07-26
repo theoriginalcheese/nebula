@@ -149,8 +149,15 @@ check("24px margin from the right edge", abs((right - sw - margin) - x) <= 1,
       (right - sw - margin, x))
 check("24px margin from the bottom edge", abs((bottom - sh - margin) - y_end) <= 1,
       (bottom - sh - margin, y_end))
-check("sits above the taskbar (work area, not full screen)",
-      bottom <= app.root.winfo_screenheight(), (bottom, app.root.winfo_screenheight()))
+# Don't compare against winfo_screenheight(): that's the PRIMARY monitor in
+# logical units, while the work area is physical and may be a different screen
+# entirely (the toast follows the cursor). Assert the rect is sane and that the
+# toast fits inside it instead.
+check("work area is a sane rect", right > left and bottom > top,
+      (left, top, right, bottom))
+check("toast sits wholly inside the work area",
+      x >= left and y_end >= top and x + sw <= right and y_end + sh <= bottom,
+      (x, y_end, sw, sh, (left, top, right, bottom)))
 check("margin is the spec's 24", dv.TOAST_MARGIN == 24, dv.TOAST_MARGIN)
 
 # ---- click focuses the window ----------------------------------------------

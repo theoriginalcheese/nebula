@@ -23,6 +23,7 @@ gui.ensure_obs_running = lambda *a, **k: None
 
 from obsauto import config as config_module
 from obsauto import design_v3 as dv
+from obsauto import settings_spec
 from obsauto.classifier import Classifier
 from obsauto.config import DEFAULTS, load_config
 from obsauto.gui import AppWindow
@@ -78,10 +79,13 @@ def field_texts():
 
 
 # ---- sections ----
-check("five sections", list(app._settings_nav) == dv.SETTINGS_SECTIONS,
+# The pane renders settings_spec.GROUPS (the superset of DEFAULTS), not
+# dv.CONFIG_MAP's five spec-table sections - see the note above _build_settings.
+check("nav matches settings_spec groups",
+      list(app._settings_nav) == [g[0] for g in settings_spec.GROUPS],
       list(app._settings_nav))
-check("opens on Connection", app._settings_section == "Connection",
-      app._settings_section)
+check("opens on the first group", app._settings_group == settings_spec.GROUPS[0][0],
+      app._settings_group)
 
 texts = field_texts()
 check("field labels rendered", "Host" in texts, texts[:6])
@@ -90,18 +94,18 @@ check("config key shown under the label", "obs_host" in texts, texts[:8])
 check("only this section's fields", "recording_root" not in texts, texts)
 
 # ---- every *_seconds field carries its unit ----
-app._show_settings_section("Idle & audio")
+app._show_settings_group("recording")
 settle(120)
 texts = field_texts()
 check("idle timeout key shown", "idle_timeout_seconds" in texts, texts[:8])
 check("seconds unit rendered", "seconds" in texts, texts[:12])
-mapped = [k for _l, k, s, _u in dv.CONFIG_MAP if s == "Idle & audio"]
-check("section shows all its mapped keys", all(k in texts for k in mapped), mapped)
+grouped = [f.key for f in settings_spec.fields_in("recording")]
+check("group shows all its fields", all(k in texts for k in grouped), grouped)
 
 # ---- write on blur, not per keystroke ----
-app._show_settings_section("Storage")
+app._show_settings_group("recording")
 settle(120)
-widget, kind = app._settings_fields["recording_root"]
+widget, _field = app._settings_fields["recording_root"]
 before = len(saved)
 widget.delete(0, "end")
 widget.insert(0, "E:/Clips")
@@ -128,9 +132,9 @@ check("re-commit of an unchanged value is a no-op", len(saved) == before,
       len(saved) - before)
 
 # ---- ints stay ints; junk is rejected, not written ----
-app._show_settings_section("Idle & audio")
+app._show_settings_group("recording")
 settle(120)
-widget, _ = app._settings_fields["idle_timeout_seconds"]
+widget, _field = app._settings_fields["idle_timeout_seconds"]
 widget.delete(0, "end")
 widget.insert(0, "9")
 app._settings_commit("idle_timeout_seconds")
@@ -148,7 +152,7 @@ check("refused edit writes nothing", len(saved) == before, len(saved) - before)
 check("refused edit restores the old text", widget.get() == str(before_val), widget.get())
 
 # ---- list field round-trips ----
-widget, kind = app._settings_fields["keep_alive_audio_processes"]
+widget, _field = app._settings_fields["keep_alive_audio_processes"]
 check("list field renders comma-separated", "," in widget.get() or widget.get(),
       widget.get())
 widget.delete(0, "end")
@@ -159,9 +163,9 @@ check("list field parses back to a list",
       app.config["keep_alive_audio_processes"])
 
 # ---- password is masked ----
-app._show_settings_section("Connection")
+app._show_settings_group("obs")
 settle(120)
-widget, _ = app._settings_fields["obs_password"]
+widget, _field = app._settings_fields["obs_password"]
 check("password field is masked", widget.cget("show") == "*", widget.cget("show"))
 
 # ---- never drop an unknown key ----
@@ -173,13 +177,15 @@ check("every DEFAULTS key survives the write", not missing, missing)
 
 # ---- every mapped control exists somewhere ----
 seen = set()
-for section in dv.SETTINGS_SECTIONS:
-    app._show_settings_section(section)
+for group, _title, _blurb in settings_spec.GROUPS:
+    app._show_settings_group(group)
     settle(60)
     seen |= set(app._settings_fields)
 mapped_all = {k for _l, k, _s, _u in dv.CONFIG_MAP}
 check("every CONFIG_MAP key has a field", mapped_all <= seen,
       sorted(mapped_all - seen))
+check("every DEFAULTS key is editable", set(DEFAULTS) <= seen,
+      sorted(set(DEFAULTS) - seen))
 
 check("no callback exceptions", not callback_errors,
       callback_errors[0].strip().splitlines()[-1] if callback_errors else "clean")

@@ -86,10 +86,10 @@ and a mock keypad that does nothing would be a lie.
 
 ## UI v3 — dashboard + tray built, other panes still v2 (2026-07-26)
 
-Work lives on branch **`ui-v3`**. **Steps 1–5 of the v3 build order are done**: palette,
+Work lives on branch **`ui-v3`**. **Steps 1–6 of the v3 build order are done**: palette,
 geometry, backdrop, titlebar, rail, pane header (frame 2a); the hero card with its four states
-(2a, 2f–2h) plus stat tiles and activity header; the tray icon + menu (2j); the toast (2i); and the Clips pane (2b).
-Games / Macropad / Settings are **still v2's**, and the mini overlay doesn't exist.
+(2a, 2f–2h) plus stat tiles and activity header; the tray icon + menu (2j); the toast (2i); the Clips pane (2b); and the editable Settings pane (2c).
+Games / Macropad are **still v2's**, and the mini overlay doesn't exist.
 Full state and next actions: `CURSOR-PROMPT.md`.
 
 **The toast is a single slot.** One `Toplevel` for the whole process life — the first event
@@ -152,6 +152,24 @@ The collisions, short form (long form in the handoff):
    whole connected macropad with an HID id). Build the source or omit the element.
 3. v3 wants a **resizable** window (1280×808, min 1080×700) against today's fixed-pixel
    `ScaledCanvas`. Open decision — handoff §2.4 recommends keeping fixed-pixel.
+
+## Settings editing (`obsauto/settings_spec.py`)
+
+Fields are declared **once** in `settings_spec.py` - pure, testable without a Tk
+window, covering every key in `DEFAULTS`, each with validation bounds and, where a
+value can't apply live, the `restart` reason to show under the field. The pane walks
+that list, so the two can't drift. `_settings_apply_live()` pushes edits into the
+objects holding OS-level state: the hotkey hook must be torn down before rebinding
+(a lingering `suppress=True` hook keeps swallowing the old key system-wide) and the
+offload worker needs waking so a backed-off queue retries at once.
+
+> ⚠️ **The ~100ms composite rule is about canvas mutations, not embedded widgets.**
+> A worry that typing in a form would cost one full composite per keystroke was
+> measured here: **0.1ms per keystroke**, event loop 49/s while typing vs 48/s idle
+> (`tests/test_settings_typing.py`). CTkEntry is a native widget; it doesn't touch
+> the canvas. Note that `test_frame_pacing`'s p50 is **blind** to per-keystroke cost
+> - keystrokes are sparse relative to the heartbeat - which is why that test measures
+> the keystroke directly.
 
 ## Config (`config.json`)
 - OBS: `obs_host` localhost, `obs_port` 4455, `obs_password` empty (obs-websocket v5)
@@ -244,6 +262,8 @@ three static icons swapped on state change.
   python tests/test_tray.py            # tray icon states + menu contract (frame 2j)
   python tests/test_toast.py           # single-slot toast: replace-in-place, drain (2i)
   python tests/test_clips.py           # Clips pane + the delete rule (2b)
+  python tests/test_settings.py        # editable Settings + config rules (2c)
+  python tests/test_settings_typing.py # what a keystroke in a form really costs
   ```
   ⚠️ Anything async **must** be tested under a real `mainloop()`. Tk refuses a cross-thread
   `root.after()` when driven by `update()`-pumping, and `_ui()` swallows that — so an

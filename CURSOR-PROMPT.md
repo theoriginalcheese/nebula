@@ -115,7 +115,7 @@ performance lesson), `nebula-dpi-scaling`, `nebula-roadmap-ideas`, `obs-auto-fol
 
 <!-- STATE:BEGIN — keep this block current; it is the whole point of the file -->
 
-**Updated:** 2026-07-26 — **steps 1–5 are done and verified. Step 6 (Settings) is next.**
+**Updated:** 2026-07-26 — **steps 1–6 are done and verified. Step 7 (Games, Macropad, mini overlay) is next.**
 
 Committed on local branch **`ui-v3`** (not pushed; `main` untouched).
 
@@ -256,33 +256,47 @@ Committed on local branch **`ui-v3`** (not pushed; `main` untouched).
   `_ui()` swallows the failure. An `update()`-pumped version of this test sat on "Scanning…"
   forever. Same trap `CLAUDE.md` warns about; it cost time again here.
 
-**Not started — step 6 onward**
-- **Step 6 (next): Settings (frame 2c).** Sections Connection / Storage / Idle & audio / Hotkey
-  / Sync. The **mono config-key label under each field is part of the design**, not a debug aid.
-  Write on **blur**, not per keystroke. Show the saved timestamp in the pane header. Merge over
-  `DEFAULTS`; never drop an unknown key. `dv.CONFIG_MAP` already holds label → key → section →
-  unit, and every `*_seconds` field must render its unit suffix.
-- Step 7: Games, Macropad, mini overlay.
-- **Transitional wart**: v3 has no standalone Activity page (it's a dashboard block), but the
-  `activity` view is still registered and still mirrors the log, because `_log()` writes to
-  both consoles. Not reachable from the rail — see `gui.RAIL_VIEWS`. Fold it away when
-  convenient; it was left alone to avoid churning the log plumbing.
+**Done — step 6, editable Settings (frame 2c) — merged with your branch**
 
-**Deliberate departures from the frames — don't "fix" these without deciding**
-- **No "Mark clip" button** (frame 2a shows three). There is no clip-marking backend, and a
-  button that silently does nothing is worse than an absent one. Same reason v2 dropped it.
-- **Stat tiles are Clips today / Disk free / Idle timeout / Sync**, not the frame's
-  `Clips today / Recorded / Auto-culled / Idle pauses`. The last two have no counters anywhere
-  in `Monitor`. Add the counters and they can have their tiles; don't ship them showing `0`.
-- **The scene preview is still v2's stylised gradient tile**, including its static equaliser
-  bars. It is decoration, not a claim about the capture — but the bars do imply audio levels
-  we don't measure, so if you want strict honesty that is the thing to remove. The frame's
-  `Live` chip and `2560×1440 · 60 fps` are obtainable from OBS `GetVideoSettings` if you want
-  them for real; a periodic *thumbnail* is not (it's a repaint — see the background rule).
+Your `cursor/editable-settings-view-dd92` branched from `c1e4f37`, i.e. **before** all the
+v3 work, so it was a parallel Settings editor on the old Aurora UI rather than a change on
+top. Rather than pick one, the good parts were taken onto `ui-v3`:
 
-**Known open questions**
-- Clip thumbnails (frame 2b) would need ffmpeg — new dependency, undecided.
-- The rail has a large empty span between Settings and the storage card, exactly as frame 2a
-  draws it. Left as designed; flag it if you'd rather it carried something.
+- **`settings_spec.py` adopted wholesale.** It's the better source: pure and testable with no
+  Tk window, covers **every** key in `DEFAULTS` (not only the thirteen in the v3 table), and
+  carries validation bounds plus a `restart` reason per field. The pane now renders it.
+  `dv.CONFIG_MAP` stays as the transcribed spec table that `test_design_v3` checks against
+  `BUILD-SPEC.md`.
+  ⚠️ **Deviation from the frame, on purpose**: the section rail is `settings_spec.GROUPS`
+  (OBS / Recording / Hotkey / Game list sync / NAS offload / Legacy), not 2c's five names. A
+  Settings page that can't edit `github_token` or `nas_offload_root` would be worse than one
+  that departs from the frame's rail.
+- **Live reconfigure adopted** (`hotkey.unregister`, `Offloader.refresh`,
+  `GameSync.configure`, `AudioKeepAlive.set_processes`). `_settings_apply_live()` routes each
+  edited key to its owner. Genuinely new capability; the v3 pane alone still needed a restart.
+- **`test_settings_typing.py` adopted** — and it settled the open question in its own docstring.
+  It was written on Linux where the claim couldn't be checked. Measured here: **0.1ms per
+  keystroke**, event loop 49/s typing vs 48/s idle. The ~100ms composite rule is about **canvas
+  mutations**; `CTkEntry` is a native widget and doesn't touch the canvas. An in-view form is
+  fine. Its other point stands and is worth keeping: `test_frame_pacing`'s p50 is **blind** to
+  per-keystroke cost, because keystrokes are sparse relative to the heartbeat.
+- **Not taken**: your `gui.py`, `CLAUDE.md`, `README.md` and `tests/test_settings.py`, all of
+  which target the pre-v3 UI. Your `offload.py` overwrote `pending_paths()` (added for the
+  Clips delete rule) — restored.
+
+The pane itself keeps 2c's rules: write on blur (and Return), saved timestamp in the header,
+`seconds` suffix on `*_seconds`, mono config-key caption under every label, whole-dict write so
+unknown keys survive. Junk in a bounded field is refused and reverted, reported to the log
+rather than inline — that keeps typing at one composite per keystroke.
+
+`tests/test_settings.py` — 27 checks, saves intercepted.
+
+**Not started — step 7**
+- Games (2d), Macropad (2e), mini overlay (2k). Mini overlay **never shows while idle**.
+- Macropad still has **no HID layer at all** — see `CURSOR-HANDOFF.md` §2.3. Frame 2e draws a
+  connected device with a live key map; that pane stays honest until (a) an HID input layer and
+  (b) a persisted binding map exist. Bindings must be by **scan code** (`toggle_hotkey_scancode`).
+- **Transitional wart**: the `activity` view is still registered but unreachable from the rail
+  (`gui.RAIL_VIEWS`); it mirrors the log because `_log()` writes to both consoles.
 
 <!-- STATE:END -->

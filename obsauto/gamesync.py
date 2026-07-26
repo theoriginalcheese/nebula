@@ -36,10 +36,21 @@ _TIMEOUT = 15
 
 class GameSync:
     def __init__(self, config, on_log=None):
+        self._log = on_log or (lambda msg: None)
+        self.configure(config)
+
+    def configure(self, config):
+        """(Re-)read the sync target from config, so editing it in the Settings
+        view takes effect without a restart.
+
+        The cached blob sha is dropped as part of this: it identifies a version
+        of the *old* file, and reusing it against a different repo or path would
+        either fail or - worse - hand the contents API a sha it accepts for the
+        wrong file. A None sha forces the next push to fetch first, which is the
+        only state from which it's safe to write."""
         self.repo = (config.get("github_gamedata_repo") or "").strip()
         self.token = (config.get("github_token") or "").strip()
         self.path = (config.get("github_gamedata_path") or "games.json").strip()
-        self._log = on_log or (lambda msg: None)
         # Remember the blob sha of the file we last saw, so a push knows which
         # version it's updating (the contents API needs it to replace a file).
         self._sha = None

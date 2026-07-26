@@ -21,13 +21,19 @@ except Exception:  # pragma: no cover - pycaw/comtypes missing or import failure
 
 class AudioKeepAlive:
     def __init__(self, process_names, grace_seconds=25, threshold=0.0009, on_log=None):
-        # store lowercased for case-insensitive matching
-        self.process_names = {n.lower() for n in process_names}
         self.grace_seconds = grace_seconds
         self.threshold = threshold
         self.on_log = on_log or (lambda msg: None)
         self._last_heard = 0.0
         self._com_ready = False
+        self.set_processes(process_names)
+
+    def set_processes(self, process_names):
+        """Swap the watched executables. The monitor loop reads this set on its
+        own thread every tick, and a set rebind is atomic, so the Settings view
+        can change the keep-alive list live without any locking."""
+        # stored lowercased for case-insensitive matching
+        self.process_names = {n.lower() for n in process_names}
 
     def _ensure_com(self):
         # The monitor loop runs in a daemon thread; COM must be initialized
