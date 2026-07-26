@@ -91,21 +91,38 @@ check("footer states where the list lives",
       "games.json" in app.bg.itemcget(app._games_foot, "text"),
       app.bg.itemcget(app._games_foot, "text"))
 
-# peek must NOT drain the queue - the modal flow owns that.
+# peek must NOT drain the queue.
 classifier.queue_for_manual_review("someunknown.exe")
 peeked = classifier.peek_pending_reviews()
 check("peek sees the pending item", "someunknown.exe" in peeked, peeked)
 check("peek did not drain the queue",
       "someunknown.exe" in classifier.peek_pending_reviews())
-popped = [k for k, _b, _n in classifier.pop_pending_reviews()]
-check("pop still drains it", "someunknown.exe" in popped, popped)
-classifier.finish_review("someunknown.exe")
+head = classifier.peek_next_review()
+check("peek_next_review returns key+basenames",
+      head is not None and head[0] == "someunknown.exe" and head[1] == ["someunknown.exe"],
+      head)
+
+# Frame 2d card decides without the modal.
+app._refresh_games()
+settle(200)
+check("unclassified card offers It's a game",
+      any("It's a game" in t for t in texts(app._games_pending)),
+      texts(app._games_pending)[:8])
+gui.AppWindow._ask_display_name = lambda self, basename: "Some Unknown"
+ok = app._decide_pending("someunknown.exe", True)
+settle(200)
+check("Games card resolved as game", ok is True)
+check("classified into games",
+      "someunknown.exe" in classifier._data.get("games", {}))
+check("queue drained by take",
+      classifier.peek_next_review() is None)
 
 app._refresh_games()
 settle(200)
 check("pending block shows an honest empty state when nothing waits",
       any("Nothing awaiting" in t for t in texts(app._games_pending)),
       texts(app._games_pending)[:3])
+classifier._data.get("games", {}).pop("someunknown.exe", None)
 
 # Right-click promotes an ignored app back to Games.
 classifier.mark_non_game("promoteme.exe")

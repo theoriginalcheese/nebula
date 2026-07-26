@@ -10,21 +10,19 @@ Hi — continue **Nebula UI v3 refinement**. The mockup at
 local tree (not a fresh greenfield). Chassis was already on `main`; Cursor just
 landed the fidelity pass in PR #4.
 
-## What was just implemented
+## Build order steps 1–7 are DONE on this branch
 
-- **Hero 2a/2f–2h:** ember for live recording; controller chip; exe source line;
-  folder chip gone; 404px preview with Live + res/fps; preview **hidden** while
-  watching/disconnected
-- **Stats 2a:** Clips today · Recorded · Auto-culled · Idle pauses — backed by
-  disk scan + `Monitor` counters (`auto_culled`, `idle_pauses`,
-  `recorded_seconds_today`)
-- **Activity:** Copy log + All-tags filter; standalone Activity view removed
-- **OBS:** `GetVersion`, `GetVideoSettings`, `GetCurrentProgramScene`; titlebar
-  one-liner (version only when real)
-- **Clips:** Play (`os.startfile`) + `Game — YYYY-MM-DD HH:MM` titles
-- **Mini 2k:** pause + stop + collapse
-- **Rail:** Clips total badge; Games = **pending** count
-- **Customise** chrome hidden (double-click pane title to rearrange)
+Stop at step 7. Do **not** start ffmpeg Length/thumbs, AppID storage, or a full
+HID macropad subsystem unless Anthony asks — those are beyond the build order.
+
+### Shipped through step 7
+1. Chassis 2a  
+2. Hero enum + stats + activity  
+3. Tray + window chrome  
+4. Single-slot toast (replace-in-place, 4s drain, hover freeze, **dismiss X**)  
+5. Clips (Play / Reveal / Delete; Length/thumbs omitted — need ffmpeg)  
+6. Settings (mono keys, blur-write, rail **Reveal**, Connection footer + **Test again** + handshake ms)  
+7. Games unclassified **It's a game / Not a game** card; Macropad honestly empty; mini overlay with pause/stop/collapse  
 
 ## Hard rules (do not reverse)
 
@@ -41,14 +39,13 @@ landed the fidelity pass in PR #4.
 3. `CURSOR-HANDOFF.md` §2
 4. `obsauto/design_v3.py`
 
-## Refine next
+## Only if asked (beyond step 7)
 
-1. Pixel-check 2a–2k against a live `python main.py` window
-2. Toast dismiss **X** (2i); Settings Connection footer + Test again (2c)
-3. Classifier AppID / seen-count if you want Games 2d exact
-4. ffmpeg Length/thumbs only if you accept the dependency
-5. Macropad subsystem (HID → config map → pane)
-6. `pyinstaller nebula.spec` when happy
+1. Pixel-check polish against the open mockup  
+2. Classifier AppID / seen-count  
+3. ffmpeg Length/thumbs  
+4. Macropad HID subsystem  
+5. `pyinstaller nebula.spec`
 
 ## Verify
 

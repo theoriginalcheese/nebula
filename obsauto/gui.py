@@ -452,6 +452,7 @@ class AppWindow:
         self._obs_version = None      # e.g. "30.2" from GetVersion
         self._video_label = None      # e.g. "2560×1440 · 60 fps" from GetVideoSettings
         self._scene_name = None       # current program scene
+        self._handshake_ms = None     # last successful connect duration (Settings 2c)
         self._eq_bars = []            # legacy; preview no longer animates bars
         self._preview_items = []      # canvas ids hidden while idle / disconnected
         self._log_lines = []          # history for the dashboard Activity block
@@ -1789,12 +1790,11 @@ class AppWindow:
         self._view_button(x + w - 150, y + 20, 130, "Rescan library", self._rescan_steam)
 
         col_w = (w - 48) / 2
-        top_h = 110
-        self.bg.create_text(x + 16, y + 82, anchor="w", text=self._track("Unclassified"),
-                            fill=FAINT, font=dv.type_font("eyebrow"))
-        self._games_pending = self._scroll_list(x + 16, y + 96, w - 32, top_h)
+        # Frame 2d unclassified card sits above the two lists.
+        top_h = 128
+        self._games_pending = self._scroll_list(x + 16, y + 78, w - 32, top_h)
 
-        list_y = y + 96 + top_h + 26
+        list_y = y + 78 + top_h + 26
         list_h = h - (list_y - y) - 34
         self.bg.create_text(x + 16, list_y - 14, anchor="w", text=self._track("Games"),
                             fill=FAINT, font=dv.type_font("eyebrow"))
@@ -1822,25 +1822,20 @@ class AppWindow:
             self._empty_note(self._games_list, f"Couldn't read the game list: {exc}")
             return
 
-        pending = []
+        pending_names = []
+        next_review = None
         try:
-            pending = self.classifier.peek_pending_reviews()
+            pending_names = self.classifier.peek_pending_reviews()
+            next_review = self.classifier.peek_next_review()
         except Exception:
             pass
-        if pending:
-            # Frame 2d shows one candidate card; decisions still go through the
-            # modal (_poll_manual_review) so peeking never drains the queue.
-            head = pending[0]
-            more = len(pending) - 1
-            sub = ("Nebula will ask about this one"
-                   + (f"  ·  +{more} more waiting" if more else ""))
-            self._list_row(self._games_pending, head, sub, "awaiting")
-            note = ctk.CTkLabel(
+        if next_review:
+            self._games_unclassified_card(next_review, len(pending_names))
+        elif pending_names:
+            # Modal already holds the only item (_in_review) — don't double-offer.
+            self._empty_note(
                 self._games_pending,
-                text="Decide in the prompt when it appears — this list never swallows the queue.",
-                text_color=FAINT, font=ctk.CTkFont(size=11), anchor="w",
-                justify="left", wraplength=420)
-            note.pack(fill="x", padx=10, pady=(2, 6))
+                "A classify prompt is open — answer it there.")
         else:
             self._empty_note(self._games_pending, "Nothing awaiting a decision.")
 
@@ -1855,7 +1850,8 @@ class AppWindow:
             entry = by_name.setdefault(name, {"exes": [], "source": source})
             entry["exes"].append(key)
 
-        awaiting = (f"{len(pending)} awaiting your call   ·   " if pending else "")
+        awaiting = (f"{len(pending_names)} awaiting your call   ·   "
+                    if pending_names else "")
         self.bg.itemconfigure(
             self._games_sub,
             text=f"{awaiting}{len(by_name)} game{'' if len(by_name) == 1 else 's'} recorded "
@@ -1893,6 +1889,90 @@ class AppWindow:
                 self._nongames_list, basename,
                 "keep-alive" if basename.lower() in keep_alive else "", "ignored")
             self._bind_promote(row, basename)
+
+    def _games_unclassified_card(self, review, pending_count):
+        """Frame 2d candidate card with It's a game / Not a game.
+
+        ``review`` is ``(key, basenames, suggested_name)`` from
+        ``peek_next_review``. Buttons call ``take_pending_review`` so the modal
+        poll cannot race the same item.
+        """
+        key, basenames, suggested = review
+        title = suggested or suggest_display_name(key)
+        exe_line = basenames[0] if basenames else key
+        more = max(0, pending_count - 1)
+        sub = f"{exe_line}  ·  not classified yet"
+        if more:
+            sub += f"  ·  +{more} more waiting"
+
+        card = ctk.CTkFrame(self._games_pending, fg_color=CARD_TINT,
+                            corner_radius=dv.RADIUS_CARD)
+        card.pack(fill="x", padx=4, pady=4)
+        inner = ctk.CTkFrame(card, fg_color=CARD_CORE, corner_radius=dv.RADIUS_TILE)
+        inner.pack(fill="x", padx=5, pady=5)
+
+        row = ctk.CTkFrame(inner, fg_color="transparent")
+        row.pack(fill="x", padx=14, pady=14)
+
+        chip = ctk.CTkLabel(
+            row, text="?", width=44, height=44, fg_color=SURFACE,
+            corner_radius=12, text_color=ACCENT_LIGHT,
+            font=ctk.CTkFont(size=18, weight="bold"))
+        chip.pack(side="left", padx=(0, 14))
+
+        text = ctk.CTkFrame(row, fg_color="transparent")
+        text.pack(side="left", fill="x", expand=True)
+        ctk.CTkLabel(text, text=self._track("Unclassified"), anchor="w",
+                     text_color=ACCENT_LIGHT,
+                     font=ctk.CTkFont(size=10)).pack(anchor="w")
+        ctk.CTkLabel(text, text=title, anchor="w", text_color=TEXT,
+                     font=ctk.CTkFont(size=16, weight="bold")).pack(anchor="w")
+        ctk.CTkLabel(text, text=sub, anchor="w", text_color=FAINT,
+                     font=ctk.CTkFont(family="Consolas", size=11)).pack(anchor="w")
+
+        actions = ctk.CTkFrame(row, fg_color="transparent")
+        actions.pack(side="right", padx=(12, 0))
+        yes = ctk.CTkButton(
+            actions, text="It's a game", width=120, height=36,
+            fg_color=GREEN_TINT, hover_color=GREEN_TINT_HOVER,
+            text_color=ACCENT_LIGHT, border_width=1, border_color=ACCENT,
+            corner_radius=999, font=ctk.CTkFont(size=12),
+            command=lambda k=key: self._decide_pending(k, True))
+        yes.pack(side="left", padx=(0, 8))
+        no = ctk.CTkButton(
+            actions, text="Not a game", width=110, height=36,
+            fg_color="transparent", hover_color=SURFACE_HOVER,
+            text_color=MUTED, border_width=1, border_color=EDGE,
+            corner_radius=999, font=ctk.CTkFont(size=12),
+            command=lambda k=key: self._decide_pending(k, False))
+        no.pack(side="left")
+
+    def _decide_pending(self, key, is_game):
+        """Resolve one unclassified app from the Games card (frame 2d)."""
+        taken = self.classifier.take_pending_review(key)
+        if not taken:
+            self._refresh_games()
+            return False
+        key, basenames, suggested = taken
+        try:
+            if is_game:
+                display = suggested or self._ask_display_name(key)
+                if not display:
+                    # User cancelled the name prompt — put it back.
+                    self.classifier.finish_review(key)
+                    self.classifier.queue_for_manual_review(basenames[0])
+                    self._refresh_games()
+                    return False
+                self.classifier.resolve_review(basenames, True, display)
+                self._log(f"[Manual] {basenames[0]} -> game ({display})")
+            else:
+                self.classifier.resolve_review(basenames, False)
+                self._log(f"[Manual] {basenames[0]} -> not a game")
+        finally:
+            self.classifier.finish_review(key)
+        self._refresh_games()
+        self._push_game_data()
+        return True
 
     def _bind_promote(self, row, basename):
         """Right-click an ignored app to move it back to Games (frame 2d).
@@ -1942,17 +2022,24 @@ class AppWindow:
     # SCAN CODE, not character - see toggle_hotkey_scancode and the vault's
     # asus-m4-fan-key note.
     def _build_macropad(self):
-        (x, y, w, h), _ = self._view_panel(
-            "Macropad", "Bind physical keys to Nebula actions.")
+        # Step 7 / frame 2e: honest empty until HID + scan-code bindings exist.
+        # Never draw a fabricated "connected" pad or HID id.
+        (x, y, w, h), sub = self._view_panel(
+            "Macropad", "No pad connected")
+        self.bg.itemconfigure(sub, text="3×3 pad · not connected")
+
+        self._glass(x + 24, y + 90, w - 48, 200, tint=CARD_TINT,
+                    radius=dv.RADIUS_CARD, tint_alpha=110,
+                    border_hex=CARD_BORDER, border_alpha=26)
+        self._glass(x + 29, y + 95, w - 58, 190, tint=CARD_CORE,
+                    radius=dv.RADIUS_TILE, tint_alpha=180, border_alpha=0)
         self.bg.create_text(
-            x + 24, y + 96, anchor="nw", width=w - 48,
+            x + 48, y + 120, anchor="nw", width=w - 96,
             text="No device layer yet.\n\n"
-                 "The design pairs Nebula with a 3x3 HID macropad: keys bound to "
-                 "start/stop, pause, mark clip and scene switches, with per-game "
-                 "profiles that follow whatever you launch.\n\n"
-                 "Nothing here talks to hardware, so rather than show a mock keypad "
-                 "that does nothing, this page stays empty until the binding layer "
-                 "exists.",
+                 "Frame 2e draws a connected HID pad with a live key map. That "
+                 "subsystem is not in this build — bindings must be by scan code, "
+                 "and there is no HID input code in obsauto/.\n\n"
+                 "This page stays empty on purpose until that layer exists.",
             fill=MUTED, font=dv.type_font("body"))
         binding = self.config.get("toggle_hotkey") or "—"
         self.bg.create_text(
@@ -1989,12 +2076,9 @@ class AppWindow:
         self._settings_sub = sub
         self._settings_saved_at = None
         self._settings_fields = {}          # key -> (widget, field)
+        self._settings_geom = (x, y, w, h)
 
-        self._view_button(x + w - 136, y + 20, 116, "Open config",
-                          self._open_config_file)
-        self._view_button(x + w - 262, y + 20, 116, "Open logs",
-                          self._open_logs_folder)
-
+        # Frame 2c header shows Saved timestamp; Reveal lives in the section rail.
         self._settings_group = settings_spec.GROUPS[0][0]
         self._settings_nav = {}
         ny = y + 78
@@ -2002,10 +2086,22 @@ class AppWindow:
             self._settings_nav[key] = self._settings_nav_item(x + 20, ny, 172, 34, title, key)
             ny += 38
 
+        # Config file card at the foot of the section rail (frame 2c).
+        from .paths import APP_DIR
+        cfg_path = os.path.join(APP_DIR, "config.json")
+        card_h = 88
+        cy = y + h - card_h - 12
+        self._glass(x + 16, cy, 180, card_h, tint=CARD_TINT, radius=dv.RADIUS_TILE,
+                    tint_alpha=100, border_hex=CARD_BORDER, border_alpha=26)
+        self.bg.create_text(x + 28, cy + 16, anchor="w", text=self._track("Config file"),
+                            fill=FAINT, font=dv.type_font("eyebrow"))
+        shown = cfg_path if len(cfg_path) < 28 else ("…" + cfg_path[-24:])
+        self.bg.create_text(x + 28, cy + 38, anchor="w", text=shown, fill=MUTED,
+                            font=dv.font(10.5, mono=True), width=156)
+        self._view_button(x + 28, cy + 56, 90, "Reveal", self._open_config_file)
+
         bx, by = x + 208, y + 76
         bw, bh = w - 232, h - 92
-        # _scroll_list, not a bare CTkScrollableFrame: the latter cannot go into
-        # canvas.create_window() ("can't use ... in a window item of this canvas").
         self._settings_host = self._scroll_list(bx, by, bw, bh)
         self._render_settings_group()
 
@@ -2043,6 +2139,98 @@ class AppWindow:
                          font=ctk.CTkFont(size=11)).pack(anchor="w", padx=12, pady=(10, 2))
         for field in settings_spec.fields_in(self._settings_group):
             self._settings_field(field)
+        if self._settings_group == "obs":
+            self._settings_connection_footer()
+
+    def _settings_connection_footer(self):
+        """Frame 2c Connection footer: status + handshake ms + Test again."""
+        foot = ctk.CTkFrame(self._settings_host, fg_color=GREEN_TINT,
+                            corner_radius=dv.RADIUS_TILE, border_width=1,
+                            border_color=ACCENT)
+        foot.pack(fill="x", padx=12, pady=(18, 12))
+        row = ctk.CTkFrame(foot, fg_color="transparent")
+        row.pack(fill="x", padx=12, pady=10)
+
+        if self.obs.connected:
+            ver = self._obs_version or ""
+            hs = (f" — handshake {self._handshake_ms} ms"
+                  if self._handshake_ms is not None else "")
+            status = f"Connected to OBS{(' ' + ver) if ver else ''}{hs}"
+            color = ACCENT_LIGHT
+            glyph = ICON_GLYPHS["plugs-connected"]
+        else:
+            status = "Not connected to OBS"
+            color = MUTED
+            glyph = ICON_GLYPHS["plugs"]
+
+        ctk.CTkLabel(row, text=glyph, text_color=color,
+                     font=ctk.CTkFont(family=ICON_FONT, size=14)).pack(side="left")
+        self._settings_conn_label = ctk.CTkLabel(
+            row, text=status, anchor="w", text_color=color,
+            font=ctk.CTkFont(size=12))
+        self._settings_conn_label.pack(side="left", padx=10, fill="x", expand=True)
+
+        test = ctk.CTkButton(
+            row, text="Test again", width=110, height=34,
+            fg_color="transparent", hover_color=SURFACE_HOVER,
+            text_color=TEXT, border_width=1, border_color=ACCENT,
+            corner_radius=999, font=ctk.CTkFont(size=12),
+            command=self._test_obs_connection)
+        test.pack(side="right")
+        self._focus_ring(test, resting_border=ACCENT)
+
+    def _test_obs_connection(self):
+        """Settings 2c 'Test again' — reconnect on a worker, time the handshake."""
+        if self._connecting:
+            self._log("[Manual] A connect attempt is already in flight.")
+            return
+        self._connecting = True
+        self._abort_connect = False
+        self._set_obs_status("Connecting...", AMBER)
+        if hasattr(self, "_settings_conn_label"):
+            self._settings_conn_label.configure(text="Testing connection…",
+                                                text_color=MUTED)
+
+        def worker():
+            t0 = time.perf_counter()
+            error = None
+            ms = None
+            try:
+                if self.obs.connected:
+                    self.obs.disconnect()
+                ensure_obs_running(self.config.get("obs_path"), log=self._log)
+                self.obs.connect()
+                ms = int((time.perf_counter() - t0) * 1000)
+            except Exception as exc:
+                error = exc
+
+            def apply():
+                self._connecting = False
+                if self._abort_connect:
+                    return
+                if error is not None:
+                    err = error
+                    self._handshake_ms = None
+                    self._log(f"[Manual] Test connection failed: {err}")
+                    self._set_obs_status("Disconnected", RED)
+                    if hasattr(self, "_settings_conn_label"):
+                        self._settings_conn_label.configure(
+                            text=f"Failed — {err}", text_color=EMBER)
+                    return
+                self._handshake_ms = ms
+                self._refresh_obs_meta()
+                self._set_obs_status("Connected", GREEN)
+                self._obs_connected = True
+                if not self.monitor._running:
+                    self.monitor.start()
+                    self._set_monitoring(True)
+                self._log(f"[Manual] Test connection ok — handshake {ms} ms")
+                if self._settings_group == "obs":
+                    self._render_settings_group()
+
+            self._ui(apply)
+
+        threading.Thread(target=worker, daemon=True).start()
 
     def _settings_field(self, field):
         row = ctk.CTkFrame(self._settings_host, fg_color="transparent")
@@ -3164,6 +3352,9 @@ class AppWindow:
                                  font=dv.type_font("meta"))
         detail = canvas.create_text(60, 66, anchor="w", text="", fill=FAINT,
                                     font=dv.font(11, mono=True), state="hidden")
+        # Frame 2i: dismiss X top-right (separate from click-to-focus).
+        dismiss = canvas.create_text(
+            w - 18, 18, text=ICON_GLYPHS["x"], fill=FAINT, font=(ICON_FONT, -11))
 
         # The 2px drain. The mockup animates it scaleX(1)->scaleX(0) with the
         # document's one and only `transform-origin: left`, so the bar is
@@ -3179,6 +3370,7 @@ class AppWindow:
         toast = {
             "popup": popup, "canvas": canvas, "chip": chip, "icon": icon,
             "title": title, "sub": sub, "detail": detail, "drain": drain,
+            "dismiss": dismiss,
             "track": (track_x0, track_x1, bar_y), "geom": (sw, sh, x, y_end),
             "remaining": dv.TOAST_LIFE_MS, "hovering": False,
             "ticking": False, "dismissing": False, "has_detail": False,
@@ -3193,12 +3385,23 @@ class AppWindow:
             toast["hovering"] = False
             canvas.itemconfigure(toast["detail"], state="hidden")
 
-        def on_click(_e):
-            self.show()                        # "Click anywhere focuses the window"
+        def on_click(event):
+            # X dismisses; anywhere else focuses the main window (frame 2i).
+            cur = canvas.find_withtag("current")
+            if cur and cur[0] == dismiss:
+                if not toast["dismissing"]:
+                    toast["dismissing"] = True
+                    self._toast_fade_out(toast)
+                return
+            self.show()
 
         canvas.bind("<Enter>", on_enter)
         canvas.bind("<Leave>", on_leave)
         canvas.bind("<Button-1>", on_click)
+        canvas.tag_bind(dismiss, "<Enter>",
+                        lambda _e: canvas.itemconfigure(dismiss, fill=TEXT))
+        canvas.tag_bind(dismiss, "<Leave>",
+                        lambda _e: canvas.itemconfigure(dismiss, fill=FAINT))
 
         self._toast_rise_in(toast)
         return toast
@@ -3703,9 +3906,12 @@ class AppWindow:
         # is still booting. Done inline (as it used to be) that froze the whole
         # window for seconds on launch, and again on every 10s retry.
         def worker():
+            ms = None
             try:
                 ensure_obs_running(self.config.get("obs_path"), log=self._log)
+                t0 = time.perf_counter()
                 self.obs.connect()
+                ms = int((time.perf_counter() - t0) * 1000)
             except Exception as exc:
                 # Deliberately broad: anything escaping here would strand
                 # _connecting=True and permanently block every future
@@ -3724,7 +3930,8 @@ class AppWindow:
                 # running yet). A _connecting left stuck at True would block
                 # every future reconnect for the life of the process.
                 self._connecting = False
-            self._ui(self._connect_succeeded)
+            handshake = ms
+            self._ui(lambda: self._connect_succeeded(handshake))
 
         threading.Thread(target=worker, daemon=True).start()
 
@@ -3755,13 +3962,15 @@ class AppWindow:
             self._set_obs_status("Disconnected", RED)
         self.root.after(10000, self.autostart)
 
-    def _connect_succeeded(self):
+    def _connect_succeeded(self, handshake_ms=None):
         if self._abort_connect:
             # Monitoring was stopped while this attempt was still in flight -
             # don't quietly restart it behind the user's back.
             self.obs.disconnect()
             self._set_obs_status("Disconnected", RED)
             return
+        if handshake_ms is not None:
+            self._handshake_ms = handshake_ms
         self._on_connected()
         self._log("[Monitor] Auto-started.")
 

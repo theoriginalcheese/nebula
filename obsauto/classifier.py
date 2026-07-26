@@ -297,6 +297,39 @@ class Classifier:
             names = [name or key for key, (_basenames, name) in self._pending_manual.items()]
             return names + sorted(self._in_review - set(self._pending_manual))
 
+    def peek_next_review(self):
+        """Head of the pending queue as ``(key, basenames, suggested_name)``.
+
+        Used by the Games unclassified card (frame 2d) so it can render It's a
+        game / Not a game without draining. Returns None when empty. Does not
+        surface items already held in ``_in_review`` (modal owns those).
+        """
+        with self._lock:
+            if not self._pending_manual:
+                return None
+            key = next(iter(self._pending_manual))
+            basenames, name = self._pending_manual[key]
+            return key, list(basenames), name
+
+    def take_pending_review(self, key=None):
+        """Claim one pending review for the Games pane buttons.
+
+        Moves the entry into ``_in_review`` (same as ``pop_pending_reviews``)
+        so the modal poll cannot race it. Returns
+        ``(key, basenames, suggested_name)`` or None.
+        """
+        with self._lock:
+            if key is None:
+                if not self._pending_manual:
+                    return None
+                key = next(iter(self._pending_manual))
+            item = self._pending_manual.pop(key, None)
+            if item is None:
+                return None
+            basenames, name = item
+            self._in_review.add(key)
+            return key, list(basenames), name
+
     def pop_pending_reviews(self):
         """Returns [(key, basenames, suggested_name), ...]."""
         with self._lock:
