@@ -1957,12 +1957,6 @@ class AppWindow:
         try:
             if is_game:
                 display = suggested or self._ask_display_name(key)
-                if not display:
-                    # User cancelled the name prompt — put it back.
-                    self.classifier.finish_review(key)
-                    self.classifier.queue_for_manual_review(basenames[0])
-                    self._refresh_games()
-                    return False
                 self.classifier.resolve_review(basenames, True, display)
                 self._log(f"[Manual] {basenames[0]} -> game ({display})")
             else:
