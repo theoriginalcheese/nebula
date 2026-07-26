@@ -67,6 +67,11 @@ def check(name, passed, detail=""):
 for field in settings_spec.FIELDS:
     check(f"spec: {field.key} is a real config key", field.key in DEFAULTS)
 
+# ...and the other direction, so adding a key to DEFAULTS without deciding
+# whether it belongs in the UI fails here instead of quietly being uneditable.
+unexposed = sorted(set(DEFAULTS) - {f.key for f in settings_spec.FIELDS})
+check("spec: every config default is editable", not unexposed, unexposed)
+
 # The strongest guarantee the form can offer: opening the page and pressing Save
 # without touching anything must be a no-op. That holds only if render() and
 # parse() are exact inverses for every default.

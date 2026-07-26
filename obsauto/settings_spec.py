@@ -8,9 +8,10 @@ Kept out of gui.py deliberately. Two reasons:
   row of canvas coordinates. The view walks this list and renders whatever it
   finds, so the two can't drift out of step.
 
-Every key here exists in `config.DEFAULTS`; anything in DEFAULTS but absent here
-is deliberately not user-editable (currently just the dashboard layout, which is
-owned by the Customise mode on the dashboard itself).
+This covers `config.DEFAULTS` exactly - every key there has a field, and every
+field names a real key (a test asserts both). `dashboard_grid` is the one config
+key not represented, and it isn't in DEFAULTS either: it's written by the
+dashboard's own Customise mode, which owns it.
 """
 
 import os
