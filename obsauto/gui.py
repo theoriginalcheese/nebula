@@ -14,6 +14,7 @@ import customtkinter as ctk
 from PIL import Image, ImageDraw, ImageFilter
 
 from . import classifier as classifier_module
+from . import settings_spec
 from .obs_client import OBSClient, OBSError
 from .monitor import Monitor, ensure_obs_running, is_obs_running
 from .app_log import log_to_file
@@ -340,6 +341,9 @@ class AppWindow:
         self._log_lock = threading.Lock()
         self.console = None           # set by _build_activity
         self.console_full = None      # set by _build_activity_view
+        self._hotkey_handle = None    # live global-hotkey hook, so it can be rebound
+        self._settings_widgets = {}   # config key -> the widget editing it
+        self._timeout_slider = None   # set by _build_stats, rebuilt with the dashboard
 
         ctk.set_appearance_mode("dark")
         ctk.set_default_color_theme("dark-blue")
@@ -732,9 +736,8 @@ class AppWindow:
         self._obs_card_title = self.bg.create_text(
             cx + 34, oy + 19, anchor="w", text="OBS disconnected",
             fill=RED_LIGHT, font=("Segoe UI Semibold", 12))
-        host = f"localhost:{self.config.get('obs_port', 4455)}"
         self._obs_card_sub = self.bg.create_text(
-            cx + 34, oy + 33, anchor="w", text=host,
+            cx + 34, oy + 33, anchor="w", text=self._obs_endpoint(),
             fill=FAINT, font=("Segoe UI", 10))
 
         # Monitoring toggle row - clickable, flips monitoring on/off (same
@@ -747,9 +750,9 @@ class AppWindow:
         self._mon_label = self.bg.create_text(cx + 36, my + 22, anchor="w",
                                             text="Monitoring off", fill=TEXT_SOFT,
                                             font=("Segoe UI", 12))
-        binding = self.config.get("toggle_hotkey")
-        if binding:
-            self._draw_keycap(cx + cw - 24, my + 22, binding.upper())
+        self._keycap_geom = (cx + cw - 24, my + 22)
+        self._keycap_items = []
+        self._set_keycap(self.config.get("toggle_hotkey"))
         # Whole tile is the hit target.
         hit = self.bg.create_rectangle(cx, my, cx + cw, my + 44, fill="", outline="")
         for item in (hit, self._mon_icon, self._mon_label):
@@ -797,17 +800,36 @@ class AppWindow:
             WIDTH - 480, cy - 15, anchor="nw", window=self.customise_btn,
             width=116, height=30)
 
+    def _obs_endpoint(self):
+        return f"{self.config.get('obs_host', 'localhost')}:{self.config.get('obs_port', 4455)}"
+
+    def _set_keycap(self, binding):
+        """(Re)draw the nav rail's keycap chip for the current hotkey. Drawn
+        rather than relabelled because the chip's width follows the label
+        length, and rebinding in Settings can change it."""
+        for item in self._keycap_items:
+            self.bg.delete(item)
+        self._keycap_items = []
+        if not binding:
+            return
+        cx, cy = self._keycap_geom
+        self._keycap_items = self._draw_keycap(cx, cy, binding.upper())
+
     def _draw_keycap(self, cx, cy, label):
         """A small rounded keycap chip on the canvas - the sampled-corner
-        glass technique, drawn as a tinted rounded tile with the key text."""
+        glass technique, drawn as a tinted rounded tile with the key text.
+        Returns its canvas items so a caller can remove it again."""
         pad_x = 5 + len(label) * 4
         w, h = pad_x * 2, 18
         tile = make_glass_tile(self._S(w), self._S(h), SURFACE, tint_alpha=235,
                                radius=self._S(5), border_hex=EDGE, border_alpha=200)
         photo = to_photo(tile)
         self._images.append(photo)
-        self.bg.create_image(cx - w / 2, cy - h / 2, anchor="nw", image=photo)
-        self.bg.create_text(cx, cy, text=label, fill=MUTED, font=("Segoe UI Semibold", 9))
+        return [
+            self.bg.create_image(cx - w / 2, cy - h / 2, anchor="nw", image=photo),
+            self.bg.create_text(cx, cy, text=label, fill=MUTED,
+                                font=("Segoe UI Semibold", 9)),
+        ]
 
     def _start_move(self, event):
         # event.y is in real (scaled) canvas pixels; TITLEBAR_HEIGHT is a base
@@ -884,6 +906,11 @@ class AppWindow:
             self._refresh_recordings()
         elif name == "games":
             self._refresh_games()
+        elif name == "settings":
+            # Re-read on every visit so the form can't show a value that isn't
+            # in effect (the dashboard slider and a hand-edited config.json both
+            # change things behind its back).
+            self._settings_reload()
 
     # ---- content column: geometry ----
     # The main column lives to the right of the nav rail. Everything here is in
@@ -1337,45 +1364,282 @@ class AppWindow:
                  "mock keypad that does nothing, this page is deliberately empty "
                  "until the binding layer exists.",
             fill=MUTED, font=("Segoe UI", 13))
-        self.bg.create_text(
-            x + 20, y + h - 60, anchor="nw",
-            text=f"Meanwhile the global hotkey  {self.config.get('toggle_hotkey') or '—'}  "
-                 "toggles monitoring from anywhere.",
+        self._macropad_hotkey_id = self.bg.create_text(
+            x + 20, y + h - 60, anchor="nw", text=self._hotkey_blurb(),
             fill=FAINT, font=("Segoe UI", 12))
 
+    def _hotkey_blurb(self):
+        binding = self.config.get("toggle_hotkey")
+        if not binding:
+            return ("No global hotkey is bound. Set one under Settings → Hotkey "
+                    "to toggle monitoring from anywhere.")
+        return (f"Meanwhile the global hotkey  {binding}  toggles monitoring "
+                "from anywhere.")
+
     # ---- Settings ----
+    # A real editor for config.json, laid out from settings_spec.FIELDS rather
+    # than hand-positioned, so adding a setting doesn't mean adding a row here.
+    #
+    # On repaint cost: typing in a text field on this window costs one
+    # window-level composite per keystroke, and on this window those are
+    # expensive (see the long note above _glass). That's unavoidable for a text
+    # field, so the rule is to spend exactly that and no more - nothing here
+    # validates, restyles or updates a status line as you type. Everything
+    # happens on Save/Revert, which are single, deliberate user actions. The
+    # thing that made the old animation fatal was repainting *without* input;
+    # a form only costs while you're actively using it.
     def _build_settings(self):
         (x, y, w, h), _ = self._view_panel(
-            "Settings", "Read from config.json next to the executable.")
+            "Configuration",
+            "Stored in config.json. Applied live unless a field says otherwise.")
         self._view_button(x + w - 136, y + 20, 116, "Open config",
                           self._open_config_file)
         self._view_button(x + w - 262, y + 20, 116, "Open logs",
                           self._open_logs_folder)
 
-        rows = [
-            ("OBS", f"{self.config.get('obs_host')}:{self.config.get('obs_port')}"),
-            ("OBS executable", self.config.get("obs_path") or "— not set —"),
-            ("Recording root", self.config.get("recording_root") or "—"),
-            ("Sync folder", self.config.get("sync_folder") or "— local only —"),
-            ("Idle timeout", f"{self.config.get('idle_timeout_seconds')}s"),
-            ("Minimum clip", f"{self.config.get('min_clip_seconds')}s"),
-            ("Poll interval", f"{self.config.get('poll_interval_seconds')}s"),
-            ("Toggle hotkey", self.config.get("toggle_hotkey") or "— none —"),
-        ]
-        row_y = y + 88
-        for label, value in rows:
-            self.bg.create_text(x + 24, row_y, anchor="w", text=label,
-                                fill=FAINT, font=("Segoe UI", 12))
-            self.bg.create_text(x + 210, row_y, anchor="w", text=str(value),
-                                fill=TEXT_SOFT, font=("Consolas", 12),
-                                width=w - 240)
-            row_y += 34
-        self.bg.create_text(
-            x + 24, row_y + 16, anchor="nw", width=w - 48,
-            text="Editing these in the app isn't implemented yet — change them in "
-                 "config.json and restart. The idle timeout is the exception: the "
-                 "dashboard slider writes it straight through.",
-            fill=FAINT, font=("Segoe UI", 12))
+        form = self._scroll_list(x + 16, y + 74, w - 32, h - 136)
+        self._build_settings_form(form)
+
+        # Footer: status line on the left, the two actions on the right.
+        fy = y + h - 50
+        self._settings_status_id = self.bg.create_text(
+            x + 24, fy + 3, anchor="nw", width=w - 320, text="",
+            fill=FAINT, font=("Segoe UI", 11))
+        self._view_button(x + w - 156, fy, 140, "Save changes",
+                          self._save_settings, accent=True)
+        self._view_button(x + w - 264, fy, 100, "Revert", self._revert_settings)
+        self._settings_reload()
+
+    def _build_settings_form(self, parent):
+        """One card per group, one row per field. Widgets are children of the
+        scroll frame and live for the life of the app - the view is built once
+        (see _build_views) and only ever re-read, never rebuilt, so there's no
+        tag bookkeeping to redo and no widget churn."""
+        self._settings_widgets = {}
+        self._settings_secrets = []
+
+        self._settings_show_secrets = ctk.CTkSwitch(
+            parent, text="Show passwords and tokens", command=self._apply_secret_masking,
+            progress_color=ACCENT, button_color=TEXT, fg_color=SURFACE,
+            text_color=MUTED, font=ctk.CTkFont(size=11), height=18,
+        )
+        self._settings_show_secrets.pack(anchor="w", padx=14, pady=(8, 4))
+
+        for group, title, blurb in settings_spec.GROUPS:
+            fields = settings_spec.fields_in(group)
+            if not fields:
+                continue
+            ctk.CTkLabel(parent, text=title.upper(), text_color=FAINT, anchor="w",
+                         font=ctk.CTkFont(size=10, weight="bold")).pack(
+                anchor="w", padx=14, pady=(12, 0))
+            ctk.CTkLabel(parent, text=blurb, text_color=MUTED, anchor="w",
+                         justify="left", wraplength=780,
+                         font=ctk.CTkFont(size=11)).pack(anchor="w", padx=14, pady=(1, 6))
+            card = ctk.CTkFrame(parent, fg_color=CARD_TINT, corner_radius=10)
+            card.pack(fill="x", padx=2, pady=(0, 2))
+            for field in fields:
+                self._settings_row(card, field)
+
+    def _settings_row(self, card, field):
+        row = ctk.CTkFrame(card, fg_color="transparent")
+        row.pack(fill="x", padx=12, pady=(9, 0))
+        ctk.CTkLabel(row, text=field.label, text_color=TEXT_SOFT, anchor="w",
+                     width=138, font=ctk.CTkFont(size=12)).pack(side="left")
+
+        if field.kind == "choice":
+            widget = ctk.CTkOptionMenu(
+                row, values=list(field.choices), width=120, height=28,
+                fg_color=SURFACE, button_color=SURFACE, button_hover_color=SURFACE_HOVER,
+                text_color=TEXT, dropdown_fg_color=CARD_SURFACE,
+                dropdown_text_color=TEXT_SOFT, dropdown_hover_color=SURFACE_HOVER,
+                corner_radius=8, font=ctk.CTkFont(size=12),
+            )
+            widget.pack(side="left")
+        else:
+            widget = ctk.CTkEntry(
+                row, height=28, fg_color=LOG_BG, border_color=EDGE, border_width=1,
+                text_color=TEXT, corner_radius=8, font=ctk.CTkFont(size=12),
+            )
+            if field.kind in ("int", "optional_int"):
+                # A four-digit port in a 570px box reads as though something long
+                # belongs there.
+                widget.configure(width=110)
+                widget.pack(side="left")
+            else:
+                widget.pack(side="left", fill="x", expand=True)
+            if field.kind == "secret":
+                self._settings_secrets.append(widget)
+            # Enter saves, so the form is usable without reaching for the mouse.
+            widget.bind("<Return>", lambda _e: self._save_settings())
+
+        hint = field.hint
+        if field.restart:
+            hint = (hint + "  " if hint else "") + "Needs a restart."
+        if hint:
+            ctk.CTkLabel(card, text=hint, text_color=FAINT, anchor="w",
+                         justify="left", wraplength=640,
+                         font=ctk.CTkFont(size=11)).pack(
+                anchor="w", padx=(162, 12), pady=(2, 4))
+        else:
+            ctk.CTkFrame(card, fg_color="transparent", height=4).pack(fill="x")
+        self._settings_widgets[field.key] = widget
+
+    def _apply_secret_masking(self):
+        show = bool(self._settings_show_secrets.get())
+        for widget in self._settings_secrets:
+            widget.configure(show="" if show else "\u2022")
+
+    def _settings_status(self, text="", color=FAINT):
+        self.bg.itemconfigure(self._settings_status_id, text=text, fill=color)
+
+    def _settings_reload(self, status="", color=FAINT):
+        """Put the saved config back into the form.
+
+        Called when the view is opened as well as by Revert, which is what keeps
+        the form honest about things changed elsewhere - the dashboard's idle
+        slider, a hand-edit of config.json, a fresh sync. The flip side is that
+        unsaved typing is dropped when you leave the page, which is the right
+        way round: the page should never show a value that isn't in effect."""
+        for field in settings_spec.FIELDS:
+            widget = self._settings_widgets.get(field.key)
+            if widget is None:
+                continue
+            text = settings_spec.render(field, self.config.get(field.key))
+            # Only write when it actually differs: every widget write repaints
+            # the window, and reload runs on every visit to the page.
+            if widget.get() == text:
+                continue
+            if field.kind == "choice":
+                widget.set(text if text in field.choices else field.choices[0])
+            else:
+                widget.delete(0, "end")
+                widget.insert(0, text)
+        self._apply_secret_masking()
+        self._settings_status(status, color)
+
+    def _revert_settings(self):
+        self._settings_reload("Reverted to the saved config.", MUTED)
+
+    def _save_settings(self):
+        raw = {key: widget.get() for key, widget in self._settings_widgets.items()}
+        values, errors = settings_spec.parse_all(raw)
+        if errors:
+            detail = "   ·   ".join(f"{field.label}: {message}"
+                                    for field, message in errors[:3])
+            more = f"   (+{len(errors) - 3} more)" if len(errors) > 3 else ""
+            self._settings_status(f"Nothing saved — {detail}{more}", RED_LIGHT)
+            return
+
+        changed = {key for key, value in values.items() if self.config.get(key) != value}
+        if not changed:
+            self._settings_status("Already up to date — nothing to save.", MUTED)
+            return
+
+        self.config.update(values)
+        from .config import save_config
+        save_config(self.config)
+        # Key names only, never values: github_token and obs_password go through
+        # here and the activity log is on screen and in the log file.
+        self._log(f"[Manual] Settings saved: {', '.join(sorted(changed))}")
+        self._apply_settings(changed)
+
+        parts = [f"Saved {len(changed)} change" + ("" if len(changed) == 1 else "s") + "."]
+        restart = settings_spec.restart_required(changed)
+        if restart:
+            parts.append("Restart Nebula to apply "
+                         + ", ".join(f.label.lower() for f in restart) + ".")
+        # Only warn about paths that were just edited. A pre-existing absent
+        # path (an unmounted NAS, a recording drive on the other machine) is
+        # allowed and shouldn't be re-reported every time anything else is saved.
+        missing = [f.label for f in settings_spec.missing_paths(
+            {key: values[key] for key in changed})]
+        if missing:
+            parts.append("Not found yet: " + ", ".join(missing) + " — kept anyway.")
+        self._settings_status("  ".join(parts), AMBER_LIGHT if restart else GREEN_LIGHT)
+
+    def _apply_settings(self, changed):
+        """Make the saved values take effect now.
+
+        Most of the app already re-reads `self.config` as it goes (the monitor
+        every tick, the offloader per item), so those keys are live the moment
+        save_config() returns and there's nothing to do here. This handles the
+        parts that snapshot their configuration into an object at construction,
+        plus the bits of chrome that display a config value."""
+        if changed & {"obs_host", "obs_port", "obs_password"}:
+            self.obs.host = self.config["obs_host"]
+            self.obs.port = self.config["obs_port"]
+            self.obs.password = self.config["obs_password"]
+            self.bg.itemconfigure(self._obs_card_sub, text=self._obs_endpoint())
+            if self.monitor._running or self._connecting:
+                # Reconnect rather than wait for OBS to drop: the live
+                # connection is to the old endpoint. _stop() ends any recording
+                # in progress, which is the honest outcome of repointing Nebula
+                # at a different OBS; the restart then reconnects on a worker,
+                # never on this thread.
+                self._log("[Manual] OBS connection settings changed — reconnecting.")
+                self._stop()
+                self._restart_monitoring()
+
+        if "keep_alive_audio_processes" in changed:
+            self.monitor._audio_keep_alive.set_processes(
+                self.config["keep_alive_audio_processes"])
+
+        if changed & {"toggle_hotkey", "toggle_hotkey_scancode"}:
+            hotkey.unregister(self._hotkey_handle, on_log=self._log)
+            self._hotkey_handle = None
+            self._register_hotkey()
+            self._set_keycap(self.config.get("toggle_hotkey"))
+            self.bg.itemconfigure(self._macropad_hotkey_id, text=self._hotkey_blurb())
+
+        if "recording_root" in changed:
+            root_dir = self.config["recording_root"]
+            self.bg.itemconfigure(self._rec_sub, text=root_dir)
+            if not self._is_recording:
+                self.bg.itemconfigure(self.folder_label_id, text=root_dir)
+            self._rescan_disk_stats()
+
+        if "idle_timeout_seconds" in changed:
+            seconds = self.config["idle_timeout_seconds"]
+            self.bg.itemconfigure(self.timeout_value_id, text=f"{seconds}s")
+            if self._timeout_slider is not None:
+                # The slider tops out at 60s; a larger timeout is legitimate
+                # (set here), so peg the handle rather than silently clamp the
+                # real value by firing the slider's own command.
+                self._timeout_slider.set(min(seconds, 60))
+
+        if changed & {"github_token", "github_gamedata_repo", "github_gamedata_path"}:
+            if self.gamesync is not None:
+                self.gamesync.configure(self.config)
+            self._refresh_sync_tile()
+
+        if changed & {"nas_offload_root", "nas_offload_mode"}:
+            if self.offloader is not None:
+                self.offloader.refresh()
+                if self.offloader.mode == "move":
+                    self._log("[Offload] Mode is now 'move' — a local clip is "
+                              "removed only after its NAS copy is SHA-256 verified.")
+            self._refresh_sync_tile()
+
+    def _restart_monitoring(self, attempts=0):
+        """Bring monitoring back up after _stop(), once it's safe to.
+
+        A connect attempt already in flight still holds `_connecting`, which
+        makes autostart() a deliberate no-op - so a naive stop-then-start would
+        leave monitoring off for good, because the in-flight attempt then
+        resolves against the `_abort_connect` we just set and neither connects
+        nor schedules a retry. Wait for it to let go first. Bounded, so a wedged
+        attempt can't leave a timer ticking forever."""
+        if self._connecting and attempts < 60:  # ~15s, longer than a 5s connect
+            self.root.after(250, lambda: self._restart_monitoring(attempts + 1))
+            return
+        self.autostart()
+
+    def _rescan_disk_stats(self):
+        """Re-run the Today/Disk-free scan straight away. _poll_disk_stats
+        reschedules itself every 5 minutes, so pointing it at a new recording
+        root would otherwise leave stale numbers on screen for that long."""
+        self.bg.itemconfigure(self._stat_today_sub, text="scanning…")
+        self._poll_disk_stats(reschedule=False)
 
     def _open_config_file(self):
         from .paths import APP_DIR
@@ -1651,40 +1915,52 @@ class AppWindow:
             fg_color=SURFACE, progress_color=AMBER, button_color=AMBER,
             button_hover_color=AMBER_LIGHT, bg_color=slider_bg, height=14,
         )
-        slider.set(self.config["idle_timeout_seconds"])
+        slider.set(min(self.config["idle_timeout_seconds"], 60))
         self.bg.create_window(tx + 16, ty + 68, anchor="w", window=slider,
                               width=int(tw - 32), height=14)
         self._dashboard_widgets.append(slider)
+        # Kept so the Settings view can move the handle when the same value is
+        # edited there. The dashboard is rebuilt on every layout change, so this
+        # is reassigned each time rather than held once.
+        self._timeout_slider = slider
 
         # 4) Sync + offload status. Top line: game-list sync (GitHub). Sub line:
         # NAS offload state, updated live by on_offload_state().
         tx, ty = cell(3)
         self._stat_tile(tx, ty, tw, h, "⟳", BLUE, "Sync")
-        gh_on = bool(self.gamesync and self.gamesync.enabled)
-        offload_on = bool(self.offloader and self.offloader.enabled)
-        self.bg.create_text(tx + 16, ty + 48, anchor="w",
-                            text="GitHub" if gh_on else "Local",
-                            fill=TEXT if gh_on else MUTED,
-                            font=("Segoe UI Semibold", 22))
+        self._stat_sync_val = self.bg.create_text(
+            tx + 16, ty + 48, anchor="w", text="Local", fill=MUTED,
+            font=("Segoe UI Semibold", 22))
         self._stat_sync_sub = self.bg.create_text(
-            tx + 16, ty + 72, anchor="w",
-            text=("NAS offload on" if offload_on else "game list") if gh_on
-                 else "local only",
+            tx + 16, ty + 72, anchor="w", text="local only",
             fill=MUTED, font=("Segoe UI", 12))
+        self._refresh_sync_tile()
+
+    def _refresh_sync_tile(self, pending=None):
+        """Paint the Sync tile from live state: whether the game list is going
+        to GitHub or staying local, and what the NAS queue is doing. Called on
+        build, whenever the offloader reports progress, and after the sync or
+        offload settings are edited."""
+        if not hasattr(self, "_stat_sync_val"):
+            return
+        gh_on = bool(self.gamesync and self.gamesync.enabled)
+        self.bg.itemconfigure(self._stat_sync_val,
+                              text="GitHub" if gh_on else "Local",
+                              fill=TEXT if gh_on else MUTED)
+        offload_on = bool(self.offloader and self.offloader.enabled)
+        if pending is None and self.offloader is not None:
+            pending = self.offloader.pending_count()
+        if offload_on and pending:
+            text = f"NAS: {pending} queued"
+        elif offload_on:
+            text = "NAS: up to date"
+        else:
+            text = "game list" if gh_on else "local only"
+        self.bg.itemconfigure(self._stat_sync_sub, text=text)
 
     def on_offload_state(self, pending):
         """Called (from the offloader's thread) as the NAS queue drains."""
-        def apply():
-            if not hasattr(self, "_stat_sync_sub"):
-                return
-            if pending > 0:
-                text = f"NAS: {pending} queued"
-            elif self.offloader and self.offloader.enabled:
-                text = "NAS: up to date"
-            else:
-                text = "game list"
-            self.bg.itemconfigure(self._stat_sync_sub, text=text)
-        self._ui(apply)
+        self._ui(lambda: self._refresh_sync_tile(pending))
 
     def _stat_tile(self, x, y, w, h, glyph, color, label):
         self._glass(x, y, w, h, tint=CARD_TINT, radius=14, tint_alpha=120,
@@ -1729,9 +2005,12 @@ class AppWindow:
         self._append_log_batch(self.console, list(self._log_lines[-LOG_HISTORY:]))
 
     # ---- disk / clip stats ----
-    def _poll_disk_stats(self):
+    def _poll_disk_stats(self, reschedule=True):
         """Fill the Today + Disk-free tiles from the real recording folder,
-        off the Tk thread (a recursive scan + disk query can be slow)."""
+        off the Tk thread (a recursive scan + disk query can be slow).
+
+        `reschedule=False` runs a single extra scan without starting a second
+        5-minute timer - used when the recording root changes under us."""
         root_dir = self.config.get("recording_root", "")
 
         def worker():
@@ -1781,7 +2060,8 @@ class AppWindow:
                 pass  # window torn down while the scan was still running
 
         threading.Thread(target=worker, daemon=True).start()
-        self.root.after(300000, self._poll_disk_stats)  # 5 min; it's a slow-moving stat
+        if reschedule:
+            self.root.after(300000, self._poll_disk_stats)  # 5 min; it's a slow-moving stat
 
     def _apply_disk_stats(self, clips, total, free_txt, drive):
         self.bg.itemconfigure(self._stat_today_val,
@@ -2333,8 +2613,9 @@ class AppWindow:
             # Tk thread before touching any widgets/monitor state.
             self.root.after(0, self._toggle_monitoring)
 
-        hotkey.register(binding, on_press, suppress=True, on_log=self._log,
-                        scancode=self.config.get("toggle_hotkey_scancode"))
+        self._hotkey_handle = hotkey.register(
+            binding, on_press, suppress=True, on_log=self._log,
+            scancode=self.config.get("toggle_hotkey_scancode"))
 
     def _toggle_monitoring(self):
         """Flip monitoring on/off - the fan-key action. Turning it OFF stops
