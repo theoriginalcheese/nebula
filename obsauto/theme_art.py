@@ -99,6 +99,108 @@ def generate_nebula(width, height):
     return _apply_vignette(img, width, height)
 
 
+# ---------------------------------------------------------------------------
+# v3 backdrop
+# ---------------------------------------------------------------------------
+# The v3 spec ("Living background - exact values") describes two animated
+# layers. Here they are rendered ONCE, from a seed drawn at launch. That keeps
+# the requirement the spec actually writes down -
+#
+#     "The background is randomised per launch - never hard-code blob positions
+#      or star coordinates."
+#
+# - while dropping the motion, which on this window is a full composite per
+# frame at a flat ~100ms (see CLAUDE.md, and CURSOR-HANDOFF.md 2.1).
+#
+# Note this reverses _scatter_stars' fixed seed, and deliberately so: that seed
+# existed because a *different sky each launch* was judged to read as flicker.
+# It doesn't - you only ever see one sky per run. What actually read as flicker
+# was the sky changing *within* a session, which nothing here does.
+
+# The spec's blob palette is "accent · deep · ember". "Deep" is the raised
+# surface tone - the deepest chromatic token in the Nebula Deep palette.
+AURORA_DEEP = "#241E44"
+
+_STAR_TINTS = [(245, 243, 255), (196, 189, 240), (173, 196, 255)]
+
+
+def _vignette_mask_v3(width, height, inner_frac, max_alpha):
+    """Transparent out to `inner_frac` of the half-diagonal, then ramping to
+    `max_alpha` at the corners. Computed small and upscaled - the ramp is
+    low-frequency, so nothing is lost and it costs almost nothing."""
+    sw, sh = 64, 64
+    mask = Image.new("L", (sw, sh), 0)
+    px = mask.load()
+    for y in range(sh):
+        for x in range(sw):
+            # normalised distance from centre, 1.0 at the corners
+            dx = (x + 0.5) / sw * 2.0 - 1.0
+            dy = (y + 0.5) / sh * 2.0 - 1.0
+            dist = min(1.0, (dx * dx + dy * dy) ** 0.5 / (2 ** 0.5))
+            if dist <= inner_frac:
+                continue
+            t = (dist - inner_frac) / (1.0 - inner_frac)
+            px[x, y] = int(255 * max_alpha * t * t)
+    return mask.resize((width, height), Image.BICUBIC)
+
+
+def generate_backdrop_v3(width, height, seed=None):
+    """The v3 aurora + starfield, rendered once from `seed` (random per launch
+    when None). Returns an opaque RGBA image the size asked for."""
+    from . import design_v3 as d  # local: keeps this module importable alone
+
+    rng = random.Random(seed)
+    spec = d.BACKGROUND
+    img = Image.new("RGBA", (width, height), (*_hex_to_rgb(d.GROUND), 255))
+
+    # Blur radii in the spec are base design pixels; scale them with the surface
+    # so a high-DPI render is proportionally as soft, not sharper.
+    unit = max(width, height) / float(d.WIDTH)
+    blur_lo, blur_hi = spec["blob_blur_px"]
+
+    # "3 per surface" - one blob each of accent, deep and ember.
+    for tone, alpha in (
+        ("accent", spec["blob_alpha"]["accent"]),
+        ("deep", spec["blob_alpha"]["deep"]),
+        ("ember", spec["blob_alpha"]["ember"]),
+    ):
+        hex_color = {"accent": d.ACCENT, "deep": AURORA_DEEP, "ember": d.EMBER}[tone]
+        layer = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+        cx = rng.uniform(0.04, 0.96) * width
+        cy = rng.uniform(-0.05, 1.05) * height
+        rx = rng.uniform(0.26, 0.40) * width
+        ry = rng.uniform(0.30, 0.46) * height
+        ImageDraw.Draw(layer).ellipse(
+            [cx - rx, cy - ry, cx + rx, cy + ry],
+            fill=(*_hex_to_rgb(hex_color), int(round(alpha * 255))),
+        )
+        layer = _blur_downscaled(layer, rng.uniform(blur_lo, blur_hi) * unit, (width, height))
+        img = Image.alpha_composite(img, layer)
+
+    # Two star layers. Static, so "near/far" is expressed as size and alpha
+    # rather than parallax speed - the far layer is smaller, dimmer and sparser.
+    draw = ImageDraw.Draw(img)
+    size_lo, size_hi = spec["star_size_px"]
+    alpha_lo, alpha_hi = spec["star_alpha"]
+    area_ratio = (width * height) / float(d.WIDTH * d.HEIGHT)
+    for layer_index in range(spec["star_layers"]):
+        far = layer_index == 1
+        count = int(round((100 if far else 135) * area_ratio))
+        for _ in range(count):
+            x = rng.uniform(0, width)
+            y = rng.uniform(0, height)
+            radius = rng.uniform(size_lo, size_hi) * unit * (0.7 if far else 1.0) / 2.0
+            alpha = rng.uniform(alpha_lo, alpha_hi * (0.6 if far else 1.0))
+            tint = rng.choice(_STAR_TINTS)
+            draw.ellipse([x - radius, y - radius, x + radius, y + radius],
+                         fill=(*tint, int(round(alpha * 255))))
+
+    vignette = spec["vignette"]
+    img.paste((0, 0, 0), (0, 0), _vignette_mask_v3(
+        width, height, vignette["transparent_to"], vignette["black_alpha"]))
+    return img
+
+
 def make_glass_tile(width, height, tint_hex, tint_alpha=145, radius=16, border_hex=None, border_alpha=90):
     """A rounded, semi-transparent tile: fully transparent outside the
     rounded rect (so the nebula shows through untouched there, giving real

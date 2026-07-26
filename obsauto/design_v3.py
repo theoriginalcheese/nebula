@@ -1,0 +1,448 @@
+"""Nebula UI v3 design contract - section 05 of the mockup, as code.
+
+Source: ``design/ui-v3/BUILD-SPEC.md`` (transcribed from the Claude Design doc
+``Nebula UI Mockups v3.dc.html``). The mockup states its own precedence rule:
+
+    "Every number the frames above imply, written down. If a frame and this
+     table disagree, this table wins."
+
+So this module is the single place a v3 number lives. ``gui.py`` should import
+from here rather than re-declaring literals, and ``tests/test_design_v3.py``
+asserts the values still match the spec.
+
+Two things this module deliberately does NOT carry, because they can't be
+honoured in Tk as written - see ``CURSOR-HANDOFF.md`` sections 2.1 and 2.4:
+
+* the pointer spotlight / pointer lean (per-pointer-event full-window repaints)
+* the aurora + star *motion* cycles
+
+The background *randomisation* survives; only the animation is dropped. See
+``BACKGROUND`` below.
+"""
+
+# ---------------------------------------------------------------------------
+# Colour - "Nebula Deep"
+# ---------------------------------------------------------------------------
+# The spec is explicit: "No other hues exist in this app - log tag colours stay
+# as LOG_TAG_COLORS in gui.py." Ember is live-and-errors ONLY; it is the one
+# place a second hue leads, and only on the disconnected hero state (frame 2h).
+
+GROUND = "#100D1C"        # window ground
+PANEL = "#12101F"         # panel base
+CARD_CORE = "#181428"     # card core (the *inner* of the two card layers)
+RAISED = "#241E44"        # raised surface, keycaps
+ACCENT = "#8B7CF6"        # lines, dots, glow
+ACCENT_TEXT = "#B9AEF9"   # accent text / icons on dark
+EMBER = "#FF5C7A"         # live + errors ONLY
+TEXT = "#F5F3FF"          # primary text
+TEXT_SECONDARY = "#9A93C4"
+TEXT_TERTIARY = "#8B84B8"  # captions
+TEXT_EYEBROW = "#736BA4"   # eyebrow labels, mono meta
+
+COLORS = {
+    "ground": GROUND,
+    "panel": PANEL,
+    "card_core": CARD_CORE,
+    "raised": RAISED,
+    "accent": ACCENT,
+    "accent_text": ACCENT_TEXT,
+    "ember": EMBER,
+    "text": TEXT,
+    "text_secondary": TEXT_SECONDARY,
+    "text_tertiary": TEXT_TERTIARY,
+    "text_eyebrow": TEXT_EYEBROW,
+}
+
+# "Hairlines are rgba(245,243,255,0.055-0.09), never a solid grey."
+HAIRLINE_RGB = (245, 243, 255)
+HAIRLINE_ALPHA = (0.055, 0.09)
+
+# "Tinted fills are the accent or ember at 0.06-0.16 alpha."
+TINT_ALPHA = (0.06, 0.16)
+
+# "In-window panels sit on rgba(16,13,28,0.72-0.92) so the aurora reads through
+# them while text keeps its contrast. A fully opaque panel over the aurora is a
+# bug." (16,13,28) is #100D1C, i.e. the ground itself at partial alpha.
+PANEL_OVER_BACKDROP_ALPHA = (0.72, 0.92)
+
+
+def _hex_to_rgb(value):
+    value = value.lstrip("#")
+    return tuple(int(value[i:i + 2], 16) for i in (0, 2, 4))
+
+
+def _rgb_to_hex(rgb):
+    return "#%02X%02X%02X" % tuple(max(0, min(255, int(round(c)))) for c in rgb)
+
+
+def over(fg, alpha, bg=CARD_CORE):
+    """Composite ``fg`` at ``alpha`` over ``bg`` and return a flat hex.
+
+    A ``tk.Canvas`` item has no alpha channel, so every "accent at 0.10" in the
+    spec has to be resolved to an opaque colour against whatever it sits on.
+    Doing that here keeps the alphas in the source readable instead of leaving
+    a pile of unexplained hex values in ``gui.py``.
+    """
+    f, b = _hex_to_rgb(fg), _hex_to_rgb(bg)
+    return _rgb_to_hex(f[i] * alpha + b[i] * (1.0 - alpha) for i in range(3))
+
+
+def hairline(bg=PANEL, alpha=None):
+    """The spec's hairline, composited over ``bg``."""
+    if alpha is None:
+        alpha = sum(HAIRLINE_ALPHA) / 2.0
+    return over(_rgb_to_hex(HAIRLINE_RGB), alpha, bg)
+
+
+# ---------------------------------------------------------------------------
+# Geometry
+# ---------------------------------------------------------------------------
+# Base design units, exactly as v2 did it - self.scale multiplies these on
+# high-DPI monitors (see nebula-dpi-scaling). MIN_* is the spec's resizable
+# floor; whether the layout actually reflows is an open decision, see
+# CURSOR-HANDOFF.md 2.4.
+
+WIDTH, HEIGHT = 1280, 808          # core
+TRAY_INSET = 6                     # the core sits in a 6px tray
+MIN_WIDTH, MIN_HEIGHT = 1080, 700
+
+# Radii. "Nesting rule: inner = outer - padding."
+RADIUS_TRAY = 28
+RADIUS_CORE = 22
+RADIUS_CARD = 17
+RADIUS_TILE = 12
+RADIUS_CONTROL = 9
+
+TITLEBAR_H = 46
+TITLEBAR_PAD_LEFT = 18
+TITLEBAR_PAD_RIGHT = 8
+
+RAIL_W = 232
+RAIL_PAD_X = 16
+RAIL_PAD_Y = 12
+RAIL_ITEM_H = 38
+RAIL_ITEM_GAP = 3
+
+PANE_HEADER_H = 62
+PANE_HEADER_PAD_X = 26
+
+CONTENT_PAD = 26
+STACK_GAP = 16
+
+# Pane content is drawn at its true size in frames 2b-2e: 1048x746. That falls
+# out of the geometry above (1280 - 232 = 1048; 808 - 46 - 16 = 746) - keeping
+# it here as an assertion target rather than a second source of truth.
+PANE_W = WIDTH - RAIL_W
+PANE_H = HEIGHT - TITLEBAR_H - STACK_GAP
+
+CONTROL_PILL_H = 40
+CONTROL_FIELD_H = 36
+ICON_BTN = (26, 30)                # icon button size range
+MIN_HIT_TARGET = 30
+SIBLING_GAP = 8
+
+# "Trailing icons on primary pills live in their own 26-28px circle, flush to
+# the right padding."
+PILL_TRAILING_CIRCLE = (26, 28)
+
+# "Rules and dividers fade at both ends over 32-48px."
+RULE_FADE = (32, 48)
+
+# ---------------------------------------------------------------------------
+# Type
+# ---------------------------------------------------------------------------
+# The spec designs in Geist / Geist Mono and names its own shipping
+# substitutes, so there is nothing to decide here: "UI face Geist 300/400/500 -
+# ship as Segoe UI Variable", "Numeric face Geist Mono - ship as Cascadia Mono".
+
+FONT_UI = "Segoe UI Variable"
+FONT_MONO = "Cascadia Mono"
+
+# ...except neither of those is a font family you can actually ask Tk for.
+#
+# Two things bite here, both found by probing tkfont.families() on this machine:
+#
+# 1. Windows ships "Segoe UI Variable" as three *optical sizes*, not one family:
+#    Small, Text and Display. Asking for the bare name silently falls back to a
+#    default face.
+# 2. Tk truncates font family names at 31 characters, so the real names are
+#    "Segoe UI Variable Display Semib" and "Segoe UI Variable Text Semiligh" -
+#    not the full words. Spelling them out in full also silently falls back.
+#
+# And "Cascadia Mono" is simply not installed here, so the numeric face needs a
+# fallback or the timer loses its tabular figures. Each stack below is tried in
+# order against the families Tk actually reports; see resolve_fonts().
+
+_OPTICAL = {  # px thresholds for Segoe UI Variable's optical sizes
+    "small": 12,      # <= this
+    "display": 24,    # >= this
+}
+
+FONT_STACKS = {
+    ("small", 300):   ("Segoe UI Variable Small Light", "Segoe UI Light", "Segoe UI"),
+    ("small", 400):   ("Segoe UI Variable Small", "Segoe UI", "Tahoma"),
+    ("small", 500):   ("Segoe UI Variable Small Semibol", "Segoe UI Semibold", "Segoe UI"),
+    ("text", 300):    ("Segoe UI Variable Text Light", "Segoe UI Light", "Segoe UI"),
+    ("text", 400):    ("Segoe UI Variable Text", "Segoe UI", "Tahoma"),
+    ("text", 500):    ("Segoe UI Variable Text Semibold", "Segoe UI Semibold", "Segoe UI"),
+    ("display", 300): ("Segoe UI Variable Display Light", "Segoe UI Light", "Segoe UI"),
+    ("display", 400): ("Segoe UI Variable Display", "Segoe UI", "Tahoma"),
+    ("display", 500): ("Segoe UI Variable Display Semib", "Segoe UI Semibold", "Segoe UI"),
+}
+
+MONO_STACK = ("Cascadia Mono", "Consolas", "Courier New")
+
+# Filled in by resolve_fonts() at startup; until then the first entry of each
+# stack is assumed, which is correct on a machine that has the fonts.
+_resolved = {}
+
+
+def resolve_fonts(available):
+    """Pick the first family in each stack that `available` actually contains.
+
+    `available` is whatever ``tkinter.font.families()`` returns - passed in
+    rather than queried here so this module needs no Tk and stays importable
+    (and testable) on its own.
+    """
+    have = set(available)
+    _resolved.clear()
+    for key, stack in FONT_STACKS.items():
+        _resolved[key] = next((f for f in stack if f in have), stack[-1])
+    _resolved["mono"] = next((f for f in MONO_STACK if f in have), MONO_STACK[-1])
+    return _resolved
+
+
+def _optical(size_px):
+    if size_px <= _OPTICAL["small"]:
+        return "small"
+    if size_px >= _OPTICAL["display"]:
+        return "display"
+    return "text"
+
+
+def font(size_px, weight=400, mono=False):
+    """A Tk font tuple for a v3 type size.
+
+    The size is passed **negative**, which is Tk for "this many pixels" rather
+    than points. That matters: the spec's type scale is CSS pixels, and the
+    layout geometry is in the same units, so using Tk's default point sizing
+    would render every string ~1.33x larger than the design against a layout
+    that didn't grow with it. ScaledCanvas._scale_font multiplies negative
+    sizes correctly, so high-DPI scaling still works.
+    """
+    size = -int(round(size_px))
+    if mono:
+        return (_resolved.get("mono", MONO_STACK[0]), size)
+    key = (_optical(size_px), weight)
+    return (_resolved.get(key, FONT_STACKS[key][0]), size)
+
+
+def type_font(role, mono=False, weight=None):
+    """The font for a named role in TYPE, e.g. type_font("timer")."""
+    spec = TYPE[role]
+    return font(spec["size"], weight or spec["weight"], mono=mono)
+
+# (size, weight, tracking em) - tracking is informational; Tk has no letter
+# spacing, so eyebrow text is spaced by hand where it matters.
+TYPE = {
+    "timer":      {"size": 34,   "weight": 400, "tracking": -0.02},
+    "game_title": {"size": 25,   "weight": 500, "tracking": -0.02},
+    "pane_title": {"size": 19,   "weight": 500, "tracking": 0.0},
+    "body":       {"size": 13,   "weight": 400, "tracking": 0.0},
+    "row":        {"size": 12.5, "weight": 400, "tracking": 0.0},
+    "row_small":  {"size": 12,   "weight": 400, "tracking": 0.0},
+    "meta":       {"size": 11.5, "weight": 400, "tracking": 0.0},
+    "mono":       {"size": 10.5, "weight": 400, "tracking": 0.0},
+    "eyebrow":    {"size": 9.5,  "weight": 500, "tracking": 0.22},
+}
+
+# ---------------------------------------------------------------------------
+# Hero card states
+# ---------------------------------------------------------------------------
+# "Only the hero card changes; nothing else on the dashboard moves. Same 22px
+# padding, same button row position - swap the eyebrow, the tint, and the
+# primary action." One enum drives all four (frames 2a, 2f, 2g, 2h).
+
+HERO_PAD = 22
+
+HERO_STATES = {
+    "recording":   {"eyebrow": "Recording",      "tint": ACCENT, "actions": ("Stop recording", "Pause", "Mark clip")},
+    "watching":    {"eyebrow": "Idle - watching", "tint": None,   "actions": ("Record anyway", "Pause monitoring")},
+    "paused":      {"eyebrow": "Paused",          "tint": ACCENT, "actions": ("Resume", "Stop & save")},
+    "disconnected": {"eyebrow": "OBS disconnected", "tint": EMBER, "actions": ("Retry now", "Connection settings")},
+}
+
+# "Paused - accent tint, timer frozen at 60% opacity."
+PAUSED_TIMER_OPACITY = 0.60
+
+# ---------------------------------------------------------------------------
+# Icons - Phosphor Light
+# ---------------------------------------------------------------------------
+# "Light weight everywhere at 12-24px. The only Fill glyphs are ph-circle
+# (status dots, 6-8px) and ph-square (stop, 9-11px)."
+
+ICON_SIZE = (12, 24)
+ICON_FILL_ONLY = {"circle": (6, 8), "square": (9, 11)}
+
+ICONS = {
+    # navigation
+    "dashboard": "broadcast",
+    "clips": "film-strip",
+    "games": "game-controller",
+    "macropad": "keyboard",
+    "settings": "sliders-horizontal",
+    # transport
+    "start": "record",
+    "pause": "pause",
+    "resume": "play",
+    "mark_clip": "scissors",
+    "scene": "stack-simple",
+    # status
+    "disconnected": "plugs",
+    "connected": "plugs-connected",
+    "storage": "hard-drives",
+    "idle": "timer",
+    "idle_pause": "moon",
+    "hotkey": "command",
+    # actions
+    "rescan": "steam-logo",
+    "reveal": "folder-open",
+    "delete_clip": "trash",
+    "show_window": "arrows-out-simple",
+    "collapse_mini": "arrows-in-simple",
+    "quit": "sign-out",          # tray only
+    "hide_to_tray_minus": "minus",
+    "hide_to_tray_x": "x",
+}
+
+# ---------------------------------------------------------------------------
+# Config map - control -> config.json key
+# ---------------------------------------------------------------------------
+# Every key here already exists in config.DEFAULTS; the test asserts that, so a
+# renamed key can't silently orphan a Settings field.
+#
+# The rules attached to this table in the spec:
+#   * every *_seconds key is in seconds - render the unit suffix in every field
+#     AND every status string
+#   * write on blur, not per keystroke
+#   * show the saved timestamp in the pane header
+#   * never silently drop an unknown key - merge over DEFAULTS and keep the rest
+
+CONFIG_MAP = [
+    # (label, config key, section, unit)
+    ("Host",                   "obs_host",                   "Connection",   None),
+    ("Port",                   "obs_port",                   "Connection",   None),
+    ("Password",               "obs_password",               "Connection",   None),
+    ("OBS executable",         "obs_path",                   "Connection",   None),
+    ("Reconnect every",        "reconnect_interval_seconds", "Connection",   "seconds"),
+    ("Recording folder",       "recording_root",             "Storage",      None),
+    ("Discard clips under",    "min_clip_seconds",           "Storage",      "seconds"),
+    ("Pause after idle",       "idle_timeout_seconds",       "Idle & audio", "seconds"),
+    ("Window poll rate",       "poll_interval_seconds",      "Idle & audio", "seconds"),
+    ("Keep-alive apps",        "keep_alive_audio_processes", "Idle & audio", None),
+    ("Toggle hotkey",          "toggle_hotkey",              "Hotkey",       None),
+    ("... bind by scan code",  "toggle_hotkey_scancode",     "Hotkey",       None),
+    ("Shared classifications", "sync_folder",                "Sync",         None),
+]
+
+SETTINGS_SECTIONS = ["Connection", "Storage", "Idle & audio", "Hotkey", "Sync"]
+
+# ---------------------------------------------------------------------------
+# Motion
+# ---------------------------------------------------------------------------
+# Kept for reference and for the surfaces where it IS affordable: the toast and
+# the mini overlay are separate toplevels, so their fades don't composite this
+# window. Inside the main window, treat every one of these as an instant state
+# swap - see CURSOR-HANDOFF.md 2.1.
+
+EASING = (0.32, 0.72, 0.0, 1.0)     # cubic-bezier(.32,.72,0,1)
+HOVER_MS, PRESS_MS = 500, 120
+PRESS_SCALE = 0.98
+PANE_CHANGE_MS, PANE_CHANGE_RISE = 260, 8
+LIVE_DOT_PERIOD_MS, LIVE_DOT_OPACITY = 1900, (0.35, 0.95)
+FOCUS_RING_W, FOCUS_RING_OFFSET = 2, 2
+DISABLED_OPACITY = 0.45
+
+# "Never animate width / height / top / left."
+# "The elapsed timer updates once per second and must not reflow its
+#  neighbours - tabular figures, fixed width."
+TIMER_TICK_MS = 1000
+
+# ---------------------------------------------------------------------------
+# Toast / tray / mini overlay
+# ---------------------------------------------------------------------------
+
+TOAST_LIFE_MS = 4000
+TOAST_DRAIN_H = 2
+TOAST_MARGIN = 24                    # from both edges of the active screen
+TOAST_IN_MS, TOAST_IN_RISE = 320, 16
+TOAST_OUT_MS = 200
+# "Icon + tint per event: start/stop -> ember, pause/resume -> accent,
+#  error -> ember."
+TOAST_TINTS = {
+    "start": EMBER, "stop": EMBER, "error": EMBER,
+    "pause": ACCENT, "resume": ACCENT,
+}
+
+MINI_W, MINI_H = 296, 54
+MINI_SNAP_PX = 32                    # snap to nearest corner within this
+MINI_FADE_AFTER_MS = 3000
+MINI_FADED_OPACITY = 0.55
+
+# ---------------------------------------------------------------------------
+# Background
+# ---------------------------------------------------------------------------
+# The spec's values, kept in full. What changed is *when* they're used: these
+# seed a single render at launch instead of an animation.
+#
+#   "The background is randomised per launch - never hard-code blob positions
+#    or star coordinates."
+#
+# That requirement is honoured. The motion cycles below are recorded for
+# provenance and are deliberately unused - reintroducing them would reinstate
+# the per-frame composite that measured p50 110ms at 95% CPU (CLAUDE.md, and
+# tests/test_frame_pacing.py).
+
+BACKGROUND = {
+    "blobs_per_surface": 3,
+    "blob_blur_px": (54, 110),
+    "blob_alpha": {"accent": 0.22, "deep": 0.22, "ember": 0.07},
+    "star_layers": 2,
+    "star_size_px": (1, 2),
+    "star_alpha": (0.2, 0.85),
+    "vignette": {"transparent_to": 0.46, "black_alpha": 0.55},
+}
+
+# Recorded, not used - see the note above.
+BACKGROUND_MOTION_UNUSED = {
+    "blob_cycle_s": (46, 92),
+    "blob_travel_pct": 9,
+    "blob_scale": (1.0, 1.14),
+    "star_speed_near_s": (120, 170),
+    "star_speed_far_s": (190, 260),
+    "pointer_spotlight_px": 300,
+    "pointer_spotlight_alpha": 0.22,
+    "pointer_lean_page_px": 16,
+    "pointer_lean_window_px": 9,
+}
+
+# ---------------------------------------------------------------------------
+# Panes
+# ---------------------------------------------------------------------------
+# v2's "recordings" pane is v3's "clips"; "activity" is folded into the
+# dashboard as a block rather than being its own rail entry.
+
+PANES = ["dashboard", "clips", "games", "macropad", "settings"]
+
+PANE_TITLES = {
+    "dashboard": "Dashboard",
+    "clips": "Clips",
+    "games": "Games",
+    "macropad": "Macropad",
+    "settings": "Settings",
+}
+
+PANE_EYEBROWS = {
+    "dashboard": "Live session",
+    "settings": "Writes config.json on blur",
+}

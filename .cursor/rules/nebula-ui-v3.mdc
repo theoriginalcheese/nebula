@@ -1,0 +1,97 @@
+---
+description: Nebula UI v3 — the imported design contract and the repo constraints that outrank it. Load whenever touching obsauto/gui.py, theme_art.py, icon_art.py, tray_app.py or anything under design/ui-v3/.
+globs:
+  - "obsauto/gui.py"
+  - "obsauto/theme_art.py"
+  - "obsauto/icon_art.py"
+  - "obsauto/tray_app.py"
+  - "obsauto/design_v3.py"
+  - "design/ui-v3/**"
+  - "tests/test_views.py"
+  - "tests/test_frame_pacing.py"
+alwaysApply: true
+---
+
+# Nebula UI v3
+
+Full brief: **`CURSOR-HANDOFF.md`** at the repo root. Read it before the first edit to
+`obsauto/gui.py`. Code facts live in `CLAUDE.md`.
+
+## Authority order
+
+```
+design/ui-v3/BUILD-SPEC.md  >  design/ui-v3/FRAMES.md (and the .dc.html)  >  everything else
+```
+
+The mockup says so itself: *"If a frame and this table disagree, this table wins."*
+
+`design/ui-v3/_ds/nocturne-*/styles.css` is the **house** design system. **v3 does not use
+it** — the mockup overrides it wholesale. Never link it; never take a token from it.
+Use `obsauto/design_v3.py`, which is § 05 of the spec as code.
+
+## Five things that will bite you
+
+1. **Never animate the `tk.Canvas` per-frame.** Any canvas change forces a *full window*
+   composite — ~100ms, and the cost is **flat**, independent of how much changed. A 12fps
+   decorative timer measured **p50 110ms at 95% CPU**; removing all of it gave 16ms at 4%.
+   So the spec's aurora drift, star drift, pointer spotlight and pointer lean are **not
+   implementable as written**. Render them **once at launch with a random seed** into the
+   static backdrop instead — that keeps "randomised per launch, no two sessions alike"
+   and costs nothing. `tests/test_frame_pacing.py` fails if a per-frame timer returns.
+
+2. **No fabricated data.** Every number in the frames is mockup filler. If a value has no
+   real source, **build the source or omit the element** — never ship a plausible
+   placeholder or a `0` that means "not implemented". Macropad has **no HID layer at all**;
+   it stays honestly empty until one exists. (This is why v2 dropped Mark clip, the search
+   pill and the res/fps chips.)
+
+3. **Never call `obs.connect()` on the Tk thread** — it blocks up to 5s, and at startup that
+   is the normal case. Worker thread, marshal back through `_ui()`.
+
+4. **`except X as e` unbinds `e` when the block exits.** Any `lambda` capturing it that runs
+   later via `after()`/`_ui()` dies with `NameError`. Bind to a plain local first. Under
+   `pythonw` this crash is **silent** — stderr doesn't exist — which is why
+   `report_callback_exception` routes to the app log. Don't remove that.
+
+5. **Keep the caches and the coalescing.** `_regen_glass()` is ~35ms a call and re-runs on
+   every state change. `_log` only appends to a locked buffer; `_flush_log` batches the
+   textbox write on the Tk thread (a per-line write is one composite each — a burst pegged
+   the UI at 371ms).
+
+## Two open decisions (don't guess — see CURSOR-HANDOFF.md §2.1, §2.4)
+
+- **Background:** static randomised render (recommended) vs. animated. See rule 1.
+- **Window:** keep the fixed-pixel `ScaledCanvas` design at 1280×808 (recommended) vs.
+  make the content pane reflow to honour the 1080×700 minimum.
+
+## Build order — from the spec, follow it
+
+1. Chassis (tray, core, titlebar, rail, empty pane) until it matches frame **2a** exactly.
+2. Hero card + its 4 states driven by **one state enum** (recording / watching / paused /
+   disconnected). Then stat tiles, then activity log.
+3. Tray + window chrome — `−` and `×` both hide, **Quit only in the tray menu**.
+4. Single-slot toast — **build the replace-in-place path before the visuals**.
+5. Clips pane.
+6. Settings — the mono config-key labels under each field **are part of the design**.
+   Write on blur, not per keystroke. Merge over `DEFAULTS`; never drop an unknown key.
+7. Games, Macropad, mini overlay last. Mini overlay **never shows while idle**.
+
+## Non-negotiable visual invariants
+
+- Palette is **Nebula Deep only** (`design_v3.COLORS`). No emoji, no gradient floods,
+  no second accent hue. **Ember `#FF5C7A` is live-and-errors only.**
+- **Every card is two layers** — tinted outer shell, darker inner core. A flat card is a bug.
+- Hairlines are `rgba(245,243,255, .055–.09)`, never solid grey. Rules **fade at both ends
+  over 32–48px**.
+- Panels over the backdrop sit at **72–92% opacity** — a fully opaque panel is a bug.
+- Icons: Phosphor **Light** at 12–24px. The only Fill glyphs are `ph-circle` (status dots,
+  6–8px) and `ph-square` (stop, 9–11px).
+- The elapsed timer ticks **once per second**, tabular figures, fixed width, and must not
+  reflow its neighbours.
+
+## Notes / memory
+
+Durable facts go to the Obsidian vault at `C:\Users\antho\Claude Memories\claude-memory` —
+one atomic note in `memory/`, pointer lines added to **both** `memory/index.md` and
+`memory/MEMORY.md`. Mark new notes `metadata.origin: cursor`. Never put durable notes in
+this repo.

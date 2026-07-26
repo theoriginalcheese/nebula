@@ -1,0 +1,989 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <meta name="design_doc_mode" content="canvas">
+  <link rel="stylesheet" href="_ds/nocturne-ca27441c-01cc-44a6-99a7-7317fdeecd65/styles.css">
+  <script src="_ds/nocturne-ca27441c-01cc-44a6-99a7-7317fdeecd65/_ds_bundle.js"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="anonymous">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600&amp;family=Geist+Mono:wght@400;500&amp;display=swap">
+  <link rel="stylesheet" href="https://unpkg.com/@phosphor-icons/web@2.1.1/src/light/style.css">
+  <link rel="stylesheet" href="https://unpkg.com/@phosphor-icons/web@2.1.1/src/fill/style.css">
+  <style>
+    html { background:#0A0812; }
+    body { margin:0; min-height:100vh; background:#0A0812; color:#F5F3FF; font-family:"Geist", system-ui, sans-serif; -webkit-font-smoothing:antialiased; }
+    a { color:#B9AEF9; text-decoration:none; }
+    a:hover { color:#D3CCFF; }
+    ::selection { background:rgba(139,124,246,0.28); }
+    @keyframes nbPulse { 0%,100% { opacity:.35; transform:scale(1); } 50% { opacity:.95; transform:scale(1.4); } }
+    @keyframes nbDrain { from { transform:scaleX(1); } to { transform:scaleX(0); } }
+    @keyframes nbBlob {
+      0%,100% { transform:translate3d(0,0,0) scale(var(--s0,1)); }
+      34%     { transform:translate3d(var(--dx1,5%),var(--dy1,-4%),0) scale(var(--s1,1.12)); }
+      67%     { transform:translate3d(var(--dx2,-4%),var(--dy2,5%),0) scale(var(--s2,1.05)); }
+    }
+    @keyframes nbDust { from { transform:translate3d(0,0,0); } to { transform:translate3d(0,-50%,0); } }
+    @keyframes nbTwinkle { 0%,100% { opacity:var(--tw0,.35); } 50% { opacity:var(--tw1,.85); } }
+    [data-freeze="1"] *, [data-freeze="1"] *::before, [data-freeze="1"] *::after { animation-play-state: paused !important; }
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { animation-play-state: paused !important; transition-duration: 1ms !important; }
+    }
+  </style>
+</helmet>
+
+<div data-bg="page" aria-hidden="true" style="position:fixed; inset:0; z-index:0; overflow:hidden; pointer-events:none; background:radial-gradient(150% 110% at 50% -10%, #12101F 0%, #0A0812 58%);">
+  <div data-lean="16" style="position:absolute; inset:-14%; transition:transform 1400ms cubic-bezier(0.32,0.72,0,1);">
+    <span data-blob="1" style="position:absolute; left:4%; top:-14%; width:48%; height:74%; border-radius:50%; background:radial-gradient(circle, rgba(139,124,246,0.24), transparent 68%); filter:blur(90px);"></span>
+    <span data-blob="1" style="position:absolute; right:2%; top:18%; width:52%; height:78%; border-radius:50%; background:radial-gradient(circle, rgba(83,64,168,0.24), transparent 70%); filter:blur(100px);"></span>
+    <span data-blob="1" style="position:absolute; left:26%; bottom:-16%; width:46%; height:62%; border-radius:50%; background:radial-gradient(circle, rgba(255,92,122,0.08), transparent 68%); filter:blur(110px);"></span>
+  </div>
+  <span data-dust="1" style="position:absolute; left:0; top:0; width:100%; height:200%;"></span>
+  <span data-dust="2" style="position:absolute; left:0; top:0; width:100%; height:200%; opacity:.7;"></span>
+  <span style="position:absolute; inset:0; background:radial-gradient(140% 120% at 50% 34%, transparent 46%, rgba(0,0,0,0.55) 100%);"></span>
+</div>
+<div style="position:relative; z-index:1; max-width:1760px; margin:0 auto; padding:72px 48px 160px;">
+
+  <header style="display:flex; flex-direction:column; gap:22px; margin-bottom:96px;">
+    <span style="display:inline-flex; align-items:center; gap:8px; align-self:flex-start; padding:5px 12px; border-radius:999px; border:1px solid rgba(139,124,246,0.28); background:rgba(139,124,246,0.07); font-size:10px; letter-spacing:0.22em; text-transform:uppercase; color:#B9AEF9; white-space:nowrap;"><i class="ph-light ph-broadcast" style="font-size:13px;"></i>Nebula &mdash; design v3</span>
+    <h1 style="margin:0; font-size:66px; line-height:0.98; letter-spacing:-0.035em; font-weight:500; max-width:20ch; text-wrap:balance;">One shell, five surfaces, zero guesswork.</h1>
+    <p style="margin:0; max-width:74ch; font-size:16px; line-height:1.65; color:#9A93C4; text-wrap:pretty;">Nebula Deep palette, live aurora + star drift, pointer spotlight. Every screen below is the same chassis with a different pane, so the build is one shell plus five content views. Section 05 is the contract: tokens, geometry, behaviour, and the exact <span style="font-family:'Geist Mono',monospace; font-size:14px; color:#D3CCFF;">config.json</span> keys each control writes. Implement from 05, look at 01&ndash;04 to check yourself.</p>
+    <div style="display:flex; flex-wrap:wrap; gap:10px; margin-top:6px;">
+      <a href="#2a" style="display:inline-flex; align-items:center; gap:9px; height:38px; padding:0 5px 0 16px; border-radius:999px; border:1px solid rgba(139,124,246,0.42); background:rgba(139,124,246,0.06); font-size:13px; color:#F5F3FF; white-space:nowrap; transition:all 700ms cubic-bezier(0.32,0.72,0,1);" style-hover="background:rgba(139,124,246,0.13); border-color:rgba(139,124,246,0.7);">Dashboard<span style="width:28px; height:28px; border-radius:999px; background:rgba(245,243,255,0.08); display:flex; align-items:center; justify-content:center;"><i class="ph-light ph-arrow-down-right" style="font-size:13px;"></i></span></a>
+      <a href="#2k" style="display:inline-flex; align-items:center; gap:9px; height:38px; padding:0 5px 0 16px; border-radius:999px; border:1px solid rgba(245,243,255,0.12); background:rgba(245,243,255,0.03); font-size:13px; color:#D3CCFF; white-space:nowrap; transition:all 700ms cubic-bezier(0.32,0.72,0,1);" style-hover="background:rgba(245,243,255,0.07);">Build spec<span style="width:28px; height:28px; border-radius:999px; background:rgba(245,243,255,0.07); display:flex; align-items:center; justify-content:center;"><i class="ph-light ph-list-checks" style="font-size:13px;"></i></span></a>
+    </div>
+    <div style="display:flex; flex-wrap:wrap; gap:6px; margin-top:14px;">
+      <span style="width:56px; height:34px; border-radius:9px; background:#100D1C; border:1px solid rgba(245,243,255,0.08);"></span>
+      <span style="width:56px; height:34px; border-radius:9px; background:#12101F; border:1px solid rgba(245,243,255,0.08);"></span>
+      <span style="width:56px; height:34px; border-radius:9px; background:#181428; border:1px solid rgba(245,243,255,0.08);"></span>
+      <span style="width:56px; height:34px; border-radius:9px; background:#241E44;"></span>
+      <span style="width:56px; height:34px; border-radius:9px; background:#5340A8;"></span>
+      <span style="width:56px; height:34px; border-radius:9px; background:#8B7CF6;"></span>
+      <span style="width:56px; height:34px; border-radius:9px; background:#B9AEF9;"></span>
+      <span style="width:56px; height:34px; border-radius:9px; background:#FF5C7A;"></span>
+      <span style="width:56px; height:34px; border-radius:9px; background:#9A93C4;"></span>
+      <span style="width:56px; height:34px; border-radius:9px; background:#F5F3FF;"></span>
+    </div>
+  </header>
+
+  <!-- ============================== 01 THE SHELL ============================== -->
+  <section data-reveal="1" style="margin-bottom:128px;">
+    <div style="display:flex; align-items:baseline; gap:16px; margin-bottom:10px;">
+      <h2 style="margin:0; font-size:11px; letter-spacing:0.3em; text-transform:uppercase; color:#8B84B8; font-weight:500;">01 &middot; The chassis</h2>
+      <span style="height:1px; flex:1; background:linear-gradient(90deg, transparent, rgba(110,104,150,0.32) 48px, rgba(110,104,150,0.32) calc(100% - 48px), transparent);"></span>
+    </div>
+    <p style="margin:0 0 34px; max-width:78ch; font-size:15px; line-height:1.6; color:#9A93C4; text-wrap:pretty;">1280&times;808 core in a 6px tray. Titlebar, 232px rail and content pane never change between views &mdash; build this once. Toggle the annotation pins from Tweaks to read exact measurements.</p>
+
+    <div id="2a" data-screen-label="01 Dashboard" style="position:relative; width:1292px; margin-left:112px;">
+      <div style="position:absolute; top:-13px; left:-13px; z-index:9; background:#8B7CF6; color:#171233; font-weight:600; font-size:11px; padding:4px 10px; border-radius:8px; font-family:'Geist Mono',monospace;">2a</div>
+
+      <div style="padding:6px; border-radius:28px; background:linear-gradient(160deg, rgba(245,243,255,0.075), rgba(245,243,255,0.015)); border:1px solid rgba(245,243,255,0.09); box-shadow:0 48px 90px -28px rgba(0,0,0,0.8);">
+        <div style="width:1280px; height:808px; border-radius:22px; overflow:hidden; position:relative; display:flex; flex-direction:column; background:#100D1C; box-shadow:inset 0 1px 0 rgba(245,243,255,0.07);">
+          <div data-bg="win" aria-hidden="true" style="position:absolute; inset:0; overflow:hidden; pointer-events:none;">
+                <div data-lean="9" style="position:absolute; inset:-18%; transition:transform 1200ms cubic-bezier(0.32,0.72,0,1);">
+                  <span data-blob="1" style="position:absolute; left:6%; top:-20%; width:56%; height:88%; border-radius:50%; background:radial-gradient(circle, rgba(139,124,246,0.22), transparent 68%); filter:blur(54px);"></span>
+                  <span data-blob="1" style="position:absolute; right:2%; bottom:-24%; width:58%; height:82%; border-radius:50%; background:radial-gradient(circle, rgba(83,64,168,0.22), transparent 70%); filter:blur(58px);"></span>
+                  <span data-blob="1" style="position:absolute; left:34%; bottom:0%; width:42%; height:56%; border-radius:50%; background:radial-gradient(circle, rgba(255,92,122,0.07), transparent 68%); filter:blur(62px);"></span>
+                </div>
+                <span data-dust="1" style="position:absolute; left:0; top:0; width:100%; height:200%;"></span>
+                <span data-dust="2" style="position:absolute; left:0; top:0; width:100%; height:200%; opacity:.7;"></span>
+              </div>
+              <div style="position:absolute; inset:0; pointer-events:none; background:radial-gradient(620px 420px at 4% -6%, rgba(139,124,246,0.16), transparent 70%), radial-gradient(520px 380px at 78% 108%, rgba(83,64,168,0.14), transparent 72%);"></div>
+
+          <!-- titlebar -->
+          <div style="position:relative; z-index:1; height:46px; flex:none; display:flex; align-items:center; gap:12px; padding:0 8px 0 18px; border-bottom:1px solid rgba(245,243,255,0.055);">
+            <span style="width:18px; height:18px; border-radius:6px; background:linear-gradient(150deg,#B9AEF9,#5340A8); box-shadow:0 0 14px rgba(139,124,246,0.5);"></span>
+            <span style="font-size:12.5px; font-weight:500; letter-spacing:-0.01em;">Nebula</span>
+            <span style="font-family:'Geist Mono',monospace; font-size:10.5px; color:#736BA4;">0.9.2</span>
+            <span style="margin-left:14px; display:inline-flex; align-items:center; gap:7px; padding:3px 9px; border-radius:7px; background:rgba(245,243,255,0.035); border:1px solid rgba(245,243,255,0.07); font-size:10.5px; color:#9A93C4;">Monitoring<span style="font-family:'Geist Mono',monospace; padding:1px 5px; border-radius:4px; background:rgba(139,124,246,0.14); color:#D3CCFF; font-size:10px;">`</span></span>
+            <span style="flex:1;"></span>
+            <span style="display:inline-flex; align-items:center; gap:7px; font-size:11px; color:#9A93C4; margin-right:10px;"><i class="ph-fill ph-circle" style="font-size:7px; color:#8B7CF6;"></i>OBS 30.2 &middot; localhost:4455</span>
+            <span style="width:30px; height:30px; border-radius:8px; display:flex; align-items:center; justify-content:center; color:#9A93C4; transition:all 500ms cubic-bezier(0.32,0.72,0,1);" style-hover="background:rgba(245,243,255,0.07); color:#F5F3FF;"><i class="ph-light ph-minus" style="font-size:14px;"></i></span>
+            <span style="width:30px; height:30px; border-radius:8px; display:flex; align-items:center; justify-content:center; color:#9A93C4; transition:all 500ms cubic-bezier(0.32,0.72,0,1);" style-hover="background:rgba(255,92,122,0.16); color:#F5F3FF;"><i class="ph-light ph-x" style="font-size:14px;"></i></span>
+          </div>
+
+          <div style="position:relative; z-index:1; flex:1; display:flex; min-height:0;">
+            <!-- rail -->
+            <div style="width:232px; flex:none; display:flex; flex-direction:column; padding:16px 12px; gap:3px; border-right:1px solid rgba(245,243,255,0.055);">
+              <div style="padding:6px 10px 12px; font-size:9.5px; letter-spacing:0.24em; text-transform:uppercase; color:#736BA4;">Session</div>
+              <div style="position:relative; display:flex; align-items:center; gap:11px; height:38px; padding:0 12px; border-radius:11px; background:rgba(139,124,246,0.10); border:1px solid rgba(139,124,246,0.22); color:#F5F3FF; font-size:13px;"><span style="position:absolute; left:0; top:11px; bottom:11px; width:2px; border-radius:2px; background:#8B7CF6;"></span><i class="ph-light ph-broadcast" style="font-size:16px; color:#B9AEF9;"></i>Dashboard</div>
+              <div style="display:flex; align-items:center; gap:11px; height:38px; padding:0 12px; border-radius:11px; color:#9A93C4; font-size:13px; transition:all 500ms cubic-bezier(0.32,0.72,0,1);" style-hover="background:rgba(245,243,255,0.045); color:#F5F3FF;"><i class="ph-light ph-film-strip" style="font-size:16px;"></i>Clips<span style="margin-left:auto; font-family:'Geist Mono',monospace; font-size:10.5px; color:#736BA4;">418</span></div>
+              <div style="display:flex; align-items:center; gap:11px; height:38px; padding:0 12px; border-radius:11px; color:#9A93C4; font-size:13px; transition:all 500ms cubic-bezier(0.32,0.72,0,1);" style-hover="background:rgba(245,243,255,0.045); color:#F5F3FF;"><i class="ph-light ph-game-controller" style="font-size:16px;"></i>Games<span style="margin-left:auto; display:inline-flex; align-items:center; justify-content:center; min-width:17px; height:17px; padding:0 5px; border-radius:5px; background:rgba(139,124,246,0.18); color:#D3CCFF; font-family:'Geist Mono',monospace; font-size:10px;">3</span></div>
+              <div style="display:flex; align-items:center; gap:11px; height:38px; padding:0 12px; border-radius:11px; color:#9A93C4; font-size:13px; transition:all 500ms cubic-bezier(0.32,0.72,0,1);" style-hover="background:rgba(245,243,255,0.045); color:#F5F3FF;"><i class="ph-light ph-keyboard" style="font-size:16px;"></i>Macropad</div>
+              <div style="display:flex; align-items:center; gap:11px; height:38px; padding:0 12px; border-radius:11px; color:#9A93C4; font-size:13px; transition:all 500ms cubic-bezier(0.32,0.72,0,1);" style-hover="background:rgba(245,243,255,0.045); color:#F5F3FF;"><i class="ph-light ph-sliders-horizontal" style="font-size:16px;"></i>Settings</div>
+              <span style="flex:1;"></span>
+              <div style="padding:14px 12px 6px; display:flex; flex-direction:column; gap:12px;">
+                <div style="display:flex; flex-direction:column; gap:6px;">
+                  <div style="display:flex; align-items:center; justify-content:space-between; font-size:10.5px; color:#8B84B8;"><span>D:/OBS Recordings</span><span style="font-family:'Geist Mono',monospace; color:#9A93C4;">61%</span></div>
+                  <div style="height:3px; border-radius:2px; background:rgba(245,243,255,0.08); overflow:hidden;"><span style="display:block; height:100%; width:61%; border-radius:2px; background:linear-gradient(90deg,#5340A8,#8B7CF6);"></span></div>
+                  <div style="font-size:10px; color:#736BA4; font-family:'Geist Mono',monospace;">1.42 TB free of 3.63 TB</div>
+                </div>
+              </div>
+            </div>
+
+            <!-- content -->
+            <div style="flex:1; min-width:0; display:flex; flex-direction:column;">
+              <div style="height:62px; flex:none; display:flex; align-items:center; gap:14px; padding:0 26px;">
+                <div style="display:flex; flex-direction:column; gap:3px;">
+                  <span style="font-size:9.5px; letter-spacing:0.24em; text-transform:uppercase; color:#736BA4;">Live session</span>
+                  <span style="font-size:19px; font-weight:500; letter-spacing:-0.015em;">Dashboard</span>
+                </div>
+                <span style="flex:1;"></span>
+                <span style="display:inline-flex; align-items:center; gap:8px; height:32px; padding:0 13px; border-radius:9px; border:1px solid rgba(245,243,255,0.1); background:rgba(245,243,255,0.03); font-size:12px; color:#9A93C4; transition:all 500ms cubic-bezier(0.32,0.72,0,1);" style-hover="background:rgba(245,243,255,0.07); color:#F5F3FF;"><i class="ph-light ph-folder-open" style="font-size:14px;"></i>Open folder</span>
+                <span style="display:inline-flex; align-items:center; gap:8px; height:32px; padding:0 13px; border-radius:9px; border:1px solid rgba(245,243,255,0.1); background:rgba(245,243,255,0.03); font-size:12px; color:#9A93C4; transition:all 500ms cubic-bezier(0.32,0.72,0,1);" style-hover="background:rgba(245,243,255,0.07); color:#F5F3FF;"><i class="ph-light ph-arrows-clockwise" style="font-size:14px;"></i>Rescan Steam</span>
+              </div>
+
+              <div style="flex:1; min-height:0; padding:4px 26px 26px; display:flex; flex-direction:column; gap:16px;">
+
+                <!-- hero: live card, double bezel -->
+                <div style="position:relative; padding:5px; border-radius:22px; background:rgba(245,243,255,0.045); border:1px solid rgba(245,243,255,0.075);">
+                  <sc-if value="{{ ann }}" hint-placeholder-val="{{ true }}">
+                    <span style="position:absolute; right:-10px; top:-11px; z-index:6; font-family:'Geist Mono',monospace; font-size:9.5px; padding:2px 7px; border-radius:6px; background:#8B7CF6; color:#171233;">tray 5 &middot; r22 / r17</span>
+                  </sc-if>
+                  <div style="display:flex; gap:22px; padding:22px; border-radius:17px; background:linear-gradient(150deg, rgba(255,92,122,0.10), rgba(24,20,40,0.9) 46%); box-shadow:inset 0 1px 0 rgba(245,243,255,0.07);">
+                    <div style="flex:1; min-width:0; display:flex; flex-direction:column;">
+                      <span style="display:inline-flex; align-items:center; gap:7px; align-self:flex-start; padding:4px 10px; border-radius:999px; border:1px solid rgba(255,92,122,0.35); background:rgba(255,92,122,0.09); font-size:9.5px; letter-spacing:0.2em; text-transform:uppercase; color:#FFA3B4;"><i class="ph-fill ph-circle" style="font-size:6px; color:#FF5C7A; animation:nbPulse 1.9s ease-in-out infinite;"></i>Recording</span>
+                      <div style="margin-top:16px; display:flex; align-items:center; gap:13px;">
+                        <span style="width:44px; height:44px; border-radius:12px; background:linear-gradient(150deg,#2E2752,#241E44); border:1px solid rgba(245,243,255,0.09); display:flex; align-items:center; justify-content:center; color:#B4ADD9;"><i class="ph-light ph-game-controller" style="font-size:20px;"></i></span>
+                        <div style="display:flex; flex-direction:column; gap:3px; min-width:0;">
+                          <span style="font-size:25px; font-weight:500; letter-spacing:-0.02em; line-height:1.1;">Helldivers 2</span>
+                          <span style="font-size:11.5px; color:#8B84B8; font-family:'Geist Mono',monospace;">helldivers2.exe &middot; Steam 553850</span>
+                        </div>
+                      </div>
+                      <div style="margin-top:22px; display:flex; align-items:flex-end; gap:30px;">
+                        <div style="display:flex; flex-direction:column; gap:5px;"><span style="font-size:9.5px; letter-spacing:0.2em; text-transform:uppercase; color:#736BA4;">Elapsed</span><span style="font-family:'Geist Mono',monospace; font-size:34px; font-weight:400; letter-spacing:-0.02em; line-height:1;">01:47:22</span></div>
+                        <div style="display:flex; flex-direction:column; gap:5px;"><span style="font-size:9.5px; letter-spacing:0.2em; text-transform:uppercase; color:#736BA4;">File size</span><span style="font-family:'Geist Mono',monospace; font-size:19px; color:#D3CCFF; line-height:1.5;">8.94 GB</span></div>
+                        <div style="display:flex; flex-direction:column; gap:5px;"><span style="font-size:9.5px; letter-spacing:0.2em; text-transform:uppercase; color:#736BA4;">Bitrate</span><span style="font-family:'Geist Mono',monospace; font-size:19px; color:#D3CCFF; line-height:1.5;">14.2 Mb/s</span></div>
+                      </div>
+                      <span style="flex:1;"></span>
+                      <div style="display:flex; gap:10px; margin-top:22px;">
+                        <span style="display:inline-flex; align-items:center; gap:10px; height:40px; padding:0 6px 0 17px; border-radius:999px; border:1px solid rgba(255,92,122,0.45); background:rgba(255,92,122,0.08); font-size:13px; color:#F5F3FF; transition:all 700ms cubic-bezier(0.32,0.72,0,1);" style-hover="background:rgba(255,92,122,0.16);">Stop recording<span style="width:28px; height:28px; border-radius:999px; background:rgba(245,243,255,0.09); display:flex; align-items:center; justify-content:center;"><i class="ph-fill ph-square" style="font-size:9px;"></i></span></span>
+                        <span style="display:inline-flex; align-items:center; gap:10px; height:40px; padding:0 6px 0 17px; border-radius:999px; border:1px solid rgba(245,243,255,0.12); background:rgba(245,243,255,0.03); font-size:13px; color:#D3CCFF; transition:all 700ms cubic-bezier(0.32,0.72,0,1);" style-hover="background:rgba(245,243,255,0.07);">Pause<span style="width:28px; height:28px; border-radius:999px; background:rgba(245,243,255,0.07); display:flex; align-items:center; justify-content:center;"><i class="ph-light ph-pause" style="font-size:12px;"></i></span></span>
+                        <span style="display:inline-flex; align-items:center; gap:9px; height:40px; padding:0 16px; border-radius:999px; border:1px solid rgba(245,243,255,0.1); font-size:13px; color:#9A93C4; transition:all 700ms cubic-bezier(0.32,0.72,0,1);" style-hover="background:rgba(245,243,255,0.05); color:#F5F3FF;"><i class="ph-light ph-scissors" style="font-size:15px;"></i>Mark clip</span>
+                      </div>
+                    </div>
+                    <div style="width:404px; flex:none; display:flex; flex-direction:column; gap:11px;">
+                      <div style="position:relative; aspect-ratio:16/9; border-radius:14px; overflow:hidden; background:linear-gradient(140deg,#241E44 0%,#2E2358 42%,#5340A8 100%); border:1px solid rgba(245,243,255,0.09);">
+                        <span style="position:absolute; inset:0; background:radial-gradient(90% 80% at 30% 20%, rgba(245,243,255,0.10), transparent 70%);"></span>
+                        <span style="position:absolute; left:12px; top:12px; display:inline-flex; align-items:center; gap:6px; padding:3px 9px; border-radius:7px; background:rgba(10,8,18,0.62); font-size:9.5px; letter-spacing:0.18em; text-transform:uppercase; color:#FFA3B4;"><i class="ph-fill ph-circle" style="font-size:6px; color:#FF5C7A; animation:nbPulse 1.9s ease-in-out infinite;"></i>Live</span>
+                        <span style="position:absolute; right:12px; bottom:12px; font-family:'Geist Mono',monospace; font-size:10px; padding:3px 8px; border-radius:6px; background:rgba(10,8,18,0.62); color:#D3CCFF;">2560&times;1440 &middot; 60 fps</span>
+                        <span style="position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); font-size:10px; letter-spacing:0.2em; text-transform:uppercase; color:rgba(245,243,255,0.45);">OBS scene preview</span>
+                      </div>
+                      <div style="display:flex; align-items:center; gap:9px; padding:11px 13px; border-radius:12px; background:rgba(245,243,255,0.035); border:1px solid rgba(245,243,255,0.07);">
+                        <i class="ph-light ph-stack-simple" style="font-size:15px; color:#9A93C4;"></i>
+                        <span style="font-size:12px; color:#D3CCFF;">Scene &mdash; <span style="color:#F5F3FF;">Game Capture</span></span>
+                        <span style="flex:1;"></span>
+                        <span style="display:inline-flex; align-items:center; gap:6px; font-size:11px; color:#8B84B8;"><i class="ph-light ph-microphone" style="font-size:13px;"></i>Mic</span>
+                        <span style="width:38px; height:3px; border-radius:2px; background:rgba(245,243,255,0.1); overflow:hidden;"><span style="display:block; height:100%; width:58%; background:#8B7CF6;"></span></span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- stat tiles -->
+                <div style="display:grid; grid-template-columns:repeat(4,1fr); gap:12px; flex:none;">
+                  <div style="padding:4px; border-radius:16px; background:rgba(245,243,255,0.035); border:1px solid rgba(245,243,255,0.06);"><div style="padding:14px 15px; border-radius:12px; background:#181428; box-shadow:inset 0 1px 0 rgba(245,243,255,0.05); display:flex; flex-direction:column; gap:9px;"><span style="display:flex; align-items:center; gap:7px; font-size:9.5px; letter-spacing:0.18em; text-transform:uppercase; color:#736BA4;"><i class="ph-light ph-film-strip" style="font-size:13px;"></i>Clips today</span><span style="font-family:'Geist Mono',monospace; font-size:24px; letter-spacing:-0.02em;">7</span></div></div>
+                  <div style="padding:4px; border-radius:16px; background:rgba(245,243,255,0.035); border:1px solid rgba(245,243,255,0.06);"><div style="padding:14px 15px; border-radius:12px; background:#181428; box-shadow:inset 0 1px 0 rgba(245,243,255,0.05); display:flex; flex-direction:column; gap:9px;"><span style="display:flex; align-items:center; gap:7px; font-size:9.5px; letter-spacing:0.18em; text-transform:uppercase; color:#736BA4;"><i class="ph-light ph-hourglass-medium" style="font-size:13px;"></i>Recorded</span><span style="font-family:'Geist Mono',monospace; font-size:24px; letter-spacing:-0.02em;">4h 12m</span></div></div>
+                  <div style="padding:4px; border-radius:16px; background:rgba(245,243,255,0.035); border:1px solid rgba(245,243,255,0.06);"><div style="padding:14px 15px; border-radius:12px; background:#181428; box-shadow:inset 0 1px 0 rgba(245,243,255,0.05); display:flex; flex-direction:column; gap:9px;"><span style="display:flex; align-items:center; gap:7px; font-size:9.5px; letter-spacing:0.18em; text-transform:uppercase; color:#736BA4;"><i class="ph-light ph-trash" style="font-size:13px;"></i>Auto-culled</span><span style="font-family:'Geist Mono',monospace; font-size:24px; letter-spacing:-0.02em;">3</span></div></div>
+                  <div style="padding:4px; border-radius:16px; background:rgba(245,243,255,0.035); border:1px solid rgba(245,243,255,0.06);"><div style="padding:14px 15px; border-radius:12px; background:#181428; box-shadow:inset 0 1px 0 rgba(245,243,255,0.05); display:flex; flex-direction:column; gap:9px;"><span style="display:flex; align-items:center; gap:7px; font-size:9.5px; letter-spacing:0.18em; text-transform:uppercase; color:#736BA4;"><i class="ph-light ph-moon" style="font-size:13px;"></i>Idle pauses</span><span style="font-family:'Geist Mono',monospace; font-size:24px; letter-spacing:-0.02em;">12</span></div></div>
+                </div>
+
+                <!-- activity -->
+                <div style="flex:1; min-height:0; padding:4px; border-radius:18px; background:rgba(245,243,255,0.03); border:1px solid rgba(245,243,255,0.06);">
+                  <div style="height:100%; border-radius:14px; background:rgba(16,13,28,0.72); box-shadow:inset 0 1px 0 rgba(245,243,255,0.05); display:flex; flex-direction:column; overflow:hidden;">
+                    <div style="flex:none; display:flex; align-items:center; gap:10px; padding:13px 16px 11px; border-bottom:1px solid rgba(245,243,255,0.055);">
+                      <span style="font-size:9.5px; letter-spacing:0.22em; text-transform:uppercase; color:#736BA4;">Activity</span>
+                      <span style="flex:1;"></span>
+                      <span style="display:inline-flex; align-items:center; gap:6px; font-size:10.5px; color:#8B84B8;"><i class="ph-light ph-funnel-simple" style="font-size:12px;"></i>All tags</span>
+                      <span style="display:inline-flex; align-items:center; gap:6px; font-size:10.5px; color:#8B84B8;"><i class="ph-light ph-copy-simple" style="font-size:12px;"></i>Copy log</span>
+                    </div>
+                    <div style="flex:1; min-height:0; padding:6px 16px 12px; display:flex; flex-direction:column; font-family:'Geist Mono',monospace; font-size:11.5px;">
+                      <div style="display:flex; align-items:center; gap:12px; padding:5px 0;"><span style="color:#736BA4;">21:14:02</span><span style="min-width:74px; color:#B9AEF9;">[OBS]</span><span style="color:#D3CCFF;">Recording started &rarr; Helldivers 2</span></div>
+                      <div style="display:flex; align-items:center; gap:12px; padding:5px 0;"><span style="color:#736BA4;">21:13:58</span><span style="min-width:74px; color:#9186D6;">[Monitor]</span><span style="color:#9A93C4;">Foreground window changed &mdash; helldivers2.exe</span></div>
+                      <div style="display:flex; align-items:center; gap:12px; padding:5px 0;"><span style="color:#736BA4;">21:13:58</span><span style="min-width:74px; color:#9186D6;">[Steam]</span><span style="color:#9A93C4;">Matched appid 553850 from library cache</span></div>
+                      <div style="display:flex; align-items:center; gap:12px; padding:5px 0;"><span style="color:#736BA4;">20:58:41</span><span style="min-width:74px; color:#B4ADD9;">[Audio]</span><span style="color:#9A93C4;">discord.exe active &mdash; idle pause suppressed</span></div>
+                      <div style="display:flex; align-items:center; gap:12px; padding:5px 0; opacity:0.5;"><span style="color:#736BA4;">20:22:17</span><span style="min-width:74px; color:#9A93C4;">[OBS]</span><span style="color:#9A93C4;">Clip discarded &mdash; 6s under min_clip_seconds</span></div>
+                    </div>
+                  </div>
+                </div>
+
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <sc-if value="{{ ann }}" hint-placeholder-val="{{ true }}">
+        <span style="position:absolute; left:-96px; top:52px; font-family:'Geist Mono',monospace; font-size:9.5px; padding:2px 7px; border-radius:6px; background:rgba(139,124,246,0.16); color:#D3CCFF; border:1px solid rgba(139,124,246,0.3);">h 46</span>
+      </sc-if>
+      <sc-if value="{{ ann }}" hint-placeholder-val="{{ true }}">
+        <span style="position:absolute; left:-96px; top:200px; font-family:'Geist Mono',monospace; font-size:9.5px; padding:2px 7px; border-radius:6px; background:rgba(139,124,246,0.16); color:#D3CCFF; border:1px solid rgba(139,124,246,0.3);">w 232</span>
+      </sc-if>
+      <sc-if value="{{ ann }}" hint-placeholder-val="{{ true }}">
+        <span style="position:absolute; left:-96px; top:340px; font-family:'Geist Mono',monospace; font-size:9.5px; padding:2px 7px; border-radius:6px; background:rgba(139,124,246,0.16); color:#D3CCFF; border:1px solid rgba(139,124,246,0.3);">pad 26</span>
+      </sc-if>
+      <sc-if value="{{ ann }}" hint-placeholder-val="{{ true }}">
+        <span style="position:absolute; left:-96px; bottom:60px; font-family:'Geist Mono',monospace; font-size:9.5px; padding:2px 7px; border-radius:6px; background:rgba(139,124,246,0.16); color:#D3CCFF; border:1px solid rgba(139,124,246,0.3);">gap 16</span>
+      </sc-if>
+    </div>
+  </section>
+
+  <!-- ============================== 02 THE PANES ============================== -->
+  <section data-reveal="1" style="margin-bottom:128px;">
+    <div style="display:flex; align-items:baseline; gap:16px; margin-bottom:10px;">
+      <h2 style="margin:0; font-size:11px; letter-spacing:0.3em; text-transform:uppercase; color:#8B84B8; font-weight:500;">02 &middot; The four other panes</h2>
+      <span style="height:1px; flex:1; background:linear-gradient(90deg, transparent, rgba(110,104,150,0.32) 48px, rgba(110,104,150,0.32) calc(100% - 48px), transparent);"></span>
+    </div>
+    <p style="margin:0 0 34px; max-width:78ch; font-size:15px; line-height:1.6; color:#9A93C4; text-wrap:pretty;">Same chassis, content pane swapped. Rail and titlebar are omitted here on purpose &mdash; render them exactly as 2a. Each pane is drawn at its true size: 1048&times;746.</p>
+
+    <div style="display:flex; flex-wrap:wrap; gap:56px; align-items:flex-start;">
+
+      <!-- 2b CLIPS -->
+      <div id="2b" data-screen-label="02 Clips" style="position:relative;">
+        <div style="position:absolute; top:-13px; left:-13px; z-index:9; background:#8B7CF6; color:#171233; font-weight:600; font-size:11px; padding:4px 10px; border-radius:8px; font-family:'Geist Mono',monospace;">2b</div>
+        <div style="padding:6px; border-radius:24px; background:linear-gradient(160deg, rgba(245,243,255,0.07), rgba(245,243,255,0.015)); border:1px solid rgba(245,243,255,0.09); box-shadow:0 40px 80px -28px rgba(0,0,0,0.75);">
+          <div style="width:1048px; height:746px; border-radius:18px; overflow:hidden; position:relative; background:#100D1C; box-shadow:inset 0 1px 0 rgba(245,243,255,0.06); display:flex; flex-direction:column;">
+            <div data-bg="win" aria-hidden="true" style="position:absolute; inset:0; overflow:hidden; pointer-events:none;">
+                <div data-lean="9" style="position:absolute; inset:-18%; transition:transform 1200ms cubic-bezier(0.32,0.72,0,1);">
+                  <span data-blob="1" style="position:absolute; left:44%; top:-20%; width:56%; height:88%; border-radius:50%; background:radial-gradient(circle, rgba(139,124,246,0.22), transparent 68%); filter:blur(54px);"></span>
+                  <span data-blob="1" style="position:absolute; right:-4%; bottom:-24%; width:58%; height:82%; border-radius:50%; background:radial-gradient(circle, rgba(83,64,168,0.22), transparent 70%); filter:blur(58px);"></span>
+                  <span data-blob="1" style="position:absolute; left:18%; bottom:0%; width:42%; height:56%; border-radius:50%; background:radial-gradient(circle, rgba(255,92,122,0.07), transparent 68%); filter:blur(62px);"></span>
+                </div>
+                <span data-dust="1" style="position:absolute; left:0; top:0; width:100%; height:200%;"></span>
+                <span data-dust="2" style="position:absolute; left:0; top:0; width:100%; height:200%; opacity:.7;"></span>
+              </div>
+              <div style="position:absolute; inset:0; pointer-events:none; background:radial-gradient(520px 380px at 88% -8%, rgba(139,124,246,0.13), transparent 72%);"></div>
+            <div style="position:relative; z-index:1; height:62px; flex:none; display:flex; align-items:center; gap:12px; padding:0 26px;">
+              <div style="display:flex; flex-direction:column; gap:3px;"><span style="font-size:9.5px; letter-spacing:0.24em; text-transform:uppercase; color:#736BA4;">418 clips &middot; 1.9 TB</span><span style="font-size:19px; font-weight:500; letter-spacing:-0.015em;">Clips</span></div>
+              <span style="flex:1;"></span>
+              <span style="display:inline-flex; align-items:center; gap:8px; width:216px; height:32px; padding:0 12px; border-radius:9px; border:1px solid rgba(245,243,255,0.1); background:rgba(245,243,255,0.03); font-size:12px; color:#736BA4;"><i class="ph-light ph-magnifying-glass" style="font-size:14px;"></i>Search clips</span>
+              <span style="display:inline-flex; align-items:center; gap:7px; height:32px; padding:0 12px; border-radius:9px; border:1px solid rgba(245,243,255,0.1); background:rgba(245,243,255,0.03); font-size:12px; color:#9A93C4;"><i class="ph-light ph-sort-descending" style="font-size:14px;"></i>Newest</span>
+            </div>
+            <div style="position:relative; z-index:1; flex:1; min-height:0; padding:4px 26px 26px; display:flex; gap:16px;">
+              <!-- game list -->
+              <div style="width:250px; flex:none; padding:4px; border-radius:18px; background:rgba(245,243,255,0.03); border:1px solid rgba(245,243,255,0.06);">
+                <div style="height:100%; border-radius:14px; background:rgba(16,13,28,0.7); box-shadow:inset 0 1px 0 rgba(245,243,255,0.05); padding:10px; display:flex; flex-direction:column; gap:3px; overflow:hidden;">
+                  <div style="padding:6px 8px 10px; font-size:9.5px; letter-spacing:0.22em; text-transform:uppercase; color:#736BA4;">By game</div>
+                  <div style="display:flex; align-items:center; gap:10px; height:40px; padding:0 10px; border-radius:10px; background:rgba(139,124,246,0.10); border:1px solid rgba(139,124,246,0.2);"><span style="width:22px; height:22px; border-radius:6px; background:linear-gradient(150deg,#2E2752,#241E44);"></span><span style="font-size:12.5px;">Helldivers 2</span><span style="margin-left:auto; font-family:'Geist Mono',monospace; font-size:10.5px; color:#9A93C4;">86</span></div>
+                  <div style="display:flex; align-items:center; gap:10px; height:40px; padding:0 10px; border-radius:10px; color:#9A93C4; transition:all 500ms cubic-bezier(0.32,0.72,0,1);" style-hover="background:rgba(245,243,255,0.045);"><span style="width:22px; height:22px; border-radius:6px; background:linear-gradient(150deg,#2E2358,#181428);"></span><span style="font-size:12.5px;">Elden Ring</span><span style="margin-left:auto; font-family:'Geist Mono',monospace; font-size:10.5px; color:#736BA4;">64</span></div>
+                  <div style="display:flex; align-items:center; gap:10px; height:40px; padding:0 10px; border-radius:10px; color:#9A93C4; transition:all 500ms cubic-bezier(0.32,0.72,0,1);" style-hover="background:rgba(245,243,255,0.045);"><span style="width:22px; height:22px; border-radius:6px; background:linear-gradient(150deg,#2E2752,#181428);"></span><span style="font-size:12.5px;">Baldur's Gate 3</span><span style="margin-left:auto; font-family:'Geist Mono',monospace; font-size:10.5px; color:#736BA4;">51</span></div>
+                  <div style="display:flex; align-items:center; gap:10px; height:40px; padding:0 10px; border-radius:10px; color:#9A93C4; transition:all 500ms cubic-bezier(0.32,0.72,0,1);" style-hover="background:rgba(245,243,255,0.045);"><span style="width:22px; height:22px; border-radius:6px; background:linear-gradient(150deg,#241E44,#100D1C);"></span><span style="font-size:12.5px;">Deep Rock Galactic</span><span style="margin-left:auto; font-family:'Geist Mono',monospace; font-size:10.5px; color:#736BA4;">39</span></div>
+                  <div style="display:flex; align-items:center; gap:10px; height:40px; padding:0 10px; border-radius:10px; color:#9A93C4; transition:all 500ms cubic-bezier(0.32,0.72,0,1);" style-hover="background:rgba(245,243,255,0.045);"><span style="width:22px; height:22px; border-radius:6px; background:linear-gradient(150deg,#2E2358,#241E44);"></span><span style="font-size:12.5px;">Factorio</span><span style="margin-left:auto; font-family:'Geist Mono',monospace; font-size:10.5px; color:#736BA4;">28</span></div>
+                  <div style="display:flex; align-items:center; gap:10px; height:40px; padding:0 10px; border-radius:10px; color:#9A93C4; transition:all 500ms cubic-bezier(0.32,0.72,0,1);" style-hover="background:rgba(245,243,255,0.045);"><span style="width:22px; height:22px; border-radius:6px; background:linear-gradient(150deg,#181428,#241E44);"></span><span style="font-size:12.5px;">Satisfactory</span><span style="margin-left:auto; font-family:'Geist Mono',monospace; font-size:10.5px; color:#736BA4;">22</span></div>
+                  <span style="flex:1;"></span>
+                  <div style="display:flex; align-items:center; gap:9px; padding:10px; border-radius:10px; border:1px dashed rgba(245,243,255,0.1); font-size:11px; color:#8B84B8;"><i class="ph-light ph-folder-open" style="font-size:14px;"></i>Reveal recording root</div>
+                </div>
+              </div>
+              <!-- clip rows -->
+              <div style="flex:1; min-width:0; padding:4px; border-radius:18px; background:rgba(245,243,255,0.03); border:1px solid rgba(245,243,255,0.06);">
+                <div style="height:100%; border-radius:14px; background:rgba(16,13,28,0.7); box-shadow:inset 0 1px 0 rgba(245,243,255,0.05); display:flex; flex-direction:column; overflow:hidden;">
+                  <div style="flex:none; display:flex; align-items:center; gap:10px; padding:13px 16px; border-bottom:1px solid rgba(245,243,255,0.055); font-size:9.5px; letter-spacing:0.2em; text-transform:uppercase; color:#736BA4;"><span style="width:104px;">Clip</span><span style="flex:1;"></span><span style="width:78px;">Length</span><span style="width:74px;">Size</span><span style="width:96px;">Recorded</span><span style="width:76px; text-align:right;">Actions</span></div>
+                  <div style="flex:1; min-height:0; display:flex; flex-direction:column; padding:8px 10px; gap:6px;">
+                    <div style="display:flex; align-items:center; gap:14px; padding:9px 6px; border-radius:12px; background:rgba(139,124,246,0.07); border:1px solid rgba(139,124,246,0.16);">
+                      <span style="position:relative; width:104px; height:59px; flex:none; border-radius:9px; overflow:hidden; background:linear-gradient(140deg,#2E2358,#5340A8); border:1px solid rgba(245,243,255,0.08);"><span style="position:absolute; right:5px; bottom:5px; font-family:'Geist Mono',monospace; font-size:9px; padding:1px 5px; border-radius:4px; background:rgba(10,8,18,0.7);">HD</span></span>
+                      <span style="flex:1; min-width:0; display:flex; flex-direction:column; gap:4px;"><span style="font-size:13px;">Helldivers 2 &mdash; 2026-07-23 21:14</span><span style="font-family:'Geist Mono',monospace; font-size:10.5px; color:#736BA4;">Helldivers 2/2026-07-23 21-14-02.mkv</span></span>
+                      <span style="width:78px; font-family:'Geist Mono',monospace; font-size:12px; color:#D3CCFF;">1:47:22</span>
+                      <span style="width:74px; font-family:'Geist Mono',monospace; font-size:12px; color:#D3CCFF;">8.94 GB</span>
+                      <span style="width:96px; font-size:11.5px; color:#8B84B8;">2 min ago</span>
+                      <span style="width:76px; display:flex; gap:5px; justify-content:flex-end;"><span style="width:26px; height:26px; border-radius:8px; display:flex; align-items:center; justify-content:center; color:#9A93C4; border:1px solid rgba(245,243,255,0.09); transition:all 500ms cubic-bezier(0.32,0.72,0,1);" style-hover="background:rgba(245,243,255,0.08); color:#F5F3FF;"><i class="ph-light ph-play" style="font-size:12px;"></i></span><span style="width:26px; height:26px; border-radius:8px; display:flex; align-items:center; justify-content:center; color:#9A93C4; border:1px solid rgba(245,243,255,0.09); transition:all 500ms cubic-bezier(0.32,0.72,0,1);" style-hover="background:rgba(245,243,255,0.08); color:#F5F3FF;"><i class="ph-light ph-folder-open" style="font-size:12px;"></i></span><span style="width:26px; height:26px; border-radius:8px; display:flex; align-items:center; justify-content:center; color:#9A93C4; border:1px solid rgba(245,243,255,0.09); transition:all 500ms cubic-bezier(0.32,0.72,0,1);" style-hover="background:rgba(255,92,122,0.16); color:#F5F3FF;"><i class="ph-light ph-trash" style="font-size:12px;"></i></span></span>
+                    </div>
+                    <div style="display:flex; align-items:center; gap:14px; padding:9px 6px; border-radius:12px; transition:all 500ms cubic-bezier(0.32,0.72,0,1);" style-hover="background:rgba(245,243,255,0.04);">
+                      <span style="width:104px; height:59px; flex:none; border-radius:9px; background:linear-gradient(140deg,#241E44,#2E2752); border:1px solid rgba(245,243,255,0.07);"></span>
+                      <span style="flex:1; min-width:0; display:flex; flex-direction:column; gap:4px;"><span style="font-size:13px; color:#D3CCFF;">Helldivers 2 &mdash; 2026-07-23 18:02</span><span style="font-family:'Geist Mono',monospace; font-size:10.5px; color:#736BA4;">Helldivers 2/2026-07-23 18-02-44.mkv</span></span>
+                      <span style="width:78px; font-family:'Geist Mono',monospace; font-size:12px; color:#9A93C4;">52:08</span>
+                      <span style="width:74px; font-family:'Geist Mono',monospace; font-size:12px; color:#9A93C4;">4.31 GB</span>
+                      <span style="width:96px; font-size:11.5px; color:#8B84B8;">Today 18:02</span>
+                      <span style="width:76px; display:flex; gap:5px; justify-content:flex-end; color:#2E2752;"><i class="ph-light ph-play" style="font-size:12px;"></i><i class="ph-light ph-folder-open" style="font-size:12px;"></i><i class="ph-light ph-trash" style="font-size:12px;"></i></span>
+                    </div>
+                    <div style="display:flex; align-items:center; gap:14px; padding:9px 6px; border-radius:12px;">
+                      <span style="width:104px; height:59px; flex:none; border-radius:9px; background:linear-gradient(140deg,#181428,#2E2358); border:1px solid rgba(245,243,255,0.07);"></span>
+                      <span style="flex:1; min-width:0; display:flex; flex-direction:column; gap:4px;"><span style="font-size:13px; color:#D3CCFF;">Helldivers 2 &mdash; 2026-07-22 23:41</span><span style="font-family:'Geist Mono',monospace; font-size:10.5px; color:#736BA4;">Helldivers 2/2026-07-22 23-41-19.mkv</span></span>
+                      <span style="width:78px; font-family:'Geist Mono',monospace; font-size:12px; color:#9A93C4;">2:14:55</span>
+                      <span style="width:74px; font-family:'Geist Mono',monospace; font-size:12px; color:#9A93C4;">11.2 GB</span>
+                      <span style="width:96px; font-size:11.5px; color:#8B84B8;">Yesterday</span>
+                      <span style="width:76px; display:flex; gap:5px; justify-content:flex-end; color:#2E2752;"><i class="ph-light ph-play" style="font-size:12px;"></i><i class="ph-light ph-folder-open" style="font-size:12px;"></i><i class="ph-light ph-trash" style="font-size:12px;"></i></span>
+                    </div>
+                    <div style="display:flex; align-items:center; gap:14px; padding:9px 6px; border-radius:12px;">
+                      <span style="width:104px; height:59px; flex:none; border-radius:9px; background:linear-gradient(140deg,#241E44,#2E2358); border:1px solid rgba(245,243,255,0.07);"></span>
+                      <span style="flex:1; min-width:0; display:flex; flex-direction:column; gap:4px;"><span style="font-size:13px; color:#D3CCFF;">Helldivers 2 &mdash; 2026-07-22 20:15</span><span style="font-family:'Geist Mono',monospace; font-size:10.5px; color:#736BA4;">Helldivers 2/2026-07-22 20-15-03.mkv</span></span>
+                      <span style="width:78px; font-family:'Geist Mono',monospace; font-size:12px; color:#9A93C4;">38:12</span>
+                      <span style="width:74px; font-family:'Geist Mono',monospace; font-size:12px; color:#9A93C4;">3.02 GB</span>
+                      <span style="width:96px; font-size:11.5px; color:#8B84B8;">Yesterday</span>
+                      <span style="width:76px; display:flex; gap:5px; justify-content:flex-end; color:#2E2752;"><i class="ph-light ph-play" style="font-size:12px;"></i><i class="ph-light ph-folder-open" style="font-size:12px;"></i><i class="ph-light ph-trash" style="font-size:12px;"></i></span>
+                    </div>
+                    <div style="display:flex; align-items:center; gap:14px; padding:9px 6px; border-radius:12px; opacity:0.55;">
+                      <span style="width:104px; height:59px; flex:none; border-radius:9px; background:linear-gradient(140deg,#181428,#241E44); border:1px solid rgba(245,243,255,0.06);"></span>
+                      <span style="flex:1; min-width:0; display:flex; flex-direction:column; gap:4px;"><span style="font-size:13px; color:#9A93C4;">Helldivers 2 &mdash; 2026-07-21 22:08</span><span style="font-family:'Geist Mono',monospace; font-size:10.5px; color:#736BA4;">Helldivers 2/2026-07-21 22-08-30.mkv</span></span>
+                      <span style="width:78px; font-family:'Geist Mono',monospace; font-size:12px; color:#8B84B8;">1:02:40</span>
+                      <span style="width:74px; font-family:'Geist Mono',monospace; font-size:12px; color:#8B84B8;">5.18 GB</span>
+                      <span style="width:96px; font-size:11.5px; color:#736BA4;">Tue</span>
+                      <span style="width:76px; display:flex; gap:5px; justify-content:flex-end; color:#2E2752;"><i class="ph-light ph-play" style="font-size:12px;"></i><i class="ph-light ph-folder-open" style="font-size:12px;"></i><i class="ph-light ph-trash" style="font-size:12px;"></i></span>
+                    </div>
+                    <span style="flex:1;"></span>
+                    <div style="display:flex; align-items:center; gap:10px; padding:11px 12px; border-radius:12px; background:rgba(245,243,255,0.03); border:1px solid rgba(245,243,255,0.06); font-size:11.5px; color:#8B84B8;"><i class="ph-light ph-info" style="font-size:14px;"></i>Clips under <span style="font-family:'Geist Mono',monospace; color:#9A93C4;">min_clip_seconds</span> (10s) are deleted automatically and never listed here.</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 2c SETTINGS -->
+      <div id="2c" data-screen-label="03 Settings" style="position:relative;">
+        <div style="position:absolute; top:-13px; left:-13px; z-index:9; background:#8B7CF6; color:#171233; font-weight:600; font-size:11px; padding:4px 10px; border-radius:8px; font-family:'Geist Mono',monospace;">2c</div>
+        <div style="padding:6px; border-radius:24px; background:linear-gradient(160deg, rgba(245,243,255,0.07), rgba(245,243,255,0.015)); border:1px solid rgba(245,243,255,0.09); box-shadow:0 40px 80px -28px rgba(0,0,0,0.75);">
+          <div style="width:1048px; height:746px; border-radius:18px; overflow:hidden; position:relative; background:#100D1C; box-shadow:inset 0 1px 0 rgba(245,243,255,0.06); display:flex; flex-direction:column;">
+            <div data-bg="win" aria-hidden="true" style="position:absolute; inset:0; overflow:hidden; pointer-events:none;">
+                <div data-lean="9" style="position:absolute; inset:-18%; transition:transform 1200ms cubic-bezier(0.32,0.72,0,1);">
+                  <span data-blob="1" style="position:absolute; left:2%; top:-20%; width:56%; height:88%; border-radius:50%; background:radial-gradient(circle, rgba(139,124,246,0.22), transparent 68%); filter:blur(54px);"></span>
+                  <span data-blob="1" style="position:absolute; right:6%; bottom:-24%; width:58%; height:82%; border-radius:50%; background:radial-gradient(circle, rgba(83,64,168,0.22), transparent 70%); filter:blur(58px);"></span>
+                  <span data-blob="1" style="position:absolute; left:40%; bottom:0%; width:42%; height:56%; border-radius:50%; background:radial-gradient(circle, rgba(255,92,122,0.07), transparent 68%); filter:blur(62px);"></span>
+                </div>
+                <span data-dust="1" style="position:absolute; left:0; top:0; width:100%; height:200%;"></span>
+                <span data-dust="2" style="position:absolute; left:0; top:0; width:100%; height:200%; opacity:.7;"></span>
+              </div>
+              <div style="position:absolute; inset:0; pointer-events:none; background:radial-gradient(520px 380px at 12% -8%, rgba(139,124,246,0.12), transparent 72%);"></div>
+            <div style="position:relative; z-index:1; height:62px; flex:none; display:flex; align-items:center; gap:12px; padding:0 26px;">
+              <div style="display:flex; flex-direction:column; gap:3px;"><span style="font-size:9.5px; letter-spacing:0.24em; text-transform:uppercase; color:#736BA4;">Writes config.json on blur</span><span style="font-size:19px; font-weight:500; letter-spacing:-0.015em;">Settings</span></div>
+              <span style="flex:1;"></span>
+              <span style="display:inline-flex; align-items:center; gap:7px; font-size:11.5px; color:#8B84B8;"><i class="ph-fill ph-circle" style="font-size:6px; color:#8B7CF6;"></i>Saved 21:12:04</span>
+            </div>
+            <div style="position:relative; z-index:1; flex:1; min-height:0; padding:4px 26px 26px; display:flex; gap:16px;">
+              <div style="width:186px; flex:none; display:flex; flex-direction:column; gap:3px; padding-top:4px;">
+                <div style="display:flex; align-items:center; gap:10px; height:36px; padding:0 12px; border-radius:10px; background:rgba(139,124,246,0.10); border:1px solid rgba(139,124,246,0.2); font-size:12.5px;"><i class="ph-light ph-plugs" style="font-size:15px; color:#B9AEF9;"></i>Connection</div>
+                <div style="display:flex; align-items:center; gap:10px; height:36px; padding:0 12px; border-radius:10px; color:#9A93C4; font-size:12.5px; transition:all 500ms cubic-bezier(0.32,0.72,0,1);" style-hover="background:rgba(245,243,255,0.045);"><i class="ph-light ph-hard-drives" style="font-size:15px;"></i>Storage</div>
+                <div style="display:flex; align-items:center; gap:10px; height:36px; padding:0 12px; border-radius:10px; color:#9A93C4; font-size:12.5px; transition:all 500ms cubic-bezier(0.32,0.72,0,1);" style-hover="background:rgba(245,243,255,0.045);"><i class="ph-light ph-timer" style="font-size:15px;"></i>Idle &amp; audio</div>
+                <div style="display:flex; align-items:center; gap:10px; height:36px; padding:0 12px; border-radius:10px; color:#9A93C4; font-size:12.5px; transition:all 500ms cubic-bezier(0.32,0.72,0,1);" style-hover="background:rgba(245,243,255,0.045);"><i class="ph-light ph-command" style="font-size:15px;"></i>Hotkey</div>
+                <div style="display:flex; align-items:center; gap:10px; height:36px; padding:0 12px; border-radius:10px; color:#9A93C4; font-size:12.5px; transition:all 500ms cubic-bezier(0.32,0.72,0,1);" style-hover="background:rgba(245,243,255,0.045);"><i class="ph-light ph-cloud-arrow-up" style="font-size:15px;"></i>Sync</div>
+                <span style="flex:1;"></span>
+                <div style="padding:12px; border-radius:12px; border:1px solid rgba(245,243,255,0.07); background:rgba(245,243,255,0.025); display:flex; flex-direction:column; gap:7px;"><span style="font-size:9.5px; letter-spacing:0.2em; text-transform:uppercase; color:#736BA4;">Config file</span><span style="font-family:'Geist Mono',monospace; font-size:10.5px; color:#9A93C4; word-break:break-all;">../config.json</span><span style="display:inline-flex; align-items:center; gap:6px; font-size:11px; color:#B9AEF9;"><i class="ph-light ph-arrow-square-out" style="font-size:12px;"></i>Reveal</span></div>
+              </div>
+              <div style="flex:1; min-width:0; padding:4px; border-radius:18px; background:rgba(245,243,255,0.03); border:1px solid rgba(245,243,255,0.06);">
+                <div style="height:100%; border-radius:14px; background:rgba(16,13,28,0.7); box-shadow:inset 0 1px 0 rgba(245,243,255,0.05); padding:22px 24px; display:flex; flex-direction:column; gap:20px; overflow:hidden;">
+                  <div style="display:flex; flex-direction:column; gap:4px;"><span style="font-size:15px; font-weight:500;">Connection</span><span style="font-size:12px; color:#8B84B8;">Nebula launches OBS if it isn't running, then connects over WebSocket.</span></div>
+                  <div style="display:grid; grid-template-columns:1fr 1fr; gap:14px 18px;">
+                    <div style="display:flex; flex-direction:column; gap:7px;"><span style="font-size:11px; color:#9A93C4;">Host <span style="font-family:'Geist Mono',monospace; color:#736BA4; font-size:10px;">obs_host</span></span><span style="height:36px; display:flex; align-items:center; padding:0 12px; border-radius:10px; background:rgba(245,243,255,0.035); border:1px solid rgba(245,243,255,0.09); font-family:'Geist Mono',monospace; font-size:12.5px; color:#F5F3FF;">localhost</span></div>
+                    <div style="display:flex; flex-direction:column; gap:7px;"><span style="font-size:11px; color:#9A93C4;">Port <span style="font-family:'Geist Mono',monospace; color:#736BA4; font-size:10px;">obs_port</span></span><span style="height:36px; display:flex; align-items:center; padding:0 12px; border-radius:10px; background:rgba(245,243,255,0.035); border:1px solid rgba(139,124,246,0.45); box-shadow:0 0 0 2px rgba(139,124,246,0.16); font-family:'Geist Mono',monospace; font-size:12.5px; color:#F5F3FF;">4455</span></div>
+                    <div style="display:flex; flex-direction:column; gap:7px;"><span style="font-size:11px; color:#9A93C4;">Password <span style="font-family:'Geist Mono',monospace; color:#736BA4; font-size:10px;">obs_password</span></span><span style="height:36px; display:flex; align-items:center; gap:8px; padding:0 12px; border-radius:10px; background:rgba(245,243,255,0.035); border:1px solid rgba(245,243,255,0.09); font-family:'Geist Mono',monospace; font-size:12.5px; color:#9A93C4;">&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;<span style="margin-left:auto;"><i class="ph-light ph-eye" style="font-size:14px;"></i></span></span></div>
+                    <div style="display:flex; flex-direction:column; gap:7px;"><span style="font-size:11px; color:#9A93C4;">Reconnect every <span style="font-family:'Geist Mono',monospace; color:#736BA4; font-size:10px;">reconnect_interval_seconds</span></span><span style="height:36px; display:flex; align-items:center; padding:0 12px; border-radius:10px; background:rgba(245,243,255,0.035); border:1px solid rgba(245,243,255,0.09); font-family:'Geist Mono',monospace; font-size:12.5px;">10<span style="margin-left:6px; color:#736BA4;">s</span></span></div>
+                  </div>
+                  <div style="display:flex; flex-direction:column; gap:7px;"><span style="font-size:11px; color:#9A93C4;">OBS executable <span style="font-family:'Geist Mono',monospace; color:#736BA4; font-size:10px;">obs_path</span></span><div style="display:flex; gap:9px;"><span style="flex:1; height:36px; display:flex; align-items:center; padding:0 12px; border-radius:10px; background:rgba(245,243,255,0.035); border:1px solid rgba(245,243,255,0.09); font-family:'Geist Mono',monospace; font-size:12.5px; color:#D3CCFF;">C:/Program Files/obs-studio/bin/64bit/obs64.exe</span><span style="display:inline-flex; align-items:center; gap:7px; height:36px; padding:0 14px; border-radius:10px; border:1px solid rgba(245,243,255,0.11); font-size:12px; color:#9A93C4; transition:all 500ms cubic-bezier(0.32,0.72,0,1);" style-hover="background:rgba(245,243,255,0.06); color:#F5F3FF;"><i class="ph-light ph-folder" style="font-size:14px;"></i>Browse</span></div><span style="font-size:11px; color:#736BA4;">Missing path is skipped silently &mdash; per-machine setting.</span></div>
+                  <span style="height:1px; background:linear-gradient(90deg, transparent, rgba(245,243,255,0.1) 48px, rgba(245,243,255,0.1) calc(100% - 48px), transparent);"></span>
+                  <div style="display:flex; flex-direction:column; gap:12px;">
+                    <div style="display:flex; align-items:center; gap:14px;">
+                      <span style="width:40px; height:23px; flex:none; border-radius:999px; background:rgba(139,124,246,0.35); border:1px solid rgba(139,124,246,0.5); position:relative;"><span style="position:absolute; top:2px; right:2px; width:17px; height:17px; border-radius:999px; background:#D3CCFF;"></span></span>
+                      <span style="display:flex; flex-direction:column; gap:2px;"><span style="font-size:12.5px;">Launch OBS with Nebula</span><span style="font-size:11px; color:#8B84B8;">Also relaunches if OBS crashes mid-session.</span></span>
+                    </div>
+                    <div style="display:flex; align-items:center; gap:14px;">
+                      <span style="width:40px; height:23px; flex:none; border-radius:999px; background:rgba(245,243,255,0.07); border:1px solid rgba(245,243,255,0.12); position:relative;"><span style="position:absolute; top:2px; left:2px; width:17px; height:17px; border-radius:999px; background:#8B84B8;"></span></span>
+                      <span style="display:flex; flex-direction:column; gap:2px;"><span style="font-size:12.5px; color:#D3CCFF;">Start minimised to tray</span><span style="font-size:11px; color:#8B84B8;">Window opens hidden; tray icon still shows state.</span></span>
+                    </div>
+                  </div>
+                  <span style="flex:1;"></span>
+                  <div style="display:flex; align-items:center; gap:12px; padding:12px 14px; border-radius:12px; background:rgba(139,124,246,0.07); border:1px solid rgba(139,124,246,0.18);"><i class="ph-light ph-plugs-connected" style="font-size:16px; color:#B9AEF9;"></i><span style="font-size:12px; color:#D3CCFF;">Connected to OBS 30.2 &mdash; handshake 41 ms</span><span style="flex:1;"></span><span style="display:inline-flex; align-items:center; gap:9px; height:34px; padding:0 5px 0 15px; border-radius:999px; border:1px solid rgba(139,124,246,0.42); font-size:12px; color:#F5F3FF;">Test again<span style="width:24px; height:24px; border-radius:999px; background:rgba(245,243,255,0.08); display:flex; align-items:center; justify-content:center;"><i class="ph-light ph-arrow-clockwise" style="font-size:12px;"></i></span></span></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 2d GAMES -->
+      <div id="2d" data-screen-label="04 Games" style="position:relative;">
+        <div style="position:absolute; top:-13px; left:-13px; z-index:9; background:#8B7CF6; color:#171233; font-weight:600; font-size:11px; padding:4px 10px; border-radius:8px; font-family:'Geist Mono',monospace;">2d</div>
+        <div style="padding:6px; border-radius:24px; background:linear-gradient(160deg, rgba(245,243,255,0.07), rgba(245,243,255,0.015)); border:1px solid rgba(245,243,255,0.09); box-shadow:0 40px 80px -28px rgba(0,0,0,0.75);">
+          <div style="width:1048px; height:746px; border-radius:18px; overflow:hidden; position:relative; background:#100D1C; box-shadow:inset 0 1px 0 rgba(245,243,255,0.06); display:flex; flex-direction:column;">
+            <div data-bg="win" aria-hidden="true" style="position:absolute; inset:0; overflow:hidden; pointer-events:none;">
+                <div data-lean="9" style="position:absolute; inset:-18%; transition:transform 1200ms cubic-bezier(0.32,0.72,0,1);">
+                  <span data-blob="1" style="position:absolute; left:30%; top:-20%; width:56%; height:88%; border-radius:50%; background:radial-gradient(circle, rgba(139,124,246,0.22), transparent 68%); filter:blur(54px);"></span>
+                  <span data-blob="1" style="position:absolute; right:-6%; bottom:-24%; width:58%; height:82%; border-radius:50%; background:radial-gradient(circle, rgba(83,64,168,0.22), transparent 70%); filter:blur(58px);"></span>
+                  <span data-blob="1" style="position:absolute; left:8%; bottom:0%; width:42%; height:56%; border-radius:50%; background:radial-gradient(circle, rgba(255,92,122,0.07), transparent 68%); filter:blur(62px);"></span>
+                </div>
+                <span data-dust="1" style="position:absolute; left:0; top:0; width:100%; height:200%;"></span>
+                <span data-dust="2" style="position:absolute; left:0; top:0; width:100%; height:200%; opacity:.7;"></span>
+              </div>
+              <div style="position:absolute; inset:0; pointer-events:none; background:radial-gradient(560px 400px at 92% 104%, rgba(83,64,168,0.16), transparent 72%);"></div>
+            <div style="position:relative; z-index:1; height:62px; flex:none; display:flex; align-items:center; gap:12px; padding:0 26px;">
+              <div style="display:flex; flex-direction:column; gap:3px;"><span style="font-size:9.5px; letter-spacing:0.24em; text-transform:uppercase; color:#736BA4;">3 awaiting your call</span><span style="font-size:19px; font-weight:500; letter-spacing:-0.015em;">Games</span></div>
+              <span style="flex:1;"></span>
+              <span style="display:inline-flex; align-items:center; gap:8px; height:32px; padding:0 13px; border-radius:9px; border:1px solid rgba(245,243,255,0.1); background:rgba(245,243,255,0.03); font-size:12px; color:#9A93C4;"><i class="ph-light ph-steam-logo" style="font-size:14px;"></i>Rescan library</span>
+            </div>
+            <div style="position:relative; z-index:1; flex:1; min-height:0; padding:4px 26px 26px; display:flex; flex-direction:column; gap:16px;">
+              <div style="flex:none; padding:5px; border-radius:20px; background:rgba(245,243,255,0.045); border:1px solid rgba(245,243,255,0.075);">
+                <div style="padding:20px; border-radius:15px; background:linear-gradient(150deg, rgba(139,124,246,0.10), rgba(24,20,40,0.9) 52%); box-shadow:inset 0 1px 0 rgba(245,243,255,0.06); display:flex; align-items:center; gap:20px;">
+                  <span style="width:52px; height:52px; flex:none; border-radius:14px; background:linear-gradient(150deg,#2E2752,#241E44); border:1px solid rgba(245,243,255,0.09); display:flex; align-items:center; justify-content:center; color:#B4ADD9;"><i class="ph-light ph-question-mark" style="font-size:22px;"></i></span>
+                  <div style="flex:1; min-width:0; display:flex; flex-direction:column; gap:5px;">
+                    <span style="display:inline-flex; align-items:center; gap:7px; align-self:flex-start; padding:3px 9px; border-radius:999px; border:1px solid rgba(139,124,246,0.28); background:rgba(139,124,246,0.08); font-size:9.5px; letter-spacing:0.2em; text-transform:uppercase; color:#B9AEF9;">Unclassified</span>
+                    <span style="font-size:20px; font-weight:500; letter-spacing:-0.015em;">Vintage Story</span>
+                    <span style="font-family:'Geist Mono',monospace; font-size:11px; color:#8B84B8;">vintagestory.exe &middot; not in Steam library &middot; seen 4&times;</span>
+                  </div>
+                  <div style="display:flex; gap:10px;">
+                    <span style="display:inline-flex; align-items:center; gap:10px; height:40px; padding:0 6px 0 17px; border-radius:999px; border:1px solid rgba(139,124,246,0.45); background:rgba(139,124,246,0.07); font-size:13px; color:#F5F3FF; transition:all 700ms cubic-bezier(0.32,0.72,0,1);" style-hover="background:rgba(139,124,246,0.14);">It's a game<span style="width:28px; height:28px; border-radius:999px; background:rgba(245,243,255,0.09); display:flex; align-items:center; justify-content:center;"><i class="ph-light ph-check" style="font-size:13px;"></i></span></span>
+                    <span style="display:inline-flex; align-items:center; gap:10px; height:40px; padding:0 6px 0 17px; border-radius:999px; border:1px solid rgba(245,243,255,0.12); font-size:13px; color:#D3CCFF; transition:all 700ms cubic-bezier(0.32,0.72,0,1);" style-hover="background:rgba(245,243,255,0.06);">Not a game<span style="width:28px; height:28px; border-radius:999px; background:rgba(245,243,255,0.07); display:flex; align-items:center; justify-content:center;"><i class="ph-light ph-x" style="font-size:12px;"></i></span></span>
+                  </div>
+                </div>
+              </div>
+              <div style="flex:1; min-height:0; display:grid; grid-template-columns:1fr 1fr; gap:16px;">
+                <div style="padding:4px; border-radius:18px; background:rgba(245,243,255,0.03); border:1px solid rgba(245,243,255,0.06);">
+                  <div style="height:100%; border-radius:14px; background:rgba(16,13,28,0.7); box-shadow:inset 0 1px 0 rgba(245,243,255,0.05); padding:16px; display:flex; flex-direction:column; gap:9px; overflow:hidden;">
+                    <div style="display:flex; align-items:center; gap:9px;"><span style="font-size:9.5px; letter-spacing:0.22em; text-transform:uppercase; color:#736BA4;">Games</span><span style="font-family:'Geist Mono',monospace; font-size:10.5px; color:#8B84B8;">142</span></div>
+                    <div style="display:flex; align-items:center; gap:10px; padding:8px 10px; border-radius:10px; background:rgba(245,243,255,0.03);"><span style="width:20px; height:20px; border-radius:6px; background:linear-gradient(150deg,#2E2752,#241E44);"></span><span style="font-size:12.5px;">Helldivers 2</span><span style="margin-left:auto; font-family:'Geist Mono',monospace; font-size:10px; color:#736BA4;">553850</span></div>
+                    <div style="display:flex; align-items:center; gap:10px; padding:8px 10px; border-radius:10px;"><span style="width:20px; height:20px; border-radius:6px; background:linear-gradient(150deg,#2E2358,#181428);"></span><span style="font-size:12.5px; color:#D3CCFF;">Elden Ring</span><span style="margin-left:auto; font-family:'Geist Mono',monospace; font-size:10px; color:#736BA4;">1245620</span></div>
+                    <div style="display:flex; align-items:center; gap:10px; padding:8px 10px; border-radius:10px;"><span style="width:20px; height:20px; border-radius:6px; background:linear-gradient(150deg,#241E44,#181428);"></span><span style="font-size:12.5px; color:#D3CCFF;">Baldur's Gate 3</span><span style="margin-left:auto; font-family:'Geist Mono',monospace; font-size:10px; color:#736BA4;">1086940</span></div>
+                    <div style="display:flex; align-items:center; gap:10px; padding:8px 10px; border-radius:10px;"><span style="width:20px; height:20px; border-radius:6px; background:linear-gradient(150deg,#2E2358,#241E44);"></span><span style="font-size:12.5px; color:#D3CCFF;">Deep Rock Galactic</span><span style="margin-left:auto; font-family:'Geist Mono',monospace; font-size:10px; color:#736BA4;">548430</span></div>
+                    <div style="display:flex; align-items:center; gap:10px; padding:8px 10px; border-radius:10px;"><span style="width:20px; height:20px; border-radius:6px; background:linear-gradient(150deg,#181428,#2E2752);"></span><span style="font-size:12.5px; color:#D3CCFF;">Factorio</span><span style="margin-left:auto; font-family:'Geist Mono',monospace; font-size:10px; color:#736BA4;">427520</span></div>
+                    <span style="flex:1;"></span>
+                    <span style="font-size:11px; color:#736BA4;">Stored in <span style="font-family:'Geist Mono',monospace;">games.json</span> &middot; shared via sync folder</span>
+                  </div>
+                </div>
+                <div style="padding:4px; border-radius:18px; background:rgba(245,243,255,0.03); border:1px solid rgba(245,243,255,0.06);">
+                  <div style="height:100%; border-radius:14px; background:rgba(16,13,28,0.7); box-shadow:inset 0 1px 0 rgba(245,243,255,0.05); padding:16px; display:flex; flex-direction:column; gap:9px; overflow:hidden;">
+                    <div style="display:flex; align-items:center; gap:9px;"><span style="font-size:9.5px; letter-spacing:0.22em; text-transform:uppercase; color:#736BA4;">Not games</span><span style="font-family:'Geist Mono',monospace; font-size:10.5px; color:#8B84B8;">67</span></div>
+                    <div style="display:flex; align-items:center; gap:10px; padding:8px 10px; border-radius:10px; color:#9A93C4;"><i class="ph-light ph-app-window" style="font-size:15px;"></i><span style="font-size:12.5px;">Discord</span><span style="margin-left:auto; font-size:10.5px; color:#736BA4;">keep-alive</span></div>
+                    <div style="display:flex; align-items:center; gap:10px; padding:8px 10px; border-radius:10px; color:#9A93C4;"><i class="ph-light ph-app-window" style="font-size:15px;"></i><span style="font-size:12.5px;">Chrome</span></div>
+                    <div style="display:flex; align-items:center; gap:10px; padding:8px 10px; border-radius:10px; color:#9A93C4;"><i class="ph-light ph-app-window" style="font-size:15px;"></i><span style="font-size:12.5px;">Explorer</span></div>
+                    <div style="display:flex; align-items:center; gap:10px; padding:8px 10px; border-radius:10px; color:#9A93C4;"><i class="ph-light ph-app-window" style="font-size:15px;"></i><span style="font-size:12.5px;">Game Bar</span></div>
+                    <div style="display:flex; align-items:center; gap:10px; padding:8px 10px; border-radius:10px; color:#9A93C4;"><i class="ph-light ph-app-window" style="font-size:15px;"></i><span style="font-size:12.5px;">Steam</span></div>
+                    <span style="flex:1;"></span>
+                    <span style="font-size:11px; color:#736BA4;">Right-click a row to move it back to Games.</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 2e MACROPAD -->
+      <div id="2e" data-screen-label="05 Macropad" style="position:relative;">
+        <div style="position:absolute; top:-13px; left:-13px; z-index:9; background:#8B7CF6; color:#171233; font-weight:600; font-size:11px; padding:4px 10px; border-radius:8px; font-family:'Geist Mono',monospace;">2e</div>
+        <div style="padding:6px; border-radius:24px; background:linear-gradient(160deg, rgba(245,243,255,0.07), rgba(245,243,255,0.015)); border:1px solid rgba(245,243,255,0.09); box-shadow:0 40px 80px -28px rgba(0,0,0,0.75);">
+          <div style="width:1048px; height:746px; border-radius:18px; overflow:hidden; position:relative; background:#100D1C; box-shadow:inset 0 1px 0 rgba(245,243,255,0.06); display:flex; flex-direction:column;">
+            <div data-bg="win" aria-hidden="true" style="position:absolute; inset:0; overflow:hidden; pointer-events:none;">
+                <div data-lean="9" style="position:absolute; inset:-18%; transition:transform 1200ms cubic-bezier(0.32,0.72,0,1);">
+                  <span data-blob="1" style="position:absolute; left:16%; top:-20%; width:56%; height:88%; border-radius:50%; background:radial-gradient(circle, rgba(139,124,246,0.22), transparent 68%); filter:blur(54px);"></span>
+                  <span data-blob="1" style="position:absolute; right:0%; bottom:-24%; width:58%; height:82%; border-radius:50%; background:radial-gradient(circle, rgba(83,64,168,0.22), transparent 70%); filter:blur(58px);"></span>
+                  <span data-blob="1" style="position:absolute; left:46%; bottom:0%; width:42%; height:56%; border-radius:50%; background:radial-gradient(circle, rgba(255,92,122,0.07), transparent 68%); filter:blur(62px);"></span>
+                </div>
+                <span data-dust="1" style="position:absolute; left:0; top:0; width:100%; height:200%;"></span>
+                <span data-dust="2" style="position:absolute; left:0; top:0; width:100%; height:200%; opacity:.7;"></span>
+              </div>
+              <div style="position:absolute; inset:0; pointer-events:none; background:radial-gradient(540px 400px at 50% -10%, rgba(139,124,246,0.13), transparent 70%);"></div>
+            <div style="position:relative; z-index:1; height:62px; flex:none; display:flex; align-items:center; gap:12px; padding:0 26px;">
+              <div style="display:flex; flex-direction:column; gap:3px;"><span style="font-size:9.5px; letter-spacing:0.24em; text-transform:uppercase; color:#736BA4;">3&times;3 pad &middot; connected</span><span style="font-size:19px; font-weight:500; letter-spacing:-0.015em;">Macropad</span></div>
+              <span style="flex:1;"></span>
+              <span style="display:inline-flex; align-items:center; gap:8px; height:32px; padding:0 13px; border-radius:9px; border:1px solid rgba(245,243,255,0.1); background:rgba(245,243,255,0.03); font-size:12px; color:#9A93C4;"><i class="ph-light ph-usb" style="font-size:14px;"></i>HID 0x1209:0xA1B2</span>
+            </div>
+            <div style="position:relative; z-index:1; flex:1; min-height:0; padding:4px 26px 26px; display:flex; gap:18px;">
+              <div style="flex:none; width:452px; padding:5px; border-radius:22px; background:rgba(245,243,255,0.045); border:1px solid rgba(245,243,255,0.075);">
+                <div style="height:100%; border-radius:17px; background:linear-gradient(160deg, rgba(36,30,68,0.9), rgba(16,13,28,0.95)); box-shadow:inset 0 1px 0 rgba(245,243,255,0.07); padding:26px; display:flex; flex-direction:column; gap:18px;">
+                  <span style="font-size:9.5px; letter-spacing:0.22em; text-transform:uppercase; color:#736BA4;">Key map</span>
+                  <div style="display:grid; grid-template-columns:repeat(3,1fr); gap:12px;">
+                    <div style="aspect-ratio:1; border-radius:16px; background:linear-gradient(165deg,#2E2358,#181428); border:1px solid rgba(139,124,246,0.32); box-shadow:inset 0 1px 0 rgba(245,243,255,0.09), 0 8px 18px -8px rgba(0,0,0,0.7); display:flex; flex-direction:column; align-items:center; justify-content:center; gap:8px; transition:all 500ms cubic-bezier(0.32,0.72,0,1);" style-hover="transform:translateY(-2px);"><i class="ph-light ph-record" style="font-size:24px; color:#FFA3B4;"></i><span style="font-size:10.5px; color:#D3CCFF;">Start / stop</span></div>
+                    <div style="aspect-ratio:1; border-radius:16px; background:linear-gradient(165deg,#241E44,#181428); border:1px solid rgba(245,243,255,0.09); box-shadow:inset 0 1px 0 rgba(245,243,255,0.07), 0 8px 18px -8px rgba(0,0,0,0.7); display:flex; flex-direction:column; align-items:center; justify-content:center; gap:8px;"><i class="ph-light ph-pause" style="font-size:24px; color:#9A93C4;"></i><span style="font-size:10.5px; color:#9A93C4;">Pause</span></div>
+                    <div style="aspect-ratio:1; border-radius:16px; background:linear-gradient(165deg,#241E44,#181428); border:1px solid rgba(245,243,255,0.09); box-shadow:inset 0 1px 0 rgba(245,243,255,0.07), 0 8px 18px -8px rgba(0,0,0,0.7); display:flex; flex-direction:column; align-items:center; justify-content:center; gap:8px;"><i class="ph-light ph-scissors" style="font-size:24px; color:#9A93C4;"></i><span style="font-size:10.5px; color:#9A93C4;">Mark clip</span></div>
+                    <div style="aspect-ratio:1; border-radius:16px; background:linear-gradient(165deg,#241E44,#181428); border:1px solid rgba(245,243,255,0.09); box-shadow:inset 0 1px 0 rgba(245,243,255,0.07), 0 8px 18px -8px rgba(0,0,0,0.7); display:flex; flex-direction:column; align-items:center; justify-content:center; gap:8px;"><i class="ph-light ph-microphone-slash" style="font-size:24px; color:#9A93C4;"></i><span style="font-size:10.5px; color:#9A93C4;">Mute mic</span></div>
+                    <div style="aspect-ratio:1; border-radius:16px; background:linear-gradient(165deg,#241E44,#181428); border:1px solid rgba(245,243,255,0.09); box-shadow:inset 0 1px 0 rgba(245,243,255,0.07), 0 8px 18px -8px rgba(0,0,0,0.7); display:flex; flex-direction:column; align-items:center; justify-content:center; gap:8px;"><i class="ph-light ph-stack-simple" style="font-size:24px; color:#9A93C4;"></i><span style="font-size:10.5px; color:#9A93C4;">Scene 1</span></div>
+                    <div style="aspect-ratio:1; border-radius:16px; background:linear-gradient(165deg,#241E44,#181428); border:1px solid rgba(245,243,255,0.09); box-shadow:inset 0 1px 0 rgba(245,243,255,0.07), 0 8px 18px -8px rgba(0,0,0,0.7); display:flex; flex-direction:column; align-items:center; justify-content:center; gap:8px;"><i class="ph-light ph-stack-simple" style="font-size:24px; color:#9A93C4;"></i><span style="font-size:10.5px; color:#9A93C4;">Scene 2</span></div>
+                    <div style="aspect-ratio:1; border-radius:16px; background:linear-gradient(165deg,#241E44,#181428); border:1px solid rgba(245,243,255,0.09); box-shadow:inset 0 1px 0 rgba(245,243,255,0.07), 0 8px 18px -8px rgba(0,0,0,0.7); display:flex; flex-direction:column; align-items:center; justify-content:center; gap:8px;"><i class="ph-light ph-moon" style="font-size:24px; color:#9A93C4;"></i><span style="font-size:10.5px; color:#9A93C4;">Idle off</span></div>
+                    <div style="aspect-ratio:1; border-radius:16px; background:linear-gradient(165deg,#241E44,#181428); border:1px solid rgba(245,243,255,0.09); box-shadow:inset 0 1px 0 rgba(245,243,255,0.07), 0 8px 18px -8px rgba(0,0,0,0.7); display:flex; flex-direction:column; align-items:center; justify-content:center; gap:8px;"><i class="ph-light ph-folder-open" style="font-size:24px; color:#9A93C4;"></i><span style="font-size:10.5px; color:#9A93C4;">Open folder</span></div>
+                    <div style="aspect-ratio:1; border-radius:16px; border:1px dashed rgba(245,243,255,0.12); display:flex; flex-direction:column; align-items:center; justify-content:center; gap:8px; color:#736BA4;"><i class="ph-light ph-plus" style="font-size:22px;"></i><span style="font-size:10.5px;">Unassigned</span></div>
+                  </div>
+                  <span style="flex:1;"></span>
+                  <span style="font-size:11px; color:#8B84B8;">Drag an action from the right onto a key. Long-press a key on the device to identify it here.</span>
+                </div>
+              </div>
+              <div style="flex:1; min-width:0; padding:4px; border-radius:18px; background:rgba(245,243,255,0.03); border:1px solid rgba(245,243,255,0.06);">
+                <div style="height:100%; border-radius:14px; background:rgba(16,13,28,0.7); box-shadow:inset 0 1px 0 rgba(245,243,255,0.05); padding:18px; display:flex; flex-direction:column; gap:10px; overflow:hidden;">
+                  <span style="font-size:9.5px; letter-spacing:0.22em; text-transform:uppercase; color:#736BA4;">Actions</span>
+                  <div style="display:flex; align-items:center; gap:11px; padding:10px 12px; border-radius:11px; background:rgba(245,243,255,0.035); border:1px solid rgba(245,243,255,0.07); transition:all 500ms cubic-bezier(0.32,0.72,0,1);" style-hover="background:rgba(245,243,255,0.07);"><i class="ph-light ph-dots-six-vertical" style="font-size:15px; color:#736BA4;"></i><i class="ph-light ph-record" style="font-size:15px; color:#9A93C4;"></i><span style="font-size:12.5px;">Toggle recording</span></div>
+                  <div style="display:flex; align-items:center; gap:11px; padding:10px 12px; border-radius:11px; background:rgba(245,243,255,0.035); border:1px solid rgba(245,243,255,0.07);"><i class="ph-light ph-dots-six-vertical" style="font-size:15px; color:#736BA4;"></i><i class="ph-light ph-power" style="font-size:15px; color:#9A93C4;"></i><span style="font-size:12.5px;">Toggle monitoring</span></div>
+                  <div style="display:flex; align-items:center; gap:11px; padding:10px 12px; border-radius:11px; background:rgba(245,243,255,0.035); border:1px solid rgba(245,243,255,0.07);"><i class="ph-light ph-dots-six-vertical" style="font-size:15px; color:#736BA4;"></i><i class="ph-light ph-scissors" style="font-size:15px; color:#9A93C4;"></i><span style="font-size:12.5px;">Mark clip</span></div>
+                  <div style="display:flex; align-items:center; gap:11px; padding:10px 12px; border-radius:11px; background:rgba(245,243,255,0.035); border:1px solid rgba(245,243,255,0.07);"><i class="ph-light ph-dots-six-vertical" style="font-size:15px; color:#736BA4;"></i><i class="ph-light ph-swap" style="font-size:15px; color:#9A93C4;"></i><span style="font-size:12.5px;">Switch scene&hellip;</span></div>
+                  <div style="display:flex; align-items:center; gap:11px; padding:10px 12px; border-radius:11px; background:rgba(245,243,255,0.035); border:1px solid rgba(245,243,255,0.07);"><i class="ph-light ph-dots-six-vertical" style="font-size:15px; color:#736BA4;"></i><i class="ph-light ph-speaker-simple-x" style="font-size:15px; color:#9A93C4;"></i><span style="font-size:12.5px;">Mute source&hellip;</span></div>
+                  <div style="display:flex; align-items:center; gap:11px; padding:10px 12px; border-radius:11px; background:rgba(245,243,255,0.035); border:1px solid rgba(245,243,255,0.07);"><i class="ph-light ph-dots-six-vertical" style="font-size:15px; color:#736BA4;"></i><i class="ph-light ph-terminal-window" style="font-size:15px; color:#9A93C4;"></i><span style="font-size:12.5px;">Run command&hellip;</span></div>
+                  <span style="flex:1;"></span>
+                  <div style="padding:12px; border-radius:12px; background:rgba(139,124,246,0.07); border:1px solid rgba(139,124,246,0.18); display:flex; flex-direction:column; gap:5px;"><span style="font-size:11.5px; color:#D3CCFF;">Last key press</span><span style="font-family:'Geist Mono',monospace; font-size:11px; color:#9A93C4;">key 1 &middot; 21:14:02 &middot; Start / stop</span></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ============================== 03 STATES ============================== -->
+  <section data-reveal="1" style="margin-bottom:128px;">
+    <div style="display:flex; align-items:baseline; gap:16px; margin-bottom:10px;">
+      <h2 style="margin:0; font-size:11px; letter-spacing:0.3em; text-transform:uppercase; color:#8B84B8; font-weight:500;">03 &middot; Hero card states</h2>
+      <span style="height:1px; flex:1; background:linear-gradient(90deg, transparent, rgba(110,104,150,0.32) 48px, rgba(110,104,150,0.32) calc(100% - 48px), transparent);"></span>
+    </div>
+    <p style="margin:0 0 34px; max-width:78ch; font-size:15px; line-height:1.6; color:#9A93C4; text-wrap:pretty;">Only the hero card changes; nothing else on the dashboard moves. Same 22px padding, same button row position &mdash; swap the eyebrow, the tint, and the primary action.</p>
+    <div style="display:flex; flex-wrap:wrap; gap:26px; align-items:flex-start;">
+
+      <div id="2f" style="position:relative; width:424px;">
+        <div style="position:absolute; top:-11px; left:-11px; z-index:6; background:#8B7CF6; color:#171233; font-weight:600; font-size:10.5px; padding:3px 9px; border-radius:7px; font-family:'Geist Mono',monospace;">2f</div>
+        <div style="padding:5px; border-radius:22px; background:rgba(245,243,255,0.045); border:1px solid rgba(245,243,255,0.075);">
+          <div style="border-radius:17px; padding:22px; background:linear-gradient(150deg, rgba(36,30,68,0.9), rgba(16,13,28,0.95)); box-shadow:inset 0 1px 0 rgba(245,243,255,0.06); display:flex; flex-direction:column; gap:16px; min-height:236px;">
+            <span style="display:inline-flex; align-items:center; gap:7px; align-self:flex-start; padding:4px 10px; border-radius:999px; border:1px solid rgba(245,243,255,0.12); font-size:9.5px; letter-spacing:0.2em; text-transform:uppercase; color:#9A93C4;"><i class="ph-fill ph-circle" style="font-size:6px; color:#8B84B8;"></i>Idle &mdash; watching</span>
+            <div style="display:flex; flex-direction:column; gap:5px;"><span style="font-size:21px; font-weight:500; letter-spacing:-0.015em;">No game in focus</span><span style="font-size:12px; color:#8B84B8;">Foreground: chrome.exe &mdash; classified as not a game.</span></div>
+            <span style="flex:1;"></span>
+            <div style="display:flex; gap:9px;"><span style="display:inline-flex; align-items:center; gap:10px; height:38px; padding:0 6px 0 16px; border-radius:999px; border:1px solid rgba(139,124,246,0.42); background:rgba(139,124,246,0.06); font-size:12.5px;">Record anyway<span style="width:26px; height:26px; border-radius:999px; background:rgba(245,243,255,0.08); display:flex; align-items:center; justify-content:center;"><i class="ph-light ph-record" style="font-size:12px;"></i></span></span><span style="display:inline-flex; align-items:center; gap:8px; height:38px; padding:0 15px; border-radius:999px; border:1px solid rgba(245,243,255,0.1); font-size:12.5px; color:#9A93C4;">Pause monitoring</span></div>
+          </div>
+        </div>
+        <p style="margin:14px 0 0; font-size:12.5px; color:#8B84B8;">Idle &mdash; neutral tint, no timer, no scene preview.</p>
+      </div>
+
+      <div id="2g" style="position:relative; width:424px;">
+        <div style="position:absolute; top:-11px; left:-11px; z-index:6; background:#8B7CF6; color:#171233; font-weight:600; font-size:10.5px; padding:3px 9px; border-radius:7px; font-family:'Geist Mono',monospace;">2g</div>
+        <div style="padding:5px; border-radius:22px; background:rgba(245,243,255,0.045); border:1px solid rgba(245,243,255,0.075);">
+          <div style="border-radius:17px; padding:22px; background:linear-gradient(150deg, rgba(139,124,246,0.12), rgba(16,13,28,0.95) 55%); box-shadow:inset 0 1px 0 rgba(245,243,255,0.06); display:flex; flex-direction:column; gap:16px; min-height:236px;">
+            <span style="display:inline-flex; align-items:center; gap:7px; align-self:flex-start; padding:4px 10px; border-radius:999px; border:1px solid rgba(139,124,246,0.32); background:rgba(139,124,246,0.08); font-size:9.5px; letter-spacing:0.2em; text-transform:uppercase; color:#B9AEF9;"><i class="ph-light ph-pause" style="font-size:10px;"></i>Paused &mdash; idle 4 s</span>
+            <div style="display:flex; flex-direction:column; gap:9px;"><span style="font-size:21px; font-weight:500; letter-spacing:-0.015em;">Helldivers 2</span><span style="font-family:'Geist Mono',monospace; font-size:28px; color:#D3CCFF; line-height:1;">01:47:22</span></div>
+            <span style="flex:1;"></span>
+            <div style="display:flex; gap:9px;"><span style="display:inline-flex; align-items:center; gap:10px; height:38px; padding:0 6px 0 16px; border-radius:999px; border:1px solid rgba(139,124,246,0.45); background:rgba(139,124,246,0.08); font-size:12.5px;">Resume<span style="width:26px; height:26px; border-radius:999px; background:rgba(245,243,255,0.09); display:flex; align-items:center; justify-content:center;"><i class="ph-light ph-play" style="font-size:12px;"></i></span></span><span style="display:inline-flex; align-items:center; gap:8px; height:38px; padding:0 15px; border-radius:999px; border:1px solid rgba(245,243,255,0.1); font-size:12.5px; color:#9A93C4;">Stop &amp; save</span></div>
+          </div>
+        </div>
+        <p style="margin:14px 0 0; font-size:12.5px; color:#8B84B8;">Paused &mdash; accent tint, timer frozen at 60% opacity.</p>
+      </div>
+
+      <div id="2h" style="position:relative; width:424px;">
+        <div style="position:absolute; top:-11px; left:-11px; z-index:6; background:#8B7CF6; color:#171233; font-weight:600; font-size:10.5px; padding:3px 9px; border-radius:7px; font-family:'Geist Mono',monospace;">2h</div>
+        <div style="padding:5px; border-radius:22px; background:rgba(245,243,255,0.045); border:1px solid rgba(255,92,122,0.22);">
+          <div style="border-radius:17px; padding:22px; background:linear-gradient(150deg, rgba(255,92,122,0.12), rgba(16,13,28,0.95) 55%); box-shadow:inset 0 1px 0 rgba(245,243,255,0.06); display:flex; flex-direction:column; gap:16px; min-height:236px;">
+            <span style="display:inline-flex; align-items:center; gap:7px; align-self:flex-start; padding:4px 10px; border-radius:999px; border:1px solid rgba(255,92,122,0.35); background:rgba(255,92,122,0.09); font-size:9.5px; letter-spacing:0.2em; text-transform:uppercase; color:#FFA3B4;"><i class="ph-light ph-plugs" style="font-size:11px;"></i>OBS disconnected</span>
+            <div style="display:flex; flex-direction:column; gap:5px;"><span style="font-size:21px; font-weight:500; letter-spacing:-0.015em;">Can't reach OBS</span><span style="font-size:12px; color:#9A93C4;">Retrying every 10s &mdash; next attempt in 6s. Launching from <span style="font-family:'Geist Mono',monospace; font-size:11px;">obs_path</span>&hellip;</span></div>
+            <span style="flex:1;"></span>
+            <div style="display:flex; gap:9px;"><span style="display:inline-flex; align-items:center; gap:10px; height:38px; padding:0 6px 0 16px; border-radius:999px; border:1px solid rgba(255,92,122,0.45); background:rgba(255,92,122,0.08); font-size:12.5px;">Retry now<span style="width:26px; height:26px; border-radius:999px; background:rgba(245,243,255,0.09); display:flex; align-items:center; justify-content:center;"><i class="ph-light ph-arrow-clockwise" style="font-size:12px;"></i></span></span><span style="display:inline-flex; align-items:center; gap:8px; height:38px; padding:0 15px; border-radius:999px; border:1px solid rgba(245,243,255,0.1); font-size:12.5px; color:#9A93C4;">Connection settings</span></div>
+          </div>
+        </div>
+        <p style="margin:14px 0 0; font-size:12.5px; color:#8B84B8;">Disconnected &mdash; the only place the ember hue leads.</p>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ============================== 04 SATELLITES ============================== -->
+  <section data-reveal="1" style="margin-bottom:128px;">
+    <div style="display:flex; align-items:baseline; gap:16px; margin-bottom:10px;">
+      <h2 style="margin:0; font-size:11px; letter-spacing:0.3em; text-transform:uppercase; color:#8B84B8; font-weight:500;">04 &middot; Off-window surfaces</h2>
+      <span style="height:1px; flex:1; background:linear-gradient(90deg, transparent, rgba(110,104,150,0.32) 48px, rgba(110,104,150,0.32) calc(100% - 48px), transparent);"></span>
+    </div>
+    <p style="margin:0 0 34px; max-width:78ch; font-size:15px; line-height:1.6; color:#9A93C4; text-wrap:pretty;">The three surfaces the last build got wrong. Read the rules under each frame literally.</p>
+    <div style="display:flex; flex-wrap:wrap; gap:44px; align-items:flex-start;">
+
+      <!-- 2i TOAST -->
+      <div id="2i" style="position:relative; width:400px;">
+        <div style="position:absolute; top:-11px; left:-11px; z-index:6; background:#8B7CF6; color:#171233; font-weight:600; font-size:10.5px; padding:3px 9px; border-radius:7px; font-family:'Geist Mono',monospace;">2i</div>
+        <div style="padding:5px; border-radius:20px; background:rgba(245,243,255,0.04); border:1px solid rgba(245,243,255,0.08); box-shadow:0 30px 60px -22px rgba(0,0,0,0.8);">
+          <div style="width:360px; border-radius:15px; overflow:hidden; position:relative; background:linear-gradient(150deg, rgba(36,30,68,0.96), rgba(16,13,28,0.98)); box-shadow:inset 0 1px 0 rgba(245,243,255,0.08); padding:15px 16px 17px; display:flex; gap:13px;">
+            <span style="width:34px; height:34px; flex:none; border-radius:11px; background:rgba(255,92,122,0.14); border:1px solid rgba(255,92,122,0.28); display:flex; align-items:center; justify-content:center; color:#FFA3B4;"><i class="ph-light ph-record" style="font-size:17px;"></i></span>
+            <div style="flex:1; min-width:0; display:flex; flex-direction:column; gap:3px;">
+              <span style="font-size:13px; font-weight:500;">Recording started</span>
+              <span style="font-size:11.5px; color:#9A93C4;">Helldivers 2 &middot; D:/OBS Recordings</span>
+            </div>
+            <span style="width:22px; height:22px; flex:none; border-radius:7px; display:flex; align-items:center; justify-content:center; color:#736BA4;"><i class="ph-light ph-x" style="font-size:11px;"></i></span>
+            <span style="position:absolute; left:0; right:0; bottom:0; height:2px; background:rgba(245,243,255,0.08);"><span style="display:block; height:100%; width:100%; transform-origin:left; background:linear-gradient(90deg,#5340A8,#8B7CF6); animation:nbDrain 4s linear infinite;"></span></span>
+          </div>
+        </div>
+        <div style="margin-top:18px; display:flex; flex-direction:column; gap:9px;">
+          <span style="font-size:9.5px; letter-spacing:0.22em; text-transform:uppercase; color:#736BA4;">Rules</span>
+          <div style="display:flex; gap:9px; font-size:12.5px; color:#9A93C4; line-height:1.5;"><i class="ph-light ph-check" style="font-size:14px; color:#B9AEF9; margin-top:2px;"></i><span><b style="color:#F5F3FF; font-weight:500;">One toast, ever.</b> A new event replaces the current one in place &mdash; never a stack, never a queue.</span></div>
+          <div style="display:flex; gap:9px; font-size:12.5px; color:#9A93C4; line-height:1.5;"><i class="ph-light ph-check" style="font-size:14px; color:#B9AEF9; margin-top:2px;"></i><span>Bottom-right of the active screen, 24px from both edges, above the taskbar.</span></div>
+          <div style="display:flex; gap:9px; font-size:12.5px; color:#9A93C4; line-height:1.5;"><i class="ph-light ph-check" style="font-size:14px; color:#B9AEF9; margin-top:2px;"></i><span>4s life, 2px drain line left&rarr;right. Replacing an event resets the line to full.</span></div>
+          <div style="display:flex; gap:9px; font-size:12.5px; color:#9A93C4; line-height:1.5;"><i class="ph-light ph-check" style="font-size:14px; color:#B9AEF9; margin-top:2px;"></i><span>Hover freezes the drain; leaving resumes it. Click anywhere focuses the window.</span></div>
+          <div style="display:flex; gap:9px; font-size:12.5px; color:#9A93C4; line-height:1.5;"><i class="ph-light ph-check" style="font-size:14px; color:#B9AEF9; margin-top:2px;"></i><span>Icon + tint per event: start / stop &rarr; ember, pause / resume &rarr; accent, error &rarr; ember.</span></div>
+        </div>
+      </div>
+
+      <!-- 2j TRAY + MINI -->
+      <div id="2j" style="position:relative; width:400px;">
+        <div style="position:absolute; top:-11px; left:-11px; z-index:6; background:#8B7CF6; color:#171233; font-weight:600; font-size:10.5px; padding:3px 9px; border-radius:7px; font-family:'Geist Mono',monospace;">2j</div>
+        <div style="padding:5px; border-radius:20px; background:rgba(245,243,255,0.04); border:1px solid rgba(245,243,255,0.08); box-shadow:0 30px 60px -22px rgba(0,0,0,0.8);">
+          <div style="width:270px; border-radius:15px; overflow:hidden; background:linear-gradient(160deg, rgba(36,30,68,0.97), rgba(16,13,28,0.99)); box-shadow:inset 0 1px 0 rgba(245,243,255,0.08); padding:7px;">
+            <div style="padding:10px 11px 11px; display:flex; flex-direction:column; gap:3px; border-bottom:1px solid rgba(245,243,255,0.06); margin-bottom:6px;">
+              <span style="display:inline-flex; align-items:center; gap:7px; font-size:9.5px; letter-spacing:0.2em; text-transform:uppercase; color:#FFA3B4;"><i class="ph-fill ph-circle" style="font-size:6px; color:#FF5C7A;"></i>Recording</span>
+              <span style="font-size:12.5px;">Helldivers 2 &middot; <span style="font-family:'Geist Mono',monospace; color:#9A93C4;">01:47:22</span></span>
+            </div>
+            <div style="display:flex; align-items:center; gap:10px; height:32px; padding:0 11px; border-radius:9px; font-size:12.5px; transition:all 400ms cubic-bezier(0.32,0.72,0,1);" style-hover="background:rgba(245,243,255,0.06);"><i class="ph-light ph-arrows-out-simple" style="font-size:15px; color:#9A93C4;"></i>Show Nebula</div>
+            <div style="display:flex; align-items:center; gap:10px; height:32px; padding:0 11px; border-radius:9px; font-size:12.5px; transition:all 400ms cubic-bezier(0.32,0.72,0,1);" style-hover="background:rgba(245,243,255,0.06);"><i class="ph-light ph-pause" style="font-size:15px; color:#9A93C4;"></i>Pause recording</div>
+            <div style="display:flex; align-items:center; gap:10px; height:32px; padding:0 11px; border-radius:9px; font-size:12.5px; transition:all 400ms cubic-bezier(0.32,0.72,0,1);" style-hover="background:rgba(245,243,255,0.06);"><i class="ph-fill ph-square" style="font-size:11px; color:#9A93C4;"></i>Stop recording</div>
+            <div style="display:flex; align-items:center; gap:10px; height:32px; padding:0 11px; border-radius:9px; font-size:12.5px; transition:all 400ms cubic-bezier(0.32,0.72,0,1);" style-hover="background:rgba(245,243,255,0.06);"><i class="ph-light ph-power" style="font-size:15px; color:#9A93C4;"></i>Monitoring<span style="margin-left:auto; font-family:'Geist Mono',monospace; font-size:10px; padding:1px 5px; border-radius:4px; background:rgba(139,124,246,0.16); color:#D3CCFF;">on</span></div>
+            <div style="display:flex; align-items:center; gap:10px; height:32px; padding:0 11px; border-radius:9px; font-size:12.5px; transition:all 400ms cubic-bezier(0.32,0.72,0,1);" style-hover="background:rgba(245,243,255,0.06);"><i class="ph-light ph-folder-open" style="font-size:15px; color:#9A93C4;"></i>Open recordings</div>
+            <span style="display:block; height:1px; margin:6px 11px; background:rgba(245,243,255,0.07);"></span>
+            <div style="display:flex; align-items:center; gap:10px; height:32px; padding:0 11px; border-radius:9px; font-size:12.5px; color:#FFA3B4; transition:all 400ms cubic-bezier(0.32,0.72,0,1);" style-hover="background:rgba(255,92,122,0.12);"><i class="ph-light ph-sign-out" style="font-size:15px;"></i>Quit Nebula</div>
+          </div>
+        </div>
+        <div style="margin-top:18px; display:flex; flex-direction:column; gap:9px;">
+          <span style="font-size:9.5px; letter-spacing:0.22em; text-transform:uppercase; color:#736BA4;">Rules</span>
+          <div style="display:flex; gap:9px; font-size:12.5px; color:#9A93C4; line-height:1.5;"><i class="ph-light ph-check" style="font-size:14px; color:#B9AEF9; margin-top:2px;"></i><span><b style="color:#F5F3FF; font-weight:500;">Both &minus; and &times; hide to tray.</b> Quit exists only in this menu.</span></div>
+          <div style="display:flex; gap:9px; font-size:12.5px; color:#9A93C4; line-height:1.5;"><i class="ph-light ph-check" style="font-size:14px; color:#B9AEF9; margin-top:2px;"></i><span>Tray icon states: idle = accent outline, recording = ember filled, disconnected = neutral with a slash.</span></div>
+          <div style="display:flex; gap:9px; font-size:12.5px; color:#9A93C4; line-height:1.5;"><i class="ph-light ph-check" style="font-size:14px; color:#B9AEF9; margin-top:2px;"></i><span>Single click = show window. Right click = this menu. Tooltip = game + elapsed.</span></div>
+          <div style="display:flex; gap:9px; font-size:12.5px; color:#9A93C4; line-height:1.5;"><i class="ph-light ph-check" style="font-size:14px; color:#B9AEF9; margin-top:2px;"></i><span>The header block is not a menu item &mdash; not hoverable, not clickable.</span></div>
+        </div>
+      </div>
+
+      <!-- 2k MINI OVERLAY -->
+      <div id="2k" style="position:relative; width:400px;">
+        <div style="position:absolute; top:-11px; left:-11px; z-index:6; background:#8B7CF6; color:#171233; font-weight:600; font-size:10.5px; padding:3px 9px; border-radius:7px; font-family:'Geist Mono',monospace;">2k</div>
+        <div style="padding:5px; border-radius:20px; background:rgba(245,243,255,0.04); border:1px solid rgba(245,243,255,0.08); box-shadow:0 30px 60px -22px rgba(0,0,0,0.8);">
+          <div style="width:296px; border-radius:15px; overflow:hidden; background:linear-gradient(150deg, rgba(255,92,122,0.10), rgba(16,13,28,0.98) 52%); box-shadow:inset 0 1px 0 rgba(245,243,255,0.08); padding:13px 14px; display:flex; align-items:center; gap:12px;">
+            <i class="ph-fill ph-circle" style="font-size:8px; color:#FF5C7A; animation:nbPulse 1.9s ease-in-out infinite;"></i>
+            <div style="flex:1; min-width:0; display:flex; flex-direction:column; gap:2px;">
+              <span style="font-family:'Geist Mono',monospace; font-size:16px; letter-spacing:-0.01em;">01:47:22</span>
+              <span style="font-size:10.5px; color:#8B84B8; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">Helldivers 2</span>
+            </div>
+            <span style="width:28px; height:28px; border-radius:9px; border:1px solid rgba(245,243,255,0.1); display:flex; align-items:center; justify-content:center; color:#9A93C4;"><i class="ph-light ph-pause" style="font-size:12px;"></i></span>
+            <span style="width:28px; height:28px; border-radius:9px; border:1px solid rgba(245,243,255,0.1); display:flex; align-items:center; justify-content:center; color:#9A93C4;"><i class="ph-fill ph-square" style="font-size:9px;"></i></span>
+            <span style="width:28px; height:28px; border-radius:9px; display:flex; align-items:center; justify-content:center; color:#736BA4;"><i class="ph-light ph-arrows-in-simple" style="font-size:13px;"></i></span>
+          </div>
+        </div>
+        <div style="margin-top:18px; display:flex; flex-direction:column; gap:9px;">
+          <span style="font-size:9.5px; letter-spacing:0.22em; text-transform:uppercase; color:#736BA4;">Rules</span>
+          <div style="display:flex; gap:9px; font-size:12.5px; color:#9A93C4; line-height:1.5;"><i class="ph-light ph-check" style="font-size:14px; color:#B9AEF9; margin-top:2px;"></i><span>296&times;54, frameless, always-on-top, drag anywhere on the body.</span></div>
+          <div style="display:flex; gap:9px; font-size:12.5px; color:#9A93C4; line-height:1.5;"><i class="ph-light ph-check" style="font-size:14px; color:#B9AEF9; margin-top:2px;"></i><span>Snaps to the nearest screen corner within 32px; remembers position per monitor.</span></div>
+          <div style="display:flex; gap:9px; font-size:12.5px; color:#9A93C4; line-height:1.5;"><i class="ph-light ph-check" style="font-size:14px; color:#B9AEF9; margin-top:2px;"></i><span>Drops to 55% opacity after 3s without the pointer; full opacity on hover.</span></div>
+          <div style="display:flex; gap:9px; font-size:12.5px; color:#9A93C4; line-height:1.5;"><i class="ph-light ph-check" style="font-size:14px; color:#B9AEF9; margin-top:2px;"></i><span>Collapse restores the main window; it never appears while idle.</span></div>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ============================== 05 BUILD SPEC ============================== -->
+  <section data-reveal="1" id="2l">
+    <div style="display:flex; align-items:baseline; gap:16px; margin-bottom:10px;">
+      <h2 style="margin:0; font-size:11px; letter-spacing:0.3em; text-transform:uppercase; color:#8B84B8; font-weight:500;">05 &middot; Build spec &mdash; the contract</h2>
+      <span style="height:1px; flex:1; background:linear-gradient(90deg, transparent, rgba(110,104,150,0.32) 48px, rgba(110,104,150,0.32) calc(100% - 48px), transparent);"></span>
+    </div>
+    <p style="margin:0 0 34px; max-width:78ch; font-size:15px; line-height:1.6; color:#9A93C4; text-wrap:pretty;">Every number the frames above imply, written down. If a frame and this table disagree, this table wins.</p>
+
+    <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(430px, 1fr)); gap:20px;">
+
+      <!-- tokens -->
+      <div data-magic="1" style="position:relative; padding:5px; border-radius:22px; background:rgba(245,243,255,0.035); border:1px solid rgba(245,243,255,0.07); transition:border-color 600ms cubic-bezier(0.32,0.72,0,1);">
+        <div style="border-radius:17px; background:#12101F; box-shadow:inset 0 1px 0 rgba(245,243,255,0.06); padding:24px; display:flex; flex-direction:column; gap:16px;">
+          <div style="display:flex; align-items:center; gap:10px;"><i class="ph-light ph-palette" style="font-size:17px; color:#B9AEF9;"></i><span style="font-size:15px; font-weight:500;">Colour tokens</span></div>
+          <div style="display:flex; flex-direction:column; font-family:'Geist Mono',monospace; font-size:11.5px;">
+            <div style="display:flex; align-items:center; gap:12px; padding:7px 0; border-bottom:1px solid rgba(245,243,255,0.05);"><span style="width:18px; height:18px; border-radius:5px; background:#100D1C; border:1px solid rgba(245,243,255,0.1);"></span><span style="width:104px; color:#D3CCFF;">#100D1C</span><span style="color:#8B84B8;">window ground</span></div>
+            <div style="display:flex; align-items:center; gap:12px; padding:7px 0; border-bottom:1px solid rgba(245,243,255,0.05);"><span style="width:18px; height:18px; border-radius:5px; background:#12101F; border:1px solid rgba(245,243,255,0.1);"></span><span style="width:104px; color:#D3CCFF;">#12101F</span><span style="color:#8B84B8;">panel base</span></div>
+            <div style="display:flex; align-items:center; gap:12px; padding:7px 0; border-bottom:1px solid rgba(245,243,255,0.05);"><span style="width:18px; height:18px; border-radius:5px; background:#181428; border:1px solid rgba(245,243,255,0.1);"></span><span style="width:104px; color:#D3CCFF;">#181428</span><span style="color:#8B84B8;">card core</span></div>
+            <div style="display:flex; align-items:center; gap:12px; padding:7px 0; border-bottom:1px solid rgba(245,243,255,0.05);"><span style="width:18px; height:18px; border-radius:5px; background:#241E44;"></span><span style="width:104px; color:#D3CCFF;">#241E44</span><span style="color:#8B84B8;">raised surface, keycaps</span></div>
+            <div style="display:flex; align-items:center; gap:12px; padding:7px 0; border-bottom:1px solid rgba(245,243,255,0.05);"><span style="width:18px; height:18px; border-radius:5px; background:#8B7CF6;"></span><span style="width:104px; color:#D3CCFF;">#8B7CF6</span><span style="color:#8B84B8;">accent &mdash; lines, dots, glow</span></div>
+            <div style="display:flex; align-items:center; gap:12px; padding:7px 0; border-bottom:1px solid rgba(245,243,255,0.05);"><span style="width:18px; height:18px; border-radius:5px; background:#B9AEF9;"></span><span style="width:104px; color:#D3CCFF;">#B9AEF9</span><span style="color:#8B84B8;">accent text / icons on dark</span></div>
+            <div style="display:flex; align-items:center; gap:12px; padding:7px 0; border-bottom:1px solid rgba(245,243,255,0.05);"><span style="width:18px; height:18px; border-radius:5px; background:#FF5C7A;"></span><span style="width:104px; color:#D3CCFF;">#FF5C7A</span><span style="color:#8B84B8;">ember &mdash; live + errors ONLY</span></div>
+            <div style="display:flex; align-items:center; gap:12px; padding:7px 0; border-bottom:1px solid rgba(245,243,255,0.05);"><span style="width:18px; height:18px; border-radius:5px; background:#F5F3FF;"></span><span style="width:104px; color:#D3CCFF;">#F5F3FF</span><span style="color:#8B84B8;">primary text</span></div>
+            <div style="display:flex; align-items:center; gap:12px; padding:7px 0; border-bottom:1px solid rgba(245,243,255,0.05);"><span style="width:18px; height:18px; border-radius:5px; background:#9A93C4;"></span><span style="width:104px; color:#D3CCFF;">#9A93C4</span><span style="color:#8B84B8;">secondary text</span></div>
+            <div style="display:flex; align-items:center; gap:12px; padding:7px 0; border-bottom:1px solid rgba(245,243,255,0.05);"><span style="width:18px; height:18px; border-radius:5px; background:#8B84B8;"></span><span style="width:104px; color:#D3CCFF;">#8B84B8</span><span style="color:#8B84B8;">tertiary / captions</span></div>
+            <div style="display:flex; align-items:center; gap:12px; padding:7px 0;"><span style="width:18px; height:18px; border-radius:5px; background:#736BA4;"></span><span style="width:104px; color:#D3CCFF;">#736BA4</span><span style="color:#8B84B8;">eyebrow labels, mono meta</span></div>
+          </div>
+          <div style="padding:13px 14px; border-radius:12px; background:rgba(139,124,246,0.06); border:1px solid rgba(139,124,246,0.16); font-size:12px; color:#D3CCFF; line-height:1.55;">Hairlines are <span style="font-family:'Geist Mono',monospace;">rgba(245,243,255,0.055&ndash;0.09)</span>, never a solid grey. Tinted fills are the accent or ember at <span style="font-family:'Geist Mono',monospace;">0.06&ndash;0.16</span> alpha. No other hues exist in this app &mdash; log tag colours stay as <span style="font-family:'Geist Mono',monospace;">LOG_TAG_COLORS</span> in gui.py.</div>
+        </div>
+      </div>
+
+      <!-- geometry & type -->
+      <div data-magic="1" style="position:relative; padding:5px; border-radius:22px; background:rgba(245,243,255,0.035); border:1px solid rgba(245,243,255,0.07); transition:border-color 600ms cubic-bezier(0.32,0.72,0,1);">
+        <div style="border-radius:17px; background:#12101F; box-shadow:inset 0 1px 0 rgba(245,243,255,0.06); padding:24px; display:flex; flex-direction:column; gap:16px;">
+          <div style="display:flex; align-items:center; gap:10px;"><i class="ph-light ph-ruler" style="font-size:17px; color:#B9AEF9;"></i><span style="font-size:15px; font-weight:500;">Geometry &amp; type</span></div>
+          <div style="display:flex; flex-direction:column; font-size:12px;">
+            <div style="display:flex; gap:14px; padding:7px 0; border-bottom:1px solid rgba(245,243,255,0.05);"><span style="width:168px; color:#9A93C4;">Window</span><span style="font-family:'Geist Mono',monospace; color:#D3CCFF;">1280&times;808 core, 6px tray</span></div>
+            <div style="display:flex; gap:14px; padding:7px 0; border-bottom:1px solid rgba(245,243,255,0.05);"><span style="width:168px; color:#9A93C4;">Min window</span><span style="font-family:'Geist Mono',monospace; color:#D3CCFF;">1080&times;700</span></div>
+            <div style="display:flex; gap:14px; padding:7px 0; border-bottom:1px solid rgba(245,243,255,0.05);"><span style="width:168px; color:#9A93C4;">Radii</span><span style="font-family:'Geist Mono',monospace; color:#D3CCFF;">28 tray / 22 core / 17 card / 12 tile / 9 control</span></div>
+            <div style="display:flex; gap:14px; padding:7px 0; border-bottom:1px solid rgba(245,243,255,0.05);"><span style="width:168px; color:#9A93C4;">Nesting rule</span><span style="font-family:'Geist Mono',monospace; color:#D3CCFF;">inner = outer &minus; padding</span></div>
+            <div style="display:flex; gap:14px; padding:7px 0; border-bottom:1px solid rgba(245,243,255,0.05);"><span style="width:168px; color:#9A93C4;">Titlebar</span><span style="font-family:'Geist Mono',monospace; color:#D3CCFF;">h 46, pad 18 left / 8 right</span></div>
+            <div style="display:flex; gap:14px; padding:7px 0; border-bottom:1px solid rgba(245,243,255,0.05);"><span style="width:168px; color:#9A93C4;">Rail</span><span style="font-family:'Geist Mono',monospace; color:#D3CCFF;">w 232, pad 16/12, item h 38, gap 3</span></div>
+            <div style="display:flex; gap:14px; padding:7px 0; border-bottom:1px solid rgba(245,243,255,0.05);"><span style="width:168px; color:#9A93C4;">Pane header</span><span style="font-family:'Geist Mono',monospace; color:#D3CCFF;">h 62, pad-x 26</span></div>
+            <div style="display:flex; gap:14px; padding:7px 0; border-bottom:1px solid rgba(245,243,255,0.05);"><span style="width:168px; color:#9A93C4;">Content</span><span style="font-family:'Geist Mono',monospace; color:#D3CCFF;">pad 26, stack gap 16</span></div>
+            <div style="display:flex; gap:14px; padding:7px 0; border-bottom:1px solid rgba(245,243,255,0.05);"><span style="width:168px; color:#9A93C4;">Controls</span><span style="font-family:'Geist Mono',monospace; color:#D3CCFF;">pill h 40 &middot; field h 36 &middot; icon btn 26&ndash;30</span></div>
+            <div style="display:flex; gap:14px; padding:7px 0;"><span style="width:168px; color:#9A93C4;">Hit target</span><span style="font-family:'Geist Mono',monospace; color:#D3CCFF;">&ge;30px, 8px between siblings</span></div>
+          </div>
+          <span style="height:1px; background:linear-gradient(90deg, transparent, rgba(245,243,255,0.1) 32px, rgba(245,243,255,0.1) calc(100% - 32px), transparent);"></span>
+          <div style="display:flex; flex-direction:column; font-size:12px;">
+            <div style="display:flex; gap:14px; padding:7px 0; border-bottom:1px solid rgba(245,243,255,0.05);"><span style="width:168px; color:#9A93C4;">UI face</span><span style="color:#D3CCFF;">Geist 300/400/500 &mdash; ship as Segoe UI Variable</span></div>
+            <div style="display:flex; gap:14px; padding:7px 0; border-bottom:1px solid rgba(245,243,255,0.05);"><span style="width:168px; color:#9A93C4;">Numeric face</span><span style="color:#D3CCFF;">Geist Mono &mdash; ship as Cascadia Mono</span></div>
+            <div style="display:flex; gap:14px; padding:7px 0; border-bottom:1px solid rgba(245,243,255,0.05);"><span style="width:168px; color:#9A93C4;">Timer</span><span style="font-family:'Geist Mono',monospace; color:#D3CCFF;">34 / 400 / -0.02em</span></div>
+            <div style="display:flex; gap:14px; padding:7px 0; border-bottom:1px solid rgba(245,243,255,0.05);"><span style="width:168px; color:#9A93C4;">Game title</span><span style="font-family:'Geist Mono',monospace; color:#D3CCFF;">25 / 500 / -0.02em</span></div>
+            <div style="display:flex; gap:14px; padding:7px 0; border-bottom:1px solid rgba(245,243,255,0.05);"><span style="width:168px; color:#9A93C4;">Pane title</span><span style="font-family:'Geist Mono',monospace; color:#D3CCFF;">19 / 500</span></div>
+            <div style="display:flex; gap:14px; padding:7px 0; border-bottom:1px solid rgba(245,243,255,0.05);"><span style="width:168px; color:#9A93C4;">Body / rows</span><span style="font-family:'Geist Mono',monospace; color:#D3CCFF;">13 &middot; 12.5 &middot; 12</span></div>
+            <div style="display:flex; gap:14px; padding:7px 0; border-bottom:1px solid rgba(245,243,255,0.05);"><span style="width:168px; color:#9A93C4;">Meta / mono</span><span style="font-family:'Geist Mono',monospace; color:#D3CCFF;">11.5 &middot; 10.5</span></div>
+            <div style="display:flex; gap:14px; padding:7px 0;"><span style="width:168px; color:#9A93C4;">Eyebrow</span><span style="font-family:'Geist Mono',monospace; color:#D3CCFF;">9.5 / uppercase / 0.22em</span></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- config map -->
+      <div data-magic="1" style="position:relative; padding:5px; border-radius:22px; background:rgba(245,243,255,0.035); border:1px solid rgba(245,243,255,0.07); transition:border-color 600ms cubic-bezier(0.32,0.72,0,1);">
+        <div style="border-radius:17px; background:#12101F; box-shadow:inset 0 1px 0 rgba(245,243,255,0.06); padding:24px; display:flex; flex-direction:column; gap:16px;">
+          <div style="display:flex; align-items:center; gap:10px;"><i class="ph-light ph-brackets-curly" style="font-size:17px; color:#B9AEF9;"></i><span style="font-size:15px; font-weight:500;">Control &rarr; config.json</span></div>
+          <div style="display:flex; flex-direction:column; font-size:11.5px;">
+            <div style="display:flex; gap:12px; padding:7px 0; border-bottom:1px solid rgba(245,243,255,0.05);"><span style="width:150px; color:#9A93C4;">Host / Port / Password</span><span style="font-family:'Geist Mono',monospace; color:#D3CCFF;">obs_host, obs_port, obs_password</span></div>
+            <div style="display:flex; gap:12px; padding:7px 0; border-bottom:1px solid rgba(245,243,255,0.05);"><span style="width:150px; color:#9A93C4;">OBS executable</span><span style="font-family:'Geist Mono',monospace; color:#D3CCFF;">obs_path</span></div>
+            <div style="display:flex; gap:12px; padding:7px 0; border-bottom:1px solid rgba(245,243,255,0.05);"><span style="width:150px; color:#9A93C4;">Reconnect every</span><span style="font-family:'Geist Mono',monospace; color:#D3CCFF;">reconnect_interval_seconds<span style="color:#8B84B8;"> &middot; seconds, default 10</span></span></div>
+            <div style="display:flex; gap:12px; padding:7px 0; border-bottom:1px solid rgba(245,243,255,0.05);"><span style="width:150px; color:#9A93C4;">Recording folder</span><span style="font-family:'Geist Mono',monospace; color:#D3CCFF;">recording_root</span></div>
+            <div style="display:flex; gap:12px; padding:7px 0; border-bottom:1px solid rgba(245,243,255,0.05);"><span style="width:150px; color:#9A93C4;">Discard clips under</span><span style="font-family:'Geist Mono',monospace; color:#D3CCFF;">min_clip_seconds<span style="color:#8B84B8;"> &middot; seconds, default 10</span></span></div>
+            <div style="display:flex; gap:12px; padding:7px 0; border-bottom:1px solid rgba(245,243,255,0.05);"><span style="width:150px; color:#9A93C4;">Pause after idle</span><span style="font-family:'Geist Mono',monospace; color:#D3CCFF;">idle_timeout_seconds<span style="color:#8B84B8;"> &middot; seconds, default 4</span></span></div>
+            <div style="display:flex; gap:12px; padding:7px 0; border-bottom:1px solid rgba(245,243,255,0.05);"><span style="width:150px; color:#9A93C4;">Window poll rate</span><span style="font-family:'Geist Mono',monospace; color:#D3CCFF;">poll_interval_seconds<span style="color:#8B84B8;"> &middot; seconds, default 1</span></span></div>
+            <div style="display:flex; gap:12px; padding:7px 0; border-bottom:1px solid rgba(245,243,255,0.05);"><span style="width:150px; color:#9A93C4;">Keep-alive apps</span><span style="font-family:'Geist Mono',monospace; color:#D3CCFF;">keep_alive_audio_processes[]</span></div>
+            <div style="display:flex; gap:12px; padding:7px 0; border-bottom:1px solid rgba(245,243,255,0.05);"><span style="width:150px; color:#9A93C4;">Toggle hotkey</span><span style="font-family:'Geist Mono',monospace; color:#D3CCFF;">toggle_hotkey</span></div>
+            <div style="display:flex; gap:12px; padding:7px 0; border-bottom:1px solid rgba(245,243,255,0.05);"><span style="width:150px; color:#9A93C4;">&hellip; bind by scan code</span><span style="font-family:'Geist Mono',monospace; color:#D3CCFF;">toggle_hotkey_scancode</span></div>
+            <div style="display:flex; gap:12px; padding:7px 0;"><span style="width:150px; color:#9A93C4;">Shared classifications</span><span style="font-family:'Geist Mono',monospace; color:#D3CCFF;">sync_folder</span></div>
+          </div>
+          <div style="padding:13px 14px; border-radius:12px; background:rgba(245,243,255,0.03); border:1px solid rgba(245,243,255,0.07); font-size:12px; color:#9A93C4; line-height:1.55;">Every <span style="font-family:'Geist Mono',monospace; color:#D3CCFF;">*_seconds</span> key is in seconds &mdash; render the unit suffix in every field and every status string. Write on blur, not per keystroke. Show the saved timestamp in the pane header. Never silently drop an unknown key &mdash; merge over <span style="font-family:'Geist Mono',monospace; color:#D3CCFF;">DEFAULTS</span> and keep the rest.</div>
+        </div>
+      </div>
+
+      <!-- icons -->
+      <div data-magic="1" style="position:relative; padding:5px; border-radius:22px; background:rgba(245,243,255,0.035); border:1px solid rgba(245,243,255,0.07); transition:border-color 600ms cubic-bezier(0.32,0.72,0,1);">
+        <div style="border-radius:17px; background:#12101F; box-shadow:inset 0 1px 0 rgba(245,243,255,0.06); padding:24px; display:flex; flex-direction:column; gap:16px;">
+          <div style="display:flex; align-items:center; gap:10px;"><i class="ph-light ph-shapes" style="font-size:17px; color:#B9AEF9;"></i><span style="font-size:15px; font-weight:500;">Icon legend &mdash; Phosphor Light</span></div>
+          <p style="margin:0; font-size:12px; color:#8B84B8; line-height:1.55;">Light weight everywhere at 12&ndash;24px. The only Fill glyphs are <span style="font-family:'Geist Mono',monospace;">ph-circle</span> (status dots, 6&ndash;8px) and <span style="font-family:'Geist Mono',monospace;">ph-square</span> (stop, 9&ndash;11px).</p>
+          <div style="display:grid; grid-template-columns:1fr 1fr; gap:9px 18px; font-size:11.5px;">
+            <div style="display:flex; align-items:center; gap:9px;"><i class="ph-light ph-broadcast" style="font-size:16px; color:#9A93C4;"></i><span style="font-family:'Geist Mono',monospace; color:#D3CCFF;">broadcast</span><span style="color:#736BA4;">Dashboard</span></div>
+            <div style="display:flex; align-items:center; gap:9px;"><i class="ph-light ph-film-strip" style="font-size:16px; color:#9A93C4;"></i><span style="font-family:'Geist Mono',monospace; color:#D3CCFF;">film-strip</span><span style="color:#736BA4;">Clips</span></div>
+            <div style="display:flex; align-items:center; gap:9px;"><i class="ph-light ph-game-controller" style="font-size:16px; color:#9A93C4;"></i><span style="font-family:'Geist Mono',monospace; color:#D3CCFF;">game-controller</span><span style="color:#736BA4;">Games</span></div>
+            <div style="display:flex; align-items:center; gap:9px;"><i class="ph-light ph-keyboard" style="font-size:16px; color:#9A93C4;"></i><span style="font-family:'Geist Mono',monospace; color:#D3CCFF;">keyboard</span><span style="color:#736BA4;">Macropad</span></div>
+            <div style="display:flex; align-items:center; gap:9px;"><i class="ph-light ph-sliders-horizontal" style="font-size:16px; color:#9A93C4;"></i><span style="font-family:'Geist Mono',monospace; color:#D3CCFF;">sliders-horizontal</span><span style="color:#736BA4;">Settings</span></div>
+            <div style="display:flex; align-items:center; gap:9px;"><i class="ph-light ph-record" style="font-size:16px; color:#9A93C4;"></i><span style="font-family:'Geist Mono',monospace; color:#D3CCFF;">record</span><span style="color:#736BA4;">start</span></div>
+            <div style="display:flex; align-items:center; gap:9px;"><i class="ph-light ph-pause" style="font-size:16px; color:#9A93C4;"></i><span style="font-family:'Geist Mono',monospace; color:#D3CCFF;">pause</span><span style="color:#736BA4;">pause</span></div>
+            <div style="display:flex; align-items:center; gap:9px;"><i class="ph-light ph-play" style="font-size:16px; color:#9A93C4;"></i><span style="font-family:'Geist Mono',monospace; color:#D3CCFF;">play</span><span style="color:#736BA4;">resume</span></div>
+            <div style="display:flex; align-items:center; gap:9px;"><i class="ph-light ph-scissors" style="font-size:16px; color:#9A93C4;"></i><span style="font-family:'Geist Mono',monospace; color:#D3CCFF;">scissors</span><span style="color:#736BA4;">mark clip</span></div>
+            <div style="display:flex; align-items:center; gap:9px;"><i class="ph-light ph-stack-simple" style="font-size:16px; color:#9A93C4;"></i><span style="font-family:'Geist Mono',monospace; color:#D3CCFF;">stack-simple</span><span style="color:#736BA4;">scene</span></div>
+            <div style="display:flex; align-items:center; gap:9px;"><i class="ph-light ph-plugs" style="font-size:16px; color:#9A93C4;"></i><span style="font-family:'Geist Mono',monospace; color:#D3CCFF;">plugs</span><span style="color:#736BA4;">disconnected</span></div>
+            <div style="display:flex; align-items:center; gap:9px;"><i class="ph-light ph-plugs-connected" style="font-size:16px; color:#9A93C4;"></i><span style="font-family:'Geist Mono',monospace; color:#D3CCFF;">plugs-connected</span><span style="color:#736BA4;">connected</span></div>
+            <div style="display:flex; align-items:center; gap:9px;"><i class="ph-light ph-hard-drives" style="font-size:16px; color:#9A93C4;"></i><span style="font-family:'Geist Mono',monospace; color:#D3CCFF;">hard-drives</span><span style="color:#736BA4;">storage</span></div>
+            <div style="display:flex; align-items:center; gap:9px;"><i class="ph-light ph-timer" style="font-size:16px; color:#9A93C4;"></i><span style="font-family:'Geist Mono',monospace; color:#D3CCFF;">timer</span><span style="color:#736BA4;">idle</span></div>
+            <div style="display:flex; align-items:center; gap:9px;"><i class="ph-light ph-moon" style="font-size:16px; color:#9A93C4;"></i><span style="font-family:'Geist Mono',monospace; color:#D3CCFF;">moon</span><span style="color:#736BA4;">idle pause</span></div>
+            <div style="display:flex; align-items:center; gap:9px;"><i class="ph-light ph-command" style="font-size:16px; color:#9A93C4;"></i><span style="font-family:'Geist Mono',monospace; color:#D3CCFF;">command</span><span style="color:#736BA4;">hotkey</span></div>
+            <div style="display:flex; align-items:center; gap:9px;"><i class="ph-light ph-steam-logo" style="font-size:16px; color:#9A93C4;"></i><span style="font-family:'Geist Mono',monospace; color:#D3CCFF;">steam-logo</span><span style="color:#736BA4;">rescan</span></div>
+            <div style="display:flex; align-items:center; gap:9px;"><i class="ph-light ph-folder-open" style="font-size:16px; color:#9A93C4;"></i><span style="font-family:'Geist Mono',monospace; color:#D3CCFF;">folder-open</span><span style="color:#736BA4;">reveal</span></div>
+            <div style="display:flex; align-items:center; gap:9px;"><i class="ph-light ph-trash" style="font-size:16px; color:#9A93C4;"></i><span style="font-family:'Geist Mono',monospace; color:#D3CCFF;">trash</span><span style="color:#736BA4;">delete clip</span></div>
+            <div style="display:flex; align-items:center; gap:9px;"><i class="ph-light ph-arrows-out-simple" style="font-size:16px; color:#9A93C4;"></i><span style="font-family:'Geist Mono',monospace; color:#D3CCFF;">arrows-out-simple</span><span style="color:#736BA4;">show window</span></div>
+            <div style="display:flex; align-items:center; gap:9px;"><i class="ph-light ph-arrows-in-simple" style="font-size:16px; color:#9A93C4;"></i><span style="font-family:'Geist Mono',monospace; color:#D3CCFF;">arrows-in-simple</span><span style="color:#736BA4;">collapse mini</span></div>
+            <div style="display:flex; align-items:center; gap:9px;"><i class="ph-light ph-sign-out" style="font-size:16px; color:#9A93C4;"></i><span style="font-family:'Geist Mono',monospace; color:#D3CCFF;">sign-out</span><span style="color:#736BA4;">quit (tray only)</span></div>
+            <div style="display:flex; align-items:center; gap:9px;"><i class="ph-light ph-minus" style="font-size:16px; color:#9A93C4;"></i><span style="font-family:'Geist Mono',monospace; color:#D3CCFF;">minus</span><span style="color:#736BA4;">hide to tray</span></div>
+            <div style="display:flex; align-items:center; gap:9px;"><i class="ph-light ph-x" style="font-size:16px; color:#9A93C4;"></i><span style="font-family:'Geist Mono',monospace; color:#D3CCFF;">x</span><span style="color:#736BA4;">hide to tray</span></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- motion & interaction -->
+      <div data-magic="1" style="position:relative; padding:5px; border-radius:22px; background:rgba(245,243,255,0.035); border:1px solid rgba(245,243,255,0.07); transition:border-color 600ms cubic-bezier(0.32,0.72,0,1);">
+        <div style="border-radius:17px; background:#12101F; box-shadow:inset 0 1px 0 rgba(245,243,255,0.06); padding:24px; display:flex; flex-direction:column; gap:16px;">
+          <div style="display:flex; align-items:center; gap:10px;"><i class="ph-light ph-wave-sine" style="font-size:17px; color:#B9AEF9;"></i><span style="font-size:15px; font-weight:500;">Motion &amp; states</span></div>
+          <div style="display:flex; flex-direction:column; font-size:12px;">
+            <div style="display:flex; gap:14px; padding:7px 0; border-bottom:1px solid rgba(245,243,255,0.05);"><span style="width:150px; color:#9A93C4;">Easing</span><span style="font-family:'Geist Mono',monospace; color:#D3CCFF;">cubic-bezier(.32,.72,0,1)</span></div>
+            <div style="display:flex; gap:14px; padding:7px 0; border-bottom:1px solid rgba(245,243,255,0.05);"><span style="width:150px; color:#9A93C4;">Hover / press</span><span style="font-family:'Geist Mono',monospace; color:#D3CCFF;">500ms / 120ms, scale .98</span></div>
+            <div style="display:flex; gap:14px; padding:7px 0; border-bottom:1px solid rgba(245,243,255,0.05);"><span style="width:150px; color:#9A93C4;">Pane change</span><span style="font-family:'Geist Mono',monospace; color:#D3CCFF;">opacity + 8px rise, 260ms</span></div>
+            <div style="display:flex; gap:14px; padding:7px 0; border-bottom:1px solid rgba(245,243,255,0.05);"><span style="width:150px; color:#9A93C4;">Live dot</span><span style="font-family:'Geist Mono',monospace; color:#D3CCFF;">1.9s pulse, opacity .35&rarr;.95</span></div>
+            <div style="display:flex; gap:14px; padding:7px 0; border-bottom:1px solid rgba(245,243,255,0.05);"><span style="width:150px; color:#9A93C4;">Toast in / out</span><span style="font-family:'Geist Mono',monospace; color:#D3CCFF;">rise 16px 320ms / fade 200ms</span></div>
+            <div style="display:flex; gap:14px; padding:7px 0; border-bottom:1px solid rgba(245,243,255,0.05);"><span style="width:150px; color:#9A93C4;">Focus ring</span><span style="font-family:'Geist Mono',monospace; color:#D3CCFF;">2px #8B7CF6, offset 2</span></div>
+            <div style="display:flex; gap:14px; padding:7px 0; border-bottom:1px solid rgba(245,243,255,0.05);"><span style="width:150px; color:#9A93C4;">Disabled</span><span style="font-family:'Geist Mono',monospace; color:#D3CCFF;">opacity .45, no hover</span></div>
+            <div style="display:flex; gap:14px; padding:7px 0;"><span style="width:150px; color:#9A93C4;">Never animate</span><span style="font-family:'Geist Mono',monospace; color:#D3CCFF;">width / height / top / left</span></div>
+          </div>
+          <div style="padding:13px 14px; border-radius:12px; background:rgba(245,243,255,0.03); border:1px solid rgba(245,243,255,0.07); font-size:12px; color:#9A93C4; line-height:1.55;">The elapsed timer updates once per second and must not reflow its neighbours &mdash; tabular figures, fixed width.</div>
+        </div>
+      </div>
+
+      <!-- background motion -->
+      <div data-magic="1" style="position:relative; padding:5px; border-radius:22px; background:rgba(245,243,255,0.035); border:1px solid rgba(245,243,255,0.07); transition:border-color 600ms cubic-bezier(0.32,0.72,0,1);">
+        <div style="position:relative; border-radius:17px; background:#12101F; box-shadow:inset 0 1px 0 rgba(245,243,255,0.06); padding:24px; display:flex; flex-direction:column; gap:16px;">
+          <div style="display:flex; align-items:center; gap:10px;"><i class="ph-light ph-sparkle" style="font-size:17px; color:#B9AEF9;"></i><span style="font-size:15px; font-weight:500;">Living background &mdash; exact values</span></div>
+          <p style="margin:0; font-size:12px; color:#8B84B8; line-height:1.55;">Two layers, both randomised at launch so no two sessions look alike, and both rendered <b style="color:#9A93C4; font-weight:400;">inside the app window as well as behind it</b>. Neither layer is driven by the pointer.</p>
+          <div style="display:flex; flex-direction:column; font-size:12px;">
+            <div style="display:flex; gap:14px; padding:7px 0; border-bottom:1px solid rgba(245,243,255,0.05);"><span style="width:158px; color:#9A93C4;">Aurora blobs</span><span style="font-family:'Geist Mono',monospace; color:#D3CCFF;">3 per surface, blur 54&ndash;110px</span></div>
+            <div style="display:flex; gap:14px; padding:7px 0; border-bottom:1px solid rgba(245,243,255,0.05);"><span style="width:158px; color:#9A93C4;">&hellip; alpha</span><span style="font-family:'Geist Mono',monospace; color:#D3CCFF;">.22 accent &middot; .22 deep &middot; .07 ember</span></div>
+            <div style="display:flex; gap:14px; padding:7px 0; border-bottom:1px solid rgba(245,243,255,0.05);"><span style="width:158px; color:#9A93C4;">&hellip; cycle</span><span style="font-family:'Geist Mono',monospace; color:#D3CCFF;">random 46&ndash;92s, negative delay</span></div>
+            <div style="display:flex; gap:14px; padding:7px 0; border-bottom:1px solid rgba(245,243,255,0.05);"><span style="width:158px; color:#9A93C4;">&hellip; travel</span><span style="font-family:'Geist Mono',monospace; color:#D3CCFF;">&le;9% translate, scale 1&rarr;1.14</span></div>
+            <div style="display:flex; gap:14px; padding:7px 0; border-bottom:1px solid rgba(245,243,255,0.05);"><span style="width:158px; color:#9A93C4;">Star drift</span><span style="font-family:'Geist Mono',monospace; color:#D3CCFF;">2 layers, positions random per load</span></div>
+            <div style="display:flex; gap:14px; padding:7px 0; border-bottom:1px solid rgba(245,243,255,0.05);"><span style="width:158px; color:#9A93C4;">&hellip; speed</span><span style="font-family:'Geist Mono',monospace; color:#D3CCFF;">near 120&ndash;170s, far 190&ndash;260s</span></div>
+            <div style="display:flex; gap:14px; padding:7px 0; border-bottom:1px solid rgba(245,243,255,0.05);"><span style="width:158px; color:#9A93C4;">&hellip; dot size</span><span style="font-family:'Geist Mono',monospace; color:#D3CCFF;">1&ndash;2px, alpha .2&ndash;.85</span></div>
+            <div style="display:flex; gap:14px; padding:7px 0; border-bottom:1px solid rgba(245,243,255,0.05);"><span style="width:158px; color:#9A93C4;">Vignette</span><span style="font-family:'Geist Mono',monospace; color:#D3CCFF;">transparent 46% &rarr; black .55</span></div>
+            <div style="display:flex; gap:14px; padding:7px 0; border-bottom:1px solid rgba(245,243,255,0.05);"><span style="width:158px; color:#9A93C4;">Pointer spotlight</span><span style="font-family:'Geist Mono',monospace; color:#D3CCFF;">300px, accent .22, cards only</span></div>
+            <div style="display:flex; gap:14px; padding:7px 0; border-bottom:1px solid rgba(245,243,255,0.05);"><span style="width:158px; color:#9A93C4;">Pointer lean</span><span style="font-family:'Geist Mono',monospace; color:#D3CCFF;">&le;16px page, &le;9px in-window</span></div>
+            <div style="display:flex; gap:14px; padding:7px 0;"><span style="width:158px; color:#9A93C4;">Cost budget</span><span style="font-family:'Geist Mono',monospace; color:#D3CCFF;">transform + opacity only</span></div>
+          </div>
+          <div style="padding:13px 14px; border-radius:12px; background:rgba(139,124,246,0.06); border:1px solid rgba(139,124,246,0.16); font-size:12px; color:#D3CCFF; line-height:1.55;"><b style="font-weight:500;">Reduced motion keeps the colour.</b> Under <span style="font-family:'Geist Mono',monospace;">prefers-reduced-motion</span> &mdash; or the Settings toggle &mdash; every layer stays exactly where it is via <span style="font-family:'Geist Mono',monospace;">animation-play-state:paused</span>. Nothing is removed, nothing goes flat.</div>
+          <div style="padding:13px 14px; border-radius:12px; background:rgba(245,243,255,0.03); border:1px solid rgba(245,243,255,0.07); font-size:12px; color:#9A93C4; line-height:1.55;">In-window panels sit on <span style="font-family:'Geist Mono',monospace; color:#D3CCFF;">rgba(16,13,28,0.72&ndash;0.92)</span> so the aurora reads through them while text keeps its contrast. A fully opaque panel over the aurora is a bug.</div>
+        </div>
+      </div>
+
+      <!-- checklist -->
+      <div data-magic="1" style="position:relative; padding:5px; border-radius:22px; background:rgba(139,124,246,0.07); border:1px solid rgba(139,124,246,0.2); transition:border-color 600ms cubic-bezier(0.32,0.72,0,1);">
+        <div style="border-radius:17px; background:#12101F; box-shadow:inset 0 1px 0 rgba(245,243,255,0.06); padding:24px; display:flex; flex-direction:column; gap:16px;">
+          <div style="display:flex; align-items:center; gap:10px;"><i class="ph-light ph-list-checks" style="font-size:17px; color:#B9AEF9;"></i><span style="font-size:15px; font-weight:500;">Build order &amp; don't-forget</span></div>
+          <div style="display:flex; flex-direction:column; gap:11px; font-size:12.5px; color:#9A93C4; line-height:1.5;">
+            <div style="display:flex; gap:11px;"><span style="width:19px; height:19px; flex:none; border-radius:6px; background:rgba(139,124,246,0.16); color:#D3CCFF; font-family:'Geist Mono',monospace; font-size:10px; display:flex; align-items:center; justify-content:center;">1</span><span><b style="color:#F5F3FF; font-weight:500;">Chassis first.</b> Tray, core, titlebar, rail, empty pane. Nothing else until this matches 2a exactly.</span></div>
+            <div style="display:flex; gap:11px;"><span style="width:19px; height:19px; flex:none; border-radius:6px; background:rgba(139,124,246,0.16); color:#D3CCFF; font-family:'Geist Mono',monospace; font-size:10px; display:flex; align-items:center; justify-content:center;">2</span><span><b style="color:#F5F3FF; font-weight:500;">Hero card + its 3 states</b> (2f&ndash;2h) driven by one state enum. Stat tiles and activity log next.</span></div>
+            <div style="display:flex; gap:11px;"><span style="width:19px; height:19px; flex:none; border-radius:6px; background:rgba(139,124,246,0.16); color:#D3CCFF; font-family:'Geist Mono',monospace; font-size:10px; display:flex; align-items:center; justify-content:center;">3</span><span><b style="color:#F5F3FF; font-weight:500;">Tray + window chrome.</b> &minus; and &times; both hide; Quit only in the tray menu; tray icon reflects state.</span></div>
+            <div style="display:flex; gap:11px;"><span style="width:19px; height:19px; flex:none; border-radius:6px; background:rgba(139,124,246,0.16); color:#D3CCFF; font-family:'Geist Mono',monospace; font-size:10px; display:flex; align-items:center; justify-content:center;">4</span><span><b style="color:#F5F3FF; font-weight:500;">Single-slot toast.</b> Replace-in-place, 4s drain, hover freeze. Build the replace path before the visuals.</span></div>
+            <div style="display:flex; gap:11px;"><span style="width:19px; height:19px; flex:none; border-radius:6px; background:rgba(139,124,246,0.16); color:#D3CCFF; font-family:'Geist Mono',monospace; font-size:10px; display:flex; align-items:center; justify-content:center;">5</span><span><b style="color:#F5F3FF; font-weight:500;">Clips pane</b> with real thumbnails, length, size, and the three row actions. Empty state = the min-clip note only.</span></div>
+            <div style="display:flex; gap:11px;"><span style="width:19px; height:19px; flex:none; border-radius:6px; background:rgba(139,124,246,0.16); color:#D3CCFF; font-family:'Geist Mono',monospace; font-size:10px; display:flex; align-items:center; justify-content:center;">6</span><span><b style="color:#F5F3FF; font-weight:500;">Settings</b> with the key labels visible in mono under each field &mdash; they are part of the design, not a debug aid.</span></div>
+            <div style="display:flex; gap:11px;"><span style="width:19px; height:19px; flex:none; border-radius:6px; background:rgba(139,124,246,0.16); color:#D3CCFF; font-family:'Geist Mono',monospace; font-size:10px; display:flex; align-items:center; justify-content:center;">7</span><span><b style="color:#F5F3FF; font-weight:500;">Games, Macropad, mini overlay</b> last. Mini overlay never shows while idle.</span></div>
+          </div>
+          <span style="height:1px; background:linear-gradient(90deg, transparent, rgba(245,243,255,0.1) 32px, rgba(245,243,255,0.1) calc(100% - 32px), transparent);"></span>
+          <div style="display:flex; flex-direction:column; gap:9px; font-size:12.5px; color:#9A93C4; line-height:1.5;">
+            <div style="display:flex; gap:9px;"><i class="ph-light ph-warning" style="font-size:15px; color:#FFA3B4; margin-top:1px;"></i><span>No emoji, no gradient floods, no second accent hue. Ember is live-and-errors only.</span></div>
+            <div style="display:flex; gap:9px;"><i class="ph-light ph-warning" style="font-size:15px; color:#FFA3B4; margin-top:1px;"></i><span>Every card is two layers: tinted outer shell, darker inner core. A flat card is a bug.</span></div>
+            <div style="display:flex; gap:9px;"><i class="ph-light ph-warning" style="font-size:15px; color:#FFA3B4; margin-top:1px;"></i><span>Rules and dividers fade at both ends over 32&ndash;48px. No hard-stopped 1px greys.</span></div>
+            <div style="display:flex; gap:9px;"><i class="ph-light ph-warning" style="font-size:15px; color:#FFA3B4; margin-top:1px;"></i><span>Trailing icons on primary pills live in their own 26&ndash;28px circle, flush to the right padding.</span></div>
+            <div style="display:flex; gap:9px;"><i class="ph-light ph-warning" style="font-size:15px; color:#FFA3B4; margin-top:1px;"></i><span>The background is randomised per launch &mdash; never hard-code blob positions or star coordinates.</span></div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+</div>
+
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;showAnnotations&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:true,&quot;tsType&quot;:&quot;boolean&quot;,&quot;section&quot;:&quot;Spec sheet&quot;},&quot;freezeMotion&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:false,&quot;tsType&quot;:&quot;boolean&quot;,&quot;section&quot;:&quot;Living background&quot;},&quot;pointerSpotlight&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:true,&quot;tsType&quot;:&quot;boolean&quot;,&quot;section&quot;:&quot;Living background&quot;},&quot;starDensity&quot;:{&quot;editor&quot;:&quot;range&quot;,&quot;default&quot;:34,&quot;min&quot;:8,&quot;max&quot;:80,&quot;step&quot;:2,&quot;tsType&quot;:&quot;number&quot;,&quot;section&quot;:&quot;Living background&quot;}}">
+class Component extends DCLogic {
+  componentDidMount() {
+    document.querySelectorAll("[data-reveal]").forEach(n => {
+      n.style.opacity = "1";
+      n.style.transform = "none";
+    });
+    this.seedBackground();
+    this.bindPointer();
+    this.applyFreeze();
+  }
+
+  componentDidUpdate(prev) {
+    this.applyFreeze();
+    if (prev && prev.starDensity !== this.props.starDensity) this.seedBackground();
+  }
+
+  componentWillUnmount() {
+    if (this._onMove) window.removeEventListener("pointermove", this._onMove);
+  }
+
+  rnd(a, b) { return a + Math.random() * (b - a); }
+
+  // random star field, regenerated per load — never hard-coded
+  starField(count, maxSize, maxAlpha) {
+    const out = [];
+    for (let i = 0; i < count; i++) {
+      const size = (maxSize * this.rnd(0.65, 1)).toFixed(2);
+      const a = (maxAlpha * this.rnd(0.28, 1)).toFixed(2);
+      out.push("radial-gradient(" + size + "px " + size + "px at " +
+        this.rnd(0, 100).toFixed(2) + "% " + this.rnd(0, 100).toFixed(2) + "%, " +
+        "rgba(217,212,255," + a + "), transparent 60%)");
+    }
+    return out.join(", ");
+  }
+
+  seedBackground() {
+    const density = Math.max(6, Math.round(this.props.starDensity ?? 34));
+
+    document.querySelectorAll("[data-blob]").forEach(b => {
+      b.style.setProperty("--dx1", this.rnd(-9, 9).toFixed(1) + "%");
+      b.style.setProperty("--dy1", this.rnd(-7, 7).toFixed(1) + "%");
+      b.style.setProperty("--dx2", this.rnd(-9, 9).toFixed(1) + "%");
+      b.style.setProperty("--dy2", this.rnd(-7, 7).toFixed(1) + "%");
+      b.style.setProperty("--s0", this.rnd(0.96, 1.04).toFixed(3));
+      b.style.setProperty("--s1", this.rnd(1.08, 1.16).toFixed(3));
+      b.style.setProperty("--s2", this.rnd(1.0, 1.08).toFixed(3));
+      b.style.animationName = "nbBlob";
+      b.style.animationTimingFunction = "ease-in-out";
+      b.style.animationIterationCount = "infinite";
+      b.style.animationDuration = this.rnd(46, 92).toFixed(1) + "s";
+      b.style.animationDelay = "-" + this.rnd(0, 60).toFixed(1) + "s";
+      b.style.animationDirection = Math.random() < 0.5 ? "normal" : "alternate";
+      b.style.willChange = "transform";
+    });
+
+    document.querySelectorAll("[data-dust]").forEach(d => {
+      const far = d.getAttribute("data-dust") === "2";
+      const n = far ? Math.round(density * 0.75) : density;
+      d.style.backgroundImage = this.starField(n, far ? 1.3 : 1.9, far ? 0.5 : 0.85);
+      d.style.backgroundRepeat = "no-repeat";
+      d.style.setProperty("--tw0", far ? "0.32" : "0.5");
+      d.style.setProperty("--tw1", far ? "0.66" : "1");
+      d.style.animation =
+        "nbDust " + (far ? this.rnd(190, 260) : this.rnd(120, 170)).toFixed(0) + "s linear infinite, " +
+        "nbTwinkle " + this.rnd(7, 13).toFixed(1) + "s ease-in-out infinite";
+      d.style.animationDelay = "-" + this.rnd(0, 90).toFixed(1) + "s, -" + this.rnd(0, 8).toFixed(1) + "s";
+      d.style.willChange = "transform, opacity";
+    });
+  }
+
+  applyFreeze() {
+    const freeze = this.props.freezeMotion ?? false;
+    document.documentElement.setAttribute("data-freeze", freeze ? "1" : "0");
+  }
+
+  bindPointer() {
+    if (this._bound) return;
+    this._bound = true;
+    let raf = 0, ev = null;
+
+    const glowFor = card => {
+      let glow = card.querySelector(":scope > [data-glow]");
+      if (glow) return glow;
+      glow = document.createElement("span");
+      glow.setAttribute("data-glow", "1");
+      glow.setAttribute("aria-hidden", "true");
+      glow.style.cssText = "position:absolute; inset:0; z-index:0; pointer-events:none; opacity:0; " +
+        "border-radius:inherit; transition:opacity 520ms cubic-bezier(0.32,0.72,0,1); " +
+        "background:radial-gradient(300px circle at var(--mx,50%) var(--my,50%), rgba(139,124,246,0.22), transparent 70%);";
+      Array.from(card.children).forEach(ch => {
+        if (getComputedStyle(ch).position === "static") ch.style.position = "relative";
+      });
+      card.insertBefore(glow, card.firstChild);
+      return glow;
+    };
+
+    const apply = () => {
+      raf = 0;
+      if (!ev) return;
+      const on = this.props.pointerSpotlight ?? true;
+      const x = ev.clientX, y = ev.clientY;
+
+      document.querySelectorAll("[data-magic]").forEach(card => {
+        const glow = glowFor(card);
+        const r = card.getBoundingClientRect();
+        const inside = on && x >= r.left && x <= r.right && y >= r.top && y <= r.bottom;
+        if (inside) {
+          glow.style.setProperty("--mx", (x - r.left) + "px");
+          glow.style.setProperty("--my", (y - r.top) + "px");
+        }
+        glow.style.opacity = inside ? "1" : "0";
+        if (!card.dataset.restBorder) card.dataset.restBorder = getComputedStyle(card).borderColor;
+        card.style.borderColor = inside ? "rgba(185,174,249,0.42)" : card.dataset.restBorder;
+      });
+
+      if (on) {
+        document.querySelectorAll("[data-lean]").forEach(layer => {
+          const amt = parseFloat(layer.dataset.lean || "10");
+          const host = layer.parentElement;
+          if (!host) return;
+          const r = host.getBoundingClientRect();
+          if (!r.width || !r.height) return;
+          const nx = Math.max(-1, Math.min(1, (x - (r.left + r.width / 2)) / (r.width / 2)));
+          const ny = Math.max(-1, Math.min(1, (y - (r.top + r.height / 2)) / (r.height / 2)));
+          layer.style.transform = "translate3d(" + (nx * amt).toFixed(1) + "px," + (ny * amt * 0.5).toFixed(1) + "px,0)";
+        });
+      }
+    };
+
+    this._onMove = e => { ev = e; if (!raf) raf = requestAnimationFrame(apply); };
+    window.addEventListener("pointermove", this._onMove, { passive: true });
+  }
+
+  renderVals() {
+    return { ann: this.props.showAnnotations ?? true };
+  }
+}
+</script>
+</body>
+</html>

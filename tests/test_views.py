@@ -50,7 +50,7 @@ def settle(ms=250):
         time.sleep(0.005)
 
 
-VIEWS = ["dashboard", "recordings", "games", "activity", "macropad", "settings"]
+VIEWS = ["dashboard", "clips", "games", "activity", "macropad", "settings"]
 
 # Log something before the Activity view is ever shown, to prove replay works.
 app._log("[Monitor] test line before activity view was opened")
@@ -63,7 +63,12 @@ for view in VIEWS:
           callback_errors[0].strip().splitlines()[-1] if callback_errors else "clean")
     check(f"'{view}' title", gui.VIEW_TITLES[view] == app.bg.itemcget(app._topbar_title, "text"),
           app.bg.itemcget(app._topbar_title, "text"))
-    check(f"'{view}' nav highlighted", app._nav[view].get("active") is True)
+    # v3's rail carries five destinations; Activity is a dashboard block, not a
+    # rail entry, so it has no nav item to highlight (gui.RAIL_VIEWS).
+    if view in gui.RAIL_VIEWS:
+        check(f"'{view}' nav highlighted", app._nav[view].get("active") is True)
+    else:
+        check(f"'{view}' is not a rail destination", view not in app._nav)
 
 # Only the active view's items may be visible.
 app._show_view("games")
@@ -75,16 +80,22 @@ check("dashboard hidden when on Games", dash_hidden,
 # Round-trip back to the dashboard: the hero must respect its own state again,
 # not be blanket-shown by the tag toggle.
 app._set_hero_state("watching")
-app._show_view("recordings")
+app._show_view("clips")
 settle()
 app._show_view("dashboard")
 settle()
 check("timer stays hidden when not recording",
       app.bg.itemcget(app.timer_label_id, "state") == "hidden",
       app.bg.itemcget(app.timer_label_id, "state"))
-check("pause stays hidden when not recording",
-      app.bg.itemcget(app._pause_btn_win, "state") == "hidden",
+# v3 keeps the secondary button visible in every hero state and relabels it
+# instead of hiding it ("Pause monitoring" while watching, "Stop & save" while
+# paused, "Connection settings" while disconnected). What must survive the view
+# round-trip is that the label still matches the state.
+check("secondary button stays visible when not recording",
+      app.bg.itemcget(app._pause_btn_win, "state") == "normal",
       app.bg.itemcget(app._pause_btn_win, "state"))
+check("secondary button relabelled for 'watching'",
+      app.pause_btn.cget("text") == "Pause monitoring", app.pause_btn.cget("text"))
 
 app._current_game = "Test Game"
 app._set_hero_state("recording")
@@ -189,9 +200,51 @@ app._show_view("dashboard")
 app._relayout_grid([dict(it) for it in gui.DEFAULT_GRID])
 settle(120)
 
+
+# ---- v3 hero: one enum drives all four states (frames 2a, 2f-2h) ----
+# Each state must swap the eyebrow, the tint and BOTH button bindings, and only
+# recording/paused may show the readouts.
+HERO_EXPECT = {
+    "disconnected": ("Retry now", "Connection settings", False),
+    "watching":     ("Record anyway", "Pause monitoring", False),
+    "recording":    ("Stop recording", "Pause", True),
+    "paused":       ("Resume", "Stop & save", True),
+}
+for state, (primary, secondary, readouts) in HERO_EXPECT.items():
+    app._set_hero_state(state)
+    settle(40)
+    check(f"hero '{state}' primary action", app.record_toggle_btn.cget("text") == primary,
+          app.record_toggle_btn.cget("text"))
+    check(f"hero '{state}' secondary action", app.pause_btn.cget("text") == secondary,
+          app.pause_btn.cget("text"))
+    shown = app.bg.itemcget(app.timer_label_id, "state") == "normal"
+    check(f"hero '{state}' readouts {'shown' if readouts else 'hidden'}", shown == readouts)
+
+# Ember leads on exactly one state - the spec is explicit about it.
+app._set_hero_state("disconnected")
+check("ember leads only on disconnected",
+      app.record_toggle_btn.cget("border_color") == gui.EMBER
+      or gui.dv.HERO_STATES["disconnected"]["tint"] == gui.EMBER)
+check("recording is accent-tinted, not ember",
+      gui.dv.HERO_STATES["recording"]["tint"] == gui.ACCENT)
+
+# Bitrate is derived from two real samples, never invented.
+app._bitrate_sample = None
+app._update_bitrate(1000, 1_000_000)
+check("bitrate blank after one sample",
+      app.bg.itemcget(app._readouts["bitrate"][1], "text") == "--",
+      app.bg.itemcget(app._readouts["bitrate"][1], "text"))
+app._update_bitrate(2000, 2_775_000)      # +1.775 MB in 1.0s -> 14.2 Mb/s
+check("bitrate computed from the delta",
+      app.bg.itemcget(app._readouts["bitrate"][1], "text") == "14.2 Mb/s",
+      app.bg.itemcget(app._readouts["bitrate"][1], "text"))
+app._update_bitrate(2100, 2_775_000)      # too short an interval to mean anything
+check("bitrate ignores a sub-500ms interval",
+      app.bg.itemcget(app._readouts["bitrate"][1], "text") == "14.2 Mb/s")
+
 passed_all = all(p for _, p, _ in results)
 for name, passed, detail in results:
-    print(f"{'PASS' if passed else 'FAIL'}  {name:<38} {detail}")
+    print(f"{'PASS' if passed else 'FAIL'}  {name:<44} {detail}")
 print(f"\n{'ALL PASS' if passed_all else 'FAILURES PRESENT'} ({len(results)} checks)")
 
 app.root.destroy()

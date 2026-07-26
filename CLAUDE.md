@@ -42,6 +42,7 @@ and `RESOURCE_DIR` (`sys._MEIPASS` when frozen) only for bundled read-only asset
 | `obsauto/config.py` | `load_config()`, `save_config()` | Config persistence |
 | `obsauto/paths.py` | `APP_DIR`, `RESOURCE_DIR` | Dev vs. frozen-onefile path resolution |
 | `obsauto/app_log.py` | `setup_logging()`, `log_to_file()` | File logging (works under silent `pythonw`) |
+| `obsauto/design_v3.py` | `COLORS`, `CONFIG_MAP`, `over()` | UI **v3** design contract as code — see below. Not yet consumed by `gui.py` |
 | `obsauto/tray_app.py`, `theme_art.py`, `icon_art.py` | — | Tray icon + generated icon/theme art |
 
 Most-connected hubs (start here when orienting): `AppWindow`, `OBSClient`, `Monitor`, `Classifier`.
@@ -82,6 +83,62 @@ and a mock keypad that does nothing would be a lie.
 
 ⚠️ Don't put fabricated numbers in the UI — the Games badge reads the classifier
 (`_game_count()`) and returns `None` (no badge) rather than inventing a count.
+
+## UI v3 — dashboard built, other panes still v2 (2026-07-26)
+
+**Steps 1–2 of the v3 build order are done**: palette, geometry, backdrop, titlebar, rail, pane
+header (frame 2a) and the hero card with its four states (2a, 2f–2h), plus the stat tiles and
+activity header. Clips / Games / Macropad / Settings are **still v2's**, and the toast, tray
+menu and mini overlay don't exist. Full state and next actions: `CURSOR-PROMPT.md`.
+
+**The hero is one enum.** `_set_hero_state()` owns the eyebrow, tint, both button labels *and*
+both button bindings for `disconnected | watching | recording | paused` (v2's `"offline"` was
+renamed). `_poll_obs_status()` deliberately no longer touches button labels — only enablement —
+so there is exactly one place the state is expressed. Recording is **accent**, not red: v3 is a
+two-hue system and ember leads only on a real disconnection.
+
+⚠️ **Bitrate is derived, never drawn in.** `_update_bitrate()` computes it from the byte and
+duration delta between successive `GetRecordStatus` polls and renders **nothing** until it has
+two samples ≥500ms apart. Three frame elements were dropped rather than faked for the same
+reason: the "Mark clip" button (no backend), and the `Auto-culled` / `Idle pauses` tiles (no
+counters in `Monitor`).
+
+What changed structurally: the titlebar is now full-width (h46) with the rail hanging beneath
+it (v2 had a full-height rail and a content-column-only topbar), the window is 1280×808, and
+`recordings` was renamed `clips`. `RAIL_VIEWS` is the five rail destinations — a **subset** of
+the views, since v3 has no standalone Activity page.
+
+Three things worth knowing before touching the chrome:
+- **Fonts are probed, not assumed** (`dv.resolve_fonts`). "Segoe UI Variable" is three
+  *optical-size* families, Tk truncates family names at 31 chars, and Cascadia Mono isn't
+  installed here (falls back to Consolas). Font sizes are passed **negative** = pixels,
+  because the spec's type scale is CSS px and the layout geometry is in the same units.
+- **Icons are Segoe Fluent Icons**, not Phosphor (which isn't installed). `ICON_GLYPHS`
+  translates the spec's roles; every codepoint was verified by rendering it.
+- **The backdrop is generated once per launch** from a random seed
+  (`theme_art.generate_backdrop_v3`, ~66ms). Frame pacing stayed at p50 16.1ms despite the
+  bigger window.
+
+Everything needed to build the rest:
+
+- `design/ui-v3/` — the Claude Design mockup verbatim, plus **`BUILD-SPEC.md`** (section 05,
+  "the contract" — the authority) and **`FRAMES.md`** (frames 2a–2k).
+- `obsauto/design_v3.py` — that contract as code: the Nebula Deep palette, geometry, type
+  scale, icon legend, config map, hero-state enum. `over()` composites an alpha to a flat hex,
+  since canvas items have none. `tests/test_design_v3.py` (33 checks, no GUI needed) parses
+  `BUILD-SPEC.md` back and fails if the two drift.
+- **`CURSOR-HANDOFF.md`** — the full brief, including three places v3 collides with this repo.
+
+The collisions, short form (long form in the handoff):
+1. The spec's **living background** (aurora drift, star drift, pointer spotlight) is a browser
+   compositor idiom and is **fatal here** — see "never animate the canvas per-frame" below.
+   Resolution: render it **once at launch from a random seed**, which is what "randomised per
+   launch, no two sessions alike" actually asked for. `BACKGROUND_MOTION_UNUSED` in
+   `design_v3.py` quarantines the motion values; the test fails if `gui.py` reads them.
+2. Most numbers in the frames are **mockup filler** (bitrate, auto-culled, idle pauses, and a
+   whole connected macropad with an HID id). Build the source or omit the element.
+3. v3 wants a **resizable** window (1280×808, min 1080×700) against today's fixed-pixel
+   `ScaledCanvas`. Open decision — handoff §2.4 recommends keeping fixed-pixel.
 
 ## Config (`config.json`)
 - OBS: `obs_host` localhost, `obs_port` 4455, `obs_password` empty (obs-websocket v5)
@@ -165,6 +222,7 @@ this window. `tests/test_frame_pacing.py` fails if a per-frame timer comes back.
   python tests/test_views.py           # every tab opens; modular layout reorders + persists
   python tests/test_list_views.py      # Recordings/Games actually populate (real mainloop)
   python tests/test_frame_pacing.py    # visible-window frame budget (briefly shows the window)
+  python tests/test_design_v3.py       # v3 contract vs design/ui-v3/BUILD-SPEC.md (no GUI)
   ```
   ⚠️ Anything async **must** be tested under a real `mainloop()`. Tk refuses a cross-thread
   `root.after()` when driven by `update()`-pumping, and `_ui()` swallows that — so an

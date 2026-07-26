@@ -55,13 +55,13 @@ def labels(frame):
     return found
 
 
-def open_recordings():
-    app._show_view("recordings")
-    app.root.after(2000, capture_recordings)
+def open_clips():
+    app._show_view("clips")
+    app.root.after(2000, capture_clips)
 
 
-def capture_recordings():
-    captured["recordings"] = labels(app._rec_list)
+def capture_clips():
+    captured["clips"] = labels(app._rec_list)
     app._show_view("games")
     app.root.after(1500, capture_games)
 
@@ -71,17 +71,17 @@ def capture_games():
     app.root.quit()
 
 
-app.root.after(50, open_recordings)
+app.root.after(50, open_clips)
 app.root.after(15000, app.root.quit)  # safety net
 app.root.mainloop()
 
-rec = captured.get("recordings", [])
+rec = captured.get("clips", [])
 games = captured.get("games", [])
 
-check("recordings list resolved", rec and not any("Scanning" in r for r in rec),
+check("clips list resolved", rec and not any("Scanning" in r for r in rec),
       f"{len(rec)} labels")
 # Either real folders or an honest empty state - never a stuck spinner.
-check("recordings shows folders or an empty state",
+check("clips shows folders or an empty state",
       any("clip" in r for r in rec) or any("No per-game folders" in r for r in rec),
       rec[0][:60] if rec else "(nothing)")
 check("games list resolved", bool(games), f"{len(games)} labels")

@@ -7,6 +7,7 @@ import shutil
 import threading
 import time
 import tkinter as tk
+import tkinter.font as tkfont
 import tkinter.messagebox
 import traceback
 
@@ -14,11 +15,12 @@ import customtkinter as ctk
 from PIL import Image, ImageDraw, ImageFilter
 
 from . import classifier as classifier_module
+from . import design_v3 as dv
 from .obs_client import OBSClient, OBSError
 from .monitor import Monitor, ensure_obs_running, is_obs_running
 from .app_log import log_to_file
 from .theme_art import (
-    generate_nebula, make_accent_glow, make_glass_tile, make_solid_tile, to_photo,
+    generate_backdrop_v3, make_glass_tile, make_solid_tile, to_photo,
 )
 from .icon_art import generate_animation_frames, render_frame
 from . import hotkey
@@ -35,69 +37,143 @@ ICON_PATH = os.path.join(RESOURCE_DIR, "nebula_icon.ico")
 # mean something (green=go, red=recording/stop, amber=paused), and "tinted"
 # fills - a dark wash of a color with the bright color as text - instead of
 # loud solid fills, so the whole surface stays calm.
-BASE_BG = "#0F0C1A"
-CARD_TINT = "#1B1631"
-CARD_SURFACE = "#191430"   # what the glass card *looks* like once composited - used as widget bg_color so rounded widget corners blend in
-CARD_BORDER = "#8B7CF6"
-SURFACE = "#241E44"
-SURFACE_HOVER = "#332B5C"
-EDGE = "#39325F"
-ACCENT = "#8B7CF6"
+# ---- v3 palette ("Nebula Deep") ----
+# Every value below now comes from design_v3, which is section 05 of the v3
+# mockup as code; tests/test_design_v3.py checks it against the written spec.
+# Several of these are unchanged from v2 - the Aurora build already drew on the
+# same design language, so ACCENT, EMBER, TEXT, MUTED and SURFACE all survived
+# the redesign intact. What changed is the ground, the card layering, and the
+# extra hues.
+#
+# "No other hues exist in this app - log tag colours stay as LOG_TAG_COLORS in
+# gui.py." So v2's GREEN / AMBER / TEAL / BLUE / PINK are gone from the chrome:
+# connection state is accent-vs-ember now, not green-vs-red. The log tags below
+# are the one sanctioned exception, named as such by the spec itself.
+BASE_BG = dv.GROUND               # #100D1C window ground
+PANEL = dv.PANEL                  # #12101F panel base
+CARD_CORE = dv.CARD_CORE          # #181428 the darker *inner* of a card's two layers
+CARD_TINT = dv.over(dv.ACCENT, 0.10, dv.CARD_CORE)   # the tinted *outer* shell
+CARD_SURFACE = CARD_CORE   # what the glass card *looks* like once composited - used as widget bg_color so rounded widget corners blend in
+CARD_BORDER = dv.ACCENT
+SURFACE = dv.RAISED               # #241E44 raised surface, keycaps
+SURFACE_HOVER = dv.over(dv.ACCENT, 0.16, dv.RAISED)
+EDGE = dv.hairline(dv.PANEL)      # never a solid grey - see the spec's hairline rule
+ACCENT = dv.ACCENT
 ACCENT_HOVER = "#9D91F8"
-ACCENT_TINT = "#292254"
-ACCENT_LIGHT = "#B9AEF9"   # brighter violet for icons/links on the nav rail
-NAV_ACTIVE_TEXT = "#E9E5FF"
-TEXT_SOFT = "#C9C3E8"       # secondary body text (a touch dimmer than TEXT)
-GREEN = "#3DDC84"
-GREEN_LIGHT = "#8DE9B4"
-GREEN_TINT = "#14382B"
-GREEN_TINT_HOVER = "#1B4A38"
-GREEN_HOVER = GREEN_TINT_HOVER  # legacy alias
-RED = "#FF5C7A"
+ACCENT_TINT = dv.over(dv.ACCENT, 0.16, dv.GROUND)
+ACCENT_LIGHT = dv.ACCENT_TEXT     # #B9AEF9 accent text / icons on dark
+NAV_ACTIVE_TEXT = dv.TEXT
+TEXT_SOFT = dv.TEXT_TERTIARY      # #8B84B8 tertiary / captions
+EMBER = dv.EMBER                  # #FF5C7A live + errors ONLY
+RED = EMBER                       # legacy alias - same hue, v3 name is ember
 RED_LIGHT = "#FF7D96"
-RED_TINT = "#3B1D2A"
-RED_TINT_HOVER = "#4C2434"
+RED_TINT = dv.over(dv.EMBER, 0.16, dv.CARD_CORE)
+RED_TINT_HOVER = dv.over(dv.EMBER, 0.22, dv.CARD_CORE)
 RED_HOVER = RED_TINT_HOVER  # legacy alias
-RED_DIM = "#5A2836"
-AMBER = "#F5A623"
-AMBER_LIGHT = "#F5B84E"
-AMBER_TINT = "#3A2D14"
-TEAL = "#4FD1C5"            # accent hues used by the stat tiles / log tags
-BLUE = "#7FB7F0"
-PINK = "#F0A6CA"
-MUTED = "#9A93C4"
-FAINT = "#6E6896"
-TEXT = "#F5F3FF"
-LOG_TINT = "#120E22"
-LOG_BG = "#141024"
+RED_DIM = dv.over(dv.EMBER, 0.40, dv.CARD_CORE)
+MUTED = dv.TEXT_SECONDARY         # #9A93C4
+FAINT = dv.TEXT_EYEBROW           # #736BA4 eyebrow labels, mono meta
+TEXT = dv.TEXT                    # #F5F3FF
+LOG_TINT = dv.over(dv.GROUND, 0.80, dv.PANEL)
+LOG_BG = dv.PANEL
+
+# v2's semantic hues collapse onto v3's two-hue system rather than being
+# deleted, so every existing call site adopts the new palette in one move
+# instead of being rewritten twice. The mapping follows the spec's own
+# assignment ("start/stop -> ember, pause/resume -> accent, error -> ember"):
+# anything that used to mean go/steady/informational becomes the accent, and
+# only live-and-errors keeps the ember.
+GREEN = ACCENT
+GREEN_LIGHT = ACCENT_LIGHT
+GREEN_TINT = dv.over(dv.ACCENT, 0.12, dv.CARD_CORE)
+GREEN_TINT_HOVER = dv.over(dv.ACCENT, 0.18, dv.CARD_CORE)
+GREEN_HOVER = GREEN_TINT_HOVER  # legacy alias
+AMBER = ACCENT
+AMBER_LIGHT = ACCENT_LIGHT
+AMBER_TINT = GREEN_TINT
+TEAL = ACCENT
+BLUE = ACCENT
+PINK = ACCENT
 
 # Tag colors for the activity log - each subsystem gets its own hue so a
 # glance at the log's left edge tells you who's talking.
+#
+# These are the ONE place extra hues survive v3, and the spec names them as the
+# exception in the same breath as banning everything else: "No other hues exist
+# in this app - log tag colours stay as LOG_TAG_COLORS in gui.py." So they are
+# written as literals rather than through the aliases above, which all collapse
+# to the accent - routing them through those would flatten the log to a single
+# colour and lose exactly the affordance the tags exist for.
 LOG_TAG_COLORS = {
-    "OBS": ACCENT,
+    "OBS": "#8B7CF6",
     "Monitor": "#7FB7F0",
     "Steam": "#4FD1C5",
-    "Manual": AMBER,
+    "Manual": "#F5A623",
     "Classifier": "#F0A6CA",
-    "Audio": GREEN,
+    "Audio": "#3DDC84",
 }
 
-# Aurora shell: a full app window with a left nav rail and a main content
-# column, instead of the old single 860x660 card stack. Everything below is in
-# base design units (multiplied up by self.scale on high-DPI monitors).
-WIDTH, HEIGHT = 1180, 760
-SIDEBAR_W = 236            # left nav rail width
-TOPBAR_HEIGHT = 56         # content-column header strip
-TITLEBAR_HEIGHT = 56       # draggable region height (top bar); kept name for _start_move
-MARGIN = 24                # gutter inside the content column
+# ---- icons ----------------------------------------------------------------
+# The v3 spec specifies Phosphor Light throughout. Phosphor is a webfont and
+# isn't installed, so rather than bundle a TTF or hand-draw two dozen glyphs,
+# these map the spec's icon *roles* onto Segoe Fluent Icons - Windows 11's own
+# icon font, already present on every target machine, and a light single-weight
+# line set that sits closely with what Phosphor Light looks like.
+#
+# Keyed by the Phosphor name so design_v3.ICONS stays the single source of
+# truth for "which icon means what": look the role up there, then translate
+# here. Swapping in a real Phosphor TTF later is a change to this table only.
+#
+# Every codepoint below was verified by rendering it, not taken from memory.
+ICON_FONT = "Segoe Fluent Icons"
+_ICON_CODEPOINTS = {
+    "broadcast": 0xE704,            # Dashboard - signal waves
+    "film-strip": 0xE714,           # Clips
+    "game-controller": 0xE7FC,      # Games
+    "keyboard": 0xE765,             # Macropad
+    "sliders-horizontal": 0xE9E9,   # Settings
+    "record": 0xE7C8,               # filled circle
+    "pause": 0xE769,
+    "play": 0xE768,
+    "scissors": 0xE8C6,             # mark clip
+    "stack-simple": 0xE81E,         # scene
+    "plugs": 0xEB55,                # disconnected
+    "plugs-connected": 0xF384,      # connected
+    "hard-drives": 0xEDA2,          # storage
+    "timer": 0xE916,                # idle
+    "moon": 0xE708,                 # idle pause
+    "command": 0xE943,              # hotkey
+    "steam-logo": 0xE72C,           # rescan - Fluent has no Steam mark; refresh reads right
+    "folder-open": 0xE8DA,          # reveal
+    "trash": 0xE74D,                # delete clip
+    "arrows-out-simple": 0xE740,    # show window
+    "arrows-in-simple": 0xE73F,     # collapse mini
+    "sign-out": 0xE7E8,             # quit (tray only)
+    "minus": 0xE738,                # hide to tray
+    "x": 0xE711,                    # hide to tray
+    "square": 0xE73B,               # stop - one of the two sanctioned Fill glyphs
+}
+ICON_GLYPHS = {name: chr(cp) for name, cp in _ICON_CODEPOINTS.items()}
 
-# ---- living backdrop tuning (all in base design units) ----
-DRIFT = 14          # how far the nebula may wander; it's rendered this much
-                    # larger on every side so an edge is never exposed
-GLOW_SIZE = 460     # diameter of the drifting violet accent bloom
-STAR_COUNT = 22
-STAR_DIM = "#2E2A52"    # star colour at the bottom of its twinkle
-STAR_BRIGHT = "#D9D4FF"  # ...and at the top
+
+
+def icon(role, size=16):
+    """(glyph, font) for a v3 icon role, e.g. icon("dashboard")."""
+    return ICON_GLYPHS[dv.ICONS[role]], (ICON_FONT, -int(round(size)))
+
+# v3 chassis. All base design units - self.scale multiplies them on high-DPI
+# monitors, exactly as before (see nebula-dpi-scaling). Values come from
+# design_v3, i.e. section 05 of the mockup.
+#
+# The structural change from the Aurora shell: the titlebar now spans the FULL
+# window width and the nav rail hangs beneath it, where v2 had the rail running
+# the full height with the topbar only over the content column. Frame 2a.
+WIDTH, HEIGHT = dv.WIDTH, dv.HEIGHT          # 1280 x 808
+SIDEBAR_W = dv.RAIL_W                        # 232
+TITLEBAR_HEIGHT = dv.TITLEBAR_H              # 46, full width; also the drag region
+TOPBAR_HEIGHT = dv.PANE_HEADER_H             # 62, the per-pane header inside the content column
+MARGIN = dv.CONTENT_PAD                      # 26 gutter inside the content column
+CONTENT_Y0 = TITLEBAR_HEIGHT                 # where the rail and content column start
 # Timer pacing. The decorative canvas animation is gone entirely (see the long
 # note above _glass in AppWindow); ICON_TICK_MS paces the one remaining
 # window-level animation, and IDLE_TICK_MS is how often a parked timer checks
@@ -105,9 +181,16 @@ STAR_BRIGHT = "#D9D4FF"  # ...and at the top
 ICON_TICK_MS = 400
 IDLE_TICK_MS = 500
 
+# The rail's five destinations (frame 2a). Note this is a SUBSET of the views:
+# v3 has no standalone Activity page - the activity log is a dashboard block -
+# but the view is still registered and still mirrors the log, because _log()
+# writes to both consoles. Folding it away entirely belongs with the step-2
+# dashboard rewrite; until then it is simply not reachable from the rail.
+RAIL_VIEWS = list(dv.PANES)
+
 VIEW_TITLES = {
     "dashboard": "Dashboard",
-    "recordings": "Recordings",
+    "clips": "Clips",
     "games": "Games",
     "activity": "Activity",
     "macropad": "Macropad",
@@ -331,7 +414,8 @@ class AppWindow:
         self._abort_connect = False   # set when monitoring is stopped mid-connect
         self._monitoring_on = False   # reflected in the sidebar toggle
         self._obs_connected = False   # reflected in the sidebar OBS card
-        self._hero_state = "offline"  # offline | watching | recording | paused
+        self._hero_state = "disconnected"  # disconnected | watching | recording | paused
+        self._bitrate_sample = None   # (duration_ms, bytes) from the previous poll
         self._current_game = None
         self._eq_bars = []            # scene-preview equaliser bar canvas ids
         self._log_lines = []          # replayed into the Activity view when shown
@@ -373,6 +457,12 @@ class AppWindow:
         # ONLY thing that sizes them - so text scales in lockstep with the
         # layout on every monitor.
         self.root.tk.call("tk", "scaling", 96.0 / 72.0)
+        # Resolve the v3 type stacks against the families Tk can actually see.
+        # "Segoe UI Variable" is three optical-size families, not one, and Tk
+        # truncates family names at 31 chars - so the names have to be probed,
+        # not assumed. Cascadia Mono may not be installed at all; the numeric
+        # face falls back to Consolas so the timer keeps its tabular figures.
+        dv.resolve_fonts(tkfont.families())
         # Root bg matched to the nebula's base tone: embedded CTk widgets
         # draw their rounded corners against their parent's color, so the
         # closer this is to the backdrop, the less their corners "fringe".
@@ -403,11 +493,18 @@ class AppWindow:
         apply_rounded_corners(self.root)
 
         # ---- backdrop ----
-        # A nebula, a violet bloom behind the glass panels (they're translucent,
-        # so it glows *through* them), and a seeded scatter of stars. All three
-        # used to animate; they're now static, because on this window any canvas
-        # change costs a full composite (see the note above _glass).
-        self.nebula = generate_nebula(self._S(WIDTH + DRIFT * 2), self._S(HEIGHT + DRIFT * 2))
+        # The v3 "living background": three blurred aurora blobs, two star
+        # layers and a vignette - generated ONCE here from a seed drawn at
+        # launch, so no two sessions look alike (which is what the spec actually
+        # requires) without a repaint loop, which on this window would cost a
+        # full composite per frame. See CURSOR-HANDOFF.md 2.1.
+        #
+        # It also replaces v2's three separate layers (nebula image + a drifting
+        # accent bloom + canvas star ovals) with one image. The bloom in
+        # particular was the one layer NOT captured by self._composite, so every
+        # unit of its alpha was a unit of mismatch around embedded widgets'
+        # rounded corners; baking it in removes that error entirely.
+        self.nebula = generate_backdrop_v3(self._S(WIDTH), self._S(HEIGHT))
         self.bg = ScaledCanvas(
             tk.Canvas(self.root, width=self._S(WIDTH), height=self._S(HEIGHT),
                       highlightthickness=0, bd=0),
@@ -417,33 +514,7 @@ class AppWindow:
 
         bg_photo = to_photo(self.nebula)
         self._images.append(bg_photo)
-        self._backdrop_id = self.bg.create_image(-DRIFT, -DRIFT, anchor="nw", image=bg_photo)
-
-        # A single violet bloom, centred behind the panels. Deliberately faint:
-        # this is the one layer NOT in the composite that widgets sample their
-        # bg_color from, so every unit of alpha here is a unit of mismatch around
-        # a widget's rounded corners. The accent punch comes from the nebula's
-        # own violet blobs, which the composite does capture exactly.
-        glow_photo = to_photo(make_accent_glow(self._S(GLOW_SIZE), ACCENT, 16))
-        self._images.append(glow_photo)
-        self._glow_id = self.bg.create_image(
-            WIDTH / 2 - GLOW_SIZE / 2, HEIGHT / 2 - GLOW_SIZE / 2,
-            anchor="nw", image=glow_photo)
-
-        # Seeded so the sky is identical every launch (a different one each start
-        # would read as flicker, not atmosphere - same rule as the nebula). Each
-        # star gets its own fixed brightness so the field still has depth now
-        # that they no longer twinkle.
-        self._stars = []
-        star_rng = random.Random(11)
-        for _ in range(STAR_COUNT):
-            sx = star_rng.uniform(8, WIDTH - 8)
-            sy = star_rng.uniform(8, HEIGHT - 8)
-            r = star_rng.choice((0.9, 1.2, 1.6))
-            star = self.bg.create_oval(
-                sx - r, sy - r, sx + r, sy + r, outline="",
-                fill=_blend_hex(STAR_DIM, STAR_BRIGHT, star_rng.uniform(0.15, 0.95)))
-            self._stars.append(star)
+        self._backdrop_id = self.bg.create_image(0, 0, anchor="nw", image=bg_photo)
 
         # Truth source for widget corner-blending. An embedded CTk widget paints
         # the area its rounded corners cut away with a single flat bg_color, so
@@ -452,15 +523,12 @@ class AppWindow:
         # broke once the glass tiles gained their sheen gradient. Instead keep a
         # real composite - the nebula exactly as it sits behind the window, with
         # each glass panel pasted in as it's drawn - and sample that.
-        drift_px = self._S(DRIFT)
-        self._composite = self.nebula.crop((
-            drift_px, drift_px,
-            drift_px + self._S(WIDTH), drift_px + self._S(HEIGHT),
-        )).convert("RGB")
+        self._composite = self.nebula.convert("RGB")
 
         self.bg.bind("<ButtonPress-1>", self._start_move)
         self.bg.bind("<B1-Motion>", self._on_move)
 
+        self._build_titlebar()
         self._build_sidebar()
         self._build_topbar()
         self._build_views()
@@ -578,7 +646,7 @@ class AppWindow:
 
     # ---- layout ----
     def _make_circle_button(self, cx, cy, radius, base_color, hover_color, symbol, command,
-                            glyph_color=FAINT, hover_glyph=TEXT):
+                            glyph_color=FAINT, hover_glyph=TEXT, font=None):
         """A genuinely circular button drawn straight on the canvas - the
         embedded CTkButton version left a visible square bounding box behind
         its rounded shape (same underlying issue as the "transparent frame"
@@ -588,7 +656,8 @@ class AppWindow:
         circle_id = self.bg.create_oval(
             cx - radius, cy - radius, cx + radius, cy + radius, fill=base_color, outline="",
         )
-        text_id = self.bg.create_text(cx, cy, text=symbol, fill=glyph_color, font=("Segoe UI", 11))
+        text_id = self.bg.create_text(cx, cy, text=symbol, fill=glyph_color,
+                                      font=font or dv.type_font("meta"))
 
         def on_enter(_event):
             self.bg.itemconfigure(circle_id, fill=hover_color)
@@ -622,42 +691,75 @@ class AppWindow:
         self._images.append(photo)
         self.bg.create_image(cx - size / 2, cy - size / 2, anchor="nw", image=photo)
 
-    # ---- left nav rail ----
+    # ---- left nav rail (frame 2a) ----
+    # The v3 rail hangs *below* the full-width titlebar rather than running the
+    # whole window height, and its foot carries the storage card - the OBS
+    # connection readout and the monitoring toggle both moved up into the
+    # titlebar. Rail metrics: w 232, pad 16/12, item h 38, gap 3.
     def _build_sidebar(self):
-        # Faint divider between rail and content, drawn as a 1px line all the
-        # way down (the design's border-right on the sidebar).
-        self.bg.create_line(SIDEBAR_W, 0, SIDEBAR_W, HEIGHT, fill=EDGE, width=1)
+        # Faint divider between rail and content. A hairline, never a solid
+        # grey, and it fades at both ends like every other rule in the system.
+        self._fading_rule(SIDEBAR_W, CONTENT_Y0, HEIGHT - CONTENT_Y0, vertical=True)
 
-        # Brand: logo + wordmark + tagline.
-        self._draw_logo(38, 40, 26)
-        self.bg.create_text(60, 33, anchor="w", text="Nebula",
-                            fill=TEXT, font=("Segoe UI Semibold", 15))
-        self.bg.create_text(60, 50, anchor="w", text="auto-folder recorder",
-                            fill=FAINT, font=("Segoe UI", 10))
+        # Section eyebrow.
+        self.bg.create_text(dv.RAIL_PAD_X, CONTENT_Y0 + 22, anchor="w",
+                            text=self._track("Session"), fill=FAINT,
+                            font=dv.type_font("eyebrow"))
 
-        # Section label.
-        self.bg.create_text(28, 92, anchor="w", text="WORKSPACE",
-                            fill=FAINT, font=("Segoe UI", 9, "bold"))
-
-        # Nav items. Only Dashboard is wired in this pass; the rest render as
-        # calm, inactive destinations (the shell the design is built around).
         nav = [
-            ("▦", "Dashboard", "dashboard", None),
-            ("▷", "Recordings", "recordings", None),
-            ("◉", "Games", "games", self._game_count()),
-            ("∿", "Activity", "activity", None),
-            ("⌨", "Macropad", "macropad", None),
-            ("⚙", "Settings", "settings", None),
+            ("dashboard", "Dashboard", None),
+            ("clips", "Clips", None),
+            ("games", "Games", self._game_count()),
+            ("macropad", "Macropad", None),
+            ("settings", "Settings", None),
         ]
         self._nav = {}
-        y = 108
-        for glyph, label, view, badge in nav:
+        y = CONTENT_Y0 + 38
+        for view, label, badge in nav:
             self._nav[view] = self._nav_item(
-                12, y, SIDEBAR_W - 24, 40, glyph, label, view, badge)
-            y += 46
+                dv.RAIL_PAD_Y, y, SIDEBAR_W - dv.RAIL_PAD_Y * 2, dv.RAIL_ITEM_H,
+                dv.ICONS[view], label, view, badge)
+            y += dv.RAIL_ITEM_H + dv.RAIL_ITEM_GAP
 
-        # ---- bottom status stack (OBS connection + monitoring toggle) ----
+        # ---- storage card at the foot of the rail ----
         self._build_sidebar_status()
+
+    @staticmethod
+    def _track(text):
+        """Poor man's letter-spacing for eyebrow labels.
+
+        The spec gives eyebrows 0.22em tracking. Tk has no letter-spacing at
+        all, so the only way to express it is to space the characters out.
+        Word gaps get widened too, otherwise a tracked-out two-word label reads
+        as one run. Applied to eyebrows only - the one place the design leans
+        on it.
+        """
+        return "   ".join(" ".join(word) for word in text.upper().split())
+
+    def _fading_rule(self, a, b, length, vertical=False, fade=None):
+        """A 1px rule that fades to nothing at both ends.
+
+        "Rules and dividers fade at both ends over 32-48px. No hard-stopped 1px
+        greys." A canvas line can't have a gradient, so this is a 1px PIL strip
+        with an alpha ramp, drawn as an image.
+        """
+        fade = fade or dv.RULE_FADE[0]
+        span = max(1, int(length))
+        strip = Image.new("RGBA", (span, 1), (0, 0, 0, 0))
+        px = strip.load()
+        base_alpha = int(round(dv.HAIRLINE_ALPHA[1] * 255))
+        for i in range(span):
+            edge = min(i, span - 1 - i)
+            alpha = base_alpha if edge >= fade else int(base_alpha * (edge / float(fade)))
+            px[i, 0] = (*dv.HAIRLINE_RGB, alpha)
+        if vertical:
+            strip = strip.rotate(-90, expand=True)
+        strip = strip.resize(
+            (self._S(1), self._S(span)) if vertical else (self._S(span), self._S(1)),
+            Image.NEAREST)
+        photo = to_photo(strip)
+        self._images.append(photo)
+        return self.bg.create_image(a, b, anchor="nw", image=photo)
 
     def _game_count(self):
         """How many distinct games the classifier knows about - shown as the
@@ -677,20 +779,20 @@ class AppWindow:
         """One nav-rail destination. The active highlight is drawn up front and
         toggled by visibility, so switching views never has to re-render it."""
         cy = y + h / 2
-        tile = self._glass(x, y, w, h, tint=ACCENT, radius=10, tint_alpha=36,
+        tile = self._glass(x, y, w, h, tint=ACCENT, radius=dv.RADIUS_CONTROL, tint_alpha=36,
                            border_hex=ACCENT, border_alpha=0)
         bar = self.bg.create_rectangle(x, y + 9, x + 3, y + h - 9,
                                        fill=ACCENT, outline="")
-        icon = self.bg.create_text(x + 20, cy, anchor="w", text=glyph,
-                                   fill=MUTED, font=("Segoe UI Symbol", 15))
+        icon = self.bg.create_text(x + 18, cy, anchor="w", text=ICON_GLYPHS[glyph],
+                                   fill=MUTED, font=(ICON_FONT, -16))
         text = self.bg.create_text(x + 42, cy, anchor="w", text=label,
-                                   fill=MUTED, font=("Segoe UI", 13))
+                                   fill=MUTED, font=dv.type_font("body"))
         if badge:
-            bx = x + w - 34
-            self._glass(bx, cy - 9, 26, 18, tint=ACCENT, radius=8, tint_alpha=40,
+            bx = x + w - 36
+            self._glass(bx, cy - 9, 28, 18, tint=ACCENT, radius=7, tint_alpha=40,
                         border_hex=ACCENT, border_alpha=0)
-            self.bg.create_text(bx + 13, cy, text=badge, fill=ACCENT_LIGHT,
-                                font=("Segoe UI", 9, "bold"))
+            self.bg.create_text(bx + 14, cy, text=badge, fill=ACCENT_LIGHT,
+                                font=dv.font(10, 500))
 
         parts = {"tile": tile, "bar": bar, "icon": icon, "text": text}
         hit = self.bg.create_rectangle(x, y, x + w, y + h, fill="", outline="")
@@ -712,7 +814,7 @@ class AppWindow:
         self.bg.itemconfigure(parts["icon"], fill=ACCENT_LIGHT if active else MUTED)
         self.bg.itemconfigure(
             parts["text"], fill=NAV_ACTIVE_TEXT if active else MUTED,
-            font=("Segoe UI Semibold", 13) if active else ("Segoe UI", 13))
+            font=dv.font(13, 500) if active else dv.type_font("body"))
 
     def _nav_hover(self, parts, hovering):
         if parts.get("active"):
@@ -722,80 +824,168 @@ class AppWindow:
         self.bg.configure(cursor="hand2" if hovering else "")
 
     def _build_sidebar_status(self):
-        # OBS connection card, near the bottom of the rail.
-        cx, cw = 12, SIDEBAR_W - 24
-        oy = HEIGHT - 118
-        self._glass(cx, oy, cw, 50, tint=GREEN_TINT, radius=11, tint_alpha=90,
-                    border_hex=GREEN, border_alpha=45)
-        self._obs_card_dot = self.bg.create_oval(cx + 15, oy + 21, cx + 23, oy + 29,
-                                                fill=RED, outline="")
-        self._obs_card_title = self.bg.create_text(
-            cx + 34, oy + 19, anchor="w", text="OBS disconnected",
-            fill=RED_LIGHT, font=("Segoe UI Semibold", 12))
-        host = f"localhost:{self.config.get('obs_port', 4455)}"
-        self._obs_card_sub = self.bg.create_text(
-            cx + 34, oy + 33, anchor="w", text=host,
-            fill=FAINT, font=("Segoe UI", 10))
+        """The storage card at the foot of the rail (frame 2a).
 
-        # Monitoring toggle row - clickable, flips monitoring on/off (same
-        # action as the hotkey), with the bound key shown as a keycap.
-        my = HEIGHT - 60
-        self._mon_tile = self._glass(cx, my, cw, 44, tint=CARD_TINT, radius=11,
-                                     tint_alpha=110, border_hex=CARD_BORDER, border_alpha=30)
-        self._mon_icon = self.bg.create_text(cx + 16, my + 22, anchor="w", text="◉",
-                                            fill=ACCENT, font=("Segoe UI Symbol", 14))
-        self._mon_label = self.bg.create_text(cx + 36, my + 22, anchor="w",
-                                            text="Monitoring off", fill=TEXT_SOFT,
-                                            font=("Segoe UI", 12))
+        The OBS connection readout and the monitoring toggle used to live here;
+        in v3 both moved up into the full-width titlebar, and the rail foot
+        carries the recording root, a fill bar and the free/total figure. Every
+        number in it is real - see _apply_disk_stats. Until the first disk poll
+        returns, the bar and figure are simply absent rather than showing zeros.
+        """
+        cx, cw = dv.RAIL_PAD_Y, SIDEBAR_W - dv.RAIL_PAD_Y * 2
+        oy = HEIGHT - 92
+        self._glass(cx, oy, cw, 74, tint=CARD_TINT, radius=dv.RADIUS_TILE,
+                    tint_alpha=110, border_hex=CARD_BORDER, border_alpha=26)
+
+        self.bg.create_text(cx + 14, oy + 18, anchor="w",
+                            text=ICON_GLYPHS[dv.ICONS["storage"]],
+                            fill=ACCENT_LIGHT, font=(ICON_FONT, -13))
+        root_dir = self.config.get("recording_root", "") or "not set"
+        self._store_path = self.bg.create_text(
+            cx + 32, oy + 18, anchor="w", text=self._elide(root_dir, 22),
+            fill=TEXT_SOFT, font=dv.type_font("meta"))
+        self._store_pct = self.bg.create_text(
+            cx + cw - 14, oy + 18, anchor="e", text="",
+            fill=FAINT, font=dv.font(10.5, mono=True))
+
+        # Fill bar. Drawn as two flat rectangles rather than a widget: it
+        # changes at most once every five minutes, so it costs nothing.
+        bar_y, bar_h = oy + 34, 3
+        self.bg.create_rectangle(cx + 14, bar_y, cx + cw - 14, bar_y + bar_h,
+                                 fill=dv.over(dv.TEXT, 0.08, dv.CARD_CORE), outline="")
+        self._store_bar = self.bg.create_rectangle(
+            cx + 14, bar_y, cx + 14, bar_y + bar_h, fill=ACCENT, outline="")
+        self._store_bar_rect = (cx + 14, bar_y, cw - 28, bar_h)  # x0, y, full width, h
+
+        self._store_free = self.bg.create_text(
+            cx + 14, oy + 54, anchor="w", text="", fill=FAINT,
+            font=dv.type_font("meta"))
+
+    def _text_w(self, text, font):
+        """Width of `text` in **base design units** for a v3 font tuple.
+
+        Measured with the unscaled font, which is what the drawing code works
+        in - ScaledCanvas multiplies at draw time. Font objects are cached
+        because constructing one per call is surprisingly expensive.
+        """
+        cache = getattr(self, "_font_cache", None)
+        if cache is None:
+            cache = self._font_cache = {}
+        key = tuple(font)
+        obj = cache.get(key)
+        if obj is None:
+            obj = cache[key] = tkfont.Font(root=self.root, family=font[0], size=font[1])
+        return obj.measure(text)
+
+    @staticmethod
+    def _elide(text, limit):
+        """Middle-elide a path so both the drive and the leaf stay readable."""
+        if len(text) <= limit:
+            return text
+        keep = (limit - 1) // 2
+        return text[:keep] + "…" + text[-keep:]
+
+    # ---- full-width titlebar (frame 2a) ----
+    def _build_titlebar(self):
+        """h46, pad 18 left / 8 right, spanning the whole window.
+
+        Left: the mark, the wordmark, the version badge, and the monitoring
+        toggle with its bound key as a keycap. Right: the OBS connection
+        readout, then minimise and close - which per the spec BOTH hide to
+        tray; Quit exists only in the tray menu.
+        """
+        cy = TITLEBAR_HEIGHT / 2
+        pad_l, pad_r = dv.TITLEBAR_PAD_LEFT, dv.TITLEBAR_PAD_RIGHT
+
+        self._draw_logo(pad_l + 10, cy, 21)
+        self.bg.create_text(pad_l + 27, cy, anchor="w", text="Nebula",
+                            fill=TEXT, font=dv.font(14, 500))
+
+        # Version badge - reads obsauto.__version__, not a drawn-in string.
+        from . import __version__
+        bx = pad_l + 27 + 48
+        self._glass(bx, cy - 8, 34, 16, tint=ACCENT, radius=5, tint_alpha=34,
+                    border_hex=ACCENT, border_alpha=0)
+        self.bg.create_text(bx + 17, cy, text=__version__, fill=ACCENT_LIGHT,
+                            font=dv.font(9.5, mono=True))
+
+        # Monitoring toggle - same action as the hotkey.
+        mx = bx + 50
+        self._mon_icon = self.bg.create_text(
+            mx, cy, anchor="w", text=ICON_GLYPHS[dv.ICONS["idle"]],
+            fill=FAINT, font=(ICON_FONT, -13))
+        self._mon_label = self.bg.create_text(
+            mx + 19, cy, anchor="w", text="Monitoring off", fill=TEXT_SOFT,
+            font=dv.type_font("meta"))
         binding = self.config.get("toggle_hotkey")
         if binding:
-            self._draw_keycap(cx + cw - 24, my + 22, binding.upper())
-        # Whole tile is the hit target.
-        hit = self.bg.create_rectangle(cx, my, cx + cw, my + 44, fill="", outline="")
+            self._draw_keycap(mx + 118, cy, binding.upper())
+        hit = self.bg.create_rectangle(mx - 6, cy - 12, mx + 140, cy + 12,
+                                       fill="", outline="")
         for item in (hit, self._mon_icon, self._mon_label):
             self.bg.tag_bind(item, "<Button-1>", lambda _e: self._toggle_monitoring())
             self.bg.tag_bind(item, "<Enter>", lambda _e: self.bg.configure(cursor="hand2"))
             self.bg.tag_bind(item, "<Leave>", lambda _e: self.bg.configure(cursor=""))
 
-    # ---- content-column top bar ----
+        # ---- right side: OBS connection, then the window controls ----
+        self._make_circle_button(WIDTH - pad_r - 15, cy, 13, SURFACE, EMBER,
+                                 ICON_GLYPHS["x"], self._hide, font=(ICON_FONT, -9))
+        self._make_circle_button(WIDTH - pad_r - 47, cy, 13, SURFACE, SURFACE_HOVER,
+                                 ICON_GLYPHS["minus"], self._hide, font=(ICON_FONT, -9))
+
+        ox = WIDTH - pad_r - 74
+        self._obs_card_sub = self.bg.create_text(
+            ox, cy, anchor="e",
+            text=f"{self.config.get('obs_host', 'localhost')}:{self.config.get('obs_port', 4455)}",
+            fill=FAINT, font=dv.font(10.5, mono=True))
+        self._obs_card_title = self.bg.create_text(
+            ox - 116, cy, anchor="e", text="OBS disconnected",
+            fill=MUTED, font=dv.type_font("meta"))
+        self._obs_card_dot = self.bg.create_text(
+            ox - 232, cy, anchor="e", text=ICON_GLYPHS["plugs"],
+            fill=EMBER, font=(ICON_FONT, -13))
+
+        # The rule under the titlebar, fading at both ends like every other.
+        self._fading_rule(0, TITLEBAR_HEIGHT, WIDTH)
+
+    # ---- content-column pane header (h62, pad-x 26 - frame 2a) ----
     def _build_topbar(self):
-        x0 = SIDEBAR_W
-        cy = TOPBAR_HEIGHT / 2
+        x0 = SIDEBAR_W + dv.PANE_HEADER_PAD_X
+        top = CONTENT_Y0
+        self._pane_eyebrow = self.bg.create_text(
+            x0, top + 22, anchor="w", text=self._track("Live session"),
+            fill=FAINT, font=dv.type_font("eyebrow"))
         self._topbar_title = self.bg.create_text(
-            x0 + MARGIN, cy, anchor="w", text="Dashboard",
-            fill=TEXT, font=("Segoe UI Semibold", 15))
+            x0, top + 42, anchor="w", text="Dashboard",
+            fill=TEXT, font=dv.type_font("pane_title"))
 
-        # Window controls pinned to the right edge.
-        self._make_circle_button(WIDTH - 26, cy, 14, SURFACE, RED, "✕", self._hide)
-        self._make_circle_button(WIDTH - 60, cy, 14, SURFACE, SURFACE_HOVER, "−", self._hide)
-
-        # Real tool actions that don't have a home yet in this pass (their full
-        # pages are later work): rescan Steam + open game data, as ghost buttons.
+        # Pane actions, right-aligned in the header.
+        cy = top + 34
         self.rescan_btn = ctk.CTkButton(
-            self.root, text="↻  Rescan", command=self._rescan_steam,
-            fg_color=SURFACE, hover_color=SURFACE_HOVER, text_color=MUTED,
-            bg_color=self._bg_at(WIDTH - 190, cy), border_width=1, border_color=EDGE,
-            corner_radius=9, font=ctk.CTkFont(size=12),
+            self.root, text="Rescan Steam", command=self._rescan_steam,
+            fg_color="transparent", hover_color=SURFACE_HOVER, text_color=MUTED,
+            bg_color=self._bg_at(WIDTH - 150, cy), border_width=1, border_color=EDGE,
+            corner_radius=dv.RADIUS_CONTROL, font=ctk.CTkFont(size=12),
         )
-        self.bg.create_window(WIDTH - 244, cy - 15, anchor="nw", window=self.rescan_btn,
-                              width=108, height=30)
+        self.bg.create_window(WIDTH - dv.PANE_HEADER_PAD_X - 118, cy - 15, anchor="nw",
+                              window=self.rescan_btn, width=118, height=30)
         self.gamedata_btn = ctk.CTkButton(
-            self.root, text="Game data", command=self._open_game_data,
-            fg_color=SURFACE, hover_color=SURFACE_HOVER, text_color=MUTED,
-            bg_color=self._bg_at(WIDTH - 300, cy), border_width=1, border_color=EDGE,
-            corner_radius=9, font=ctk.CTkFont(size=12),
+            self.root, text="Open folder", command=self._open_recording_root,
+            fg_color="transparent", hover_color=SURFACE_HOVER, text_color=MUTED,
+            bg_color=self._bg_at(WIDTH - 270, cy), border_width=1, border_color=EDGE,
+            corner_radius=dv.RADIUS_CONTROL, font=ctk.CTkFont(size=12),
         )
-        self.bg.create_window(WIDTH - 356, cy - 15, anchor="nw", window=self.gamedata_btn,
-                              width=104, height=30)
+        self.bg.create_window(WIDTH - dv.PANE_HEADER_PAD_X - 244, cy - 15, anchor="nw",
+                              window=self.gamedata_btn, width=114, height=30)
         self.customise_btn = ctk.CTkButton(
-            self.root, text="⣿  Customise", command=self._toggle_customise,
-            fg_color=SURFACE, hover_color=SURFACE_HOVER, text_color=MUTED,
-            bg_color=self._bg_at(WIDTH - 420, cy), border_width=1, border_color=EDGE,
-            corner_radius=9, font=ctk.CTkFont(size=12),
+            self.root, text="Customise", command=self._toggle_customise,
+            fg_color="transparent", hover_color=SURFACE_HOVER, text_color=MUTED,
+            bg_color=self._bg_at(WIDTH - 390, cy), border_width=1, border_color=EDGE,
+            corner_radius=dv.RADIUS_CONTROL, font=ctk.CTkFont(size=12),
         )
         self._customise_win = self.bg.create_window(
-            WIDTH - 480, cy - 15, anchor="nw", window=self.customise_btn,
-            width=116, height=30)
+            WIDTH - dv.PANE_HEADER_PAD_X - 352, cy - 15, anchor="nw",
+            window=self.customise_btn, width=100, height=30)
 
     def _draw_keycap(self, cx, cy, label):
         """A small rounded keycap chip on the canvas - the sampled-corner
@@ -840,7 +1030,7 @@ class AppWindow:
         self._base_composite = self._composite.copy()
         builders = [
             ("dashboard", self._build_dashboard),
-            ("recordings", self._build_recordings),
+            ("clips", self._build_clips),
             ("games", self._build_games),
             ("activity", self._build_activity_view),
             ("macropad", self._build_macropad),
@@ -880,8 +1070,8 @@ class AppWindow:
             # visibility rules on top.
             self._set_hero_state(self._hero_state)
             self._set_customise(self._customising)
-        elif name == "recordings":
-            self._refresh_recordings()
+        elif name == "clips":
+            self._refresh_clips()
         elif name == "games":
             self._refresh_games()
 
@@ -890,6 +1080,11 @@ class AppWindow:
     # base design units; x0 is the left gutter of the content area.
     def _content_x0(self):
         return SIDEBAR_W + MARGIN
+
+    def _content_y0(self):
+        """Top of the pane content: below the full-width titlebar AND the
+        pane header. v2 had a single 62px strip; v3 has 46 + 62."""
+        return CONTENT_Y0 + TOPBAR_HEIGHT
 
     # ---- dashboard tile grid ----
     # The dashboard is a 2-column grid. Its layout is an ordered list of
@@ -936,7 +1131,7 @@ class AppWindow:
         cw = WIDTH - MARGIN - x0
         half_w = (cw - GRID_COL_GAP) / 2
         rects = {}
-        y = 62
+        y = self._content_y0()
         i, n = 0, len(layout)
         while i < n:
             name = layout[i]["name"]
@@ -1103,8 +1298,8 @@ class AppWindow:
         """Full-height glass panel with a heading, used by every non-dashboard
         view. Returns (x, y, w, h) of the area left for content below the head,
         plus the canvas id of the subtitle so it can be updated live."""
-        x0, y = self._content_x0(), 62
-        w, h = WIDTH - MARGIN - x0, HEIGHT - MARGIN - 62
+        x0, y = self._content_x0(), self._content_y0()
+        w, h = WIDTH - MARGIN - x0, HEIGHT - MARGIN - y
         self._glass(x0, y, w, h, tint=LOG_TINT, radius=16, tint_alpha=170)
         self.bg.create_text(x0 + 20, y + 26, anchor="w", text=title,
                             fill=TEXT, font=("Segoe UI Semibold", 15))
@@ -1171,18 +1366,18 @@ class AppWindow:
             anchor="w", padx=14, pady=14)
 
     # ---- Recordings ----
-    def _build_recordings(self):
+    def _build_clips(self):
         (x, y, w, h), sub = self._view_panel(
             "Per-game folders", self.config.get("recording_root", ""))
         self._rec_sub = sub
         self._view_button(x + w - 136, y + 20, 116, "Open folder",
                           self._open_recording_root)
         self._view_button(x + w - 262, y + 20, 116, "↻  Refresh",
-                          self._refresh_recordings)
+                          self._refresh_clips)
         self._rec_list = self._scroll_list(x + 16, y + 74, w - 32, h - 90)
         self._rec_loaded = False
 
-    def _refresh_recordings(self):
+    def _refresh_clips(self):
         root_dir = self.config.get("recording_root", "")
         for child in self._rec_list.winfo_children():
             child.destroy()
@@ -1210,11 +1405,11 @@ class AppWindow:
             except Exception as exc:
                 error = exc
             folders.sort(key=lambda f: (-f[4], f[0].lower()))
-            self._ui(lambda: self._render_recordings(folders, error, root_dir))
+            self._ui(lambda: self._render_clips(folders, error, root_dir))
 
         threading.Thread(target=worker, daemon=True).start()
 
-    def _render_recordings(self, folders, error, root_dir):
+    def _render_clips(self, folders, error, root_dir):
         for child in self._rec_list.winfo_children():
             child.destroy()
         if error is not None:
@@ -1385,104 +1580,142 @@ class AppWindow:
         from .paths import APP_DIR
         self._open_path(os.path.join(APP_DIR, "logs"))
 
-    # ---- hero recording card ----
+    # ---- hero recording card (frames 2a, 2f-2h) ----
+    # "Only the hero card changes; nothing else on the dashboard moves. Same
+    # 22px padding, same button row position - swap the eyebrow, the tint, and
+    # the primary action." So this builds one card and _set_hero_state swaps
+    # four states through it; nothing here is rebuilt on a state change.
     def _build_hero(self, x, y, w):
         # The hero always spans the full content width (its internal layout -
         # readouts on the left, scene preview pinned right - is tuned for it), so
         # the grid only ever varies its y. h is fixed.
         h = HERO_H
+        pad = dv.HERO_PAD
+        bezel = 5
+
+        # The double bezel: "tray 5 · r22 / r17", and "Every card is two layers:
+        # tinted outer shell, darker inner core. A flat card is a bug."
         self._status_card_geom = (x, y, w, h)   # reused by _flash_status_card
-        self._status_card_item = self._glass(x, y, w, h, radius=18)
+        self._status_card_item = self._glass(x, y, w, h, radius=dv.RADIUS_CORE,
+                                             tint=CARD_TINT, tint_alpha=110)
+        self._hero_core_geom = (x + bezel, y + bezel, w - bezel * 2, h - bezel * 2)
+        self._glass(*self._hero_core_geom, radius=dv.RADIUS_CARD, tint=CARD_CORE,
+                    tint_alpha=196, border_alpha=0)
 
-        pad = 24
-        left_x = x + pad
-        preview_w, preview_h = 372, 209
-        preview_x = x + w - pad - preview_w
-        preview_y = y + pad
-        left_w = preview_x - 20 - left_x
+        left_x = x + bezel + pad
+        preview_w = 340
+        preview_h = int(preview_w * 9 / 16)          # the spec's 16/9 tile
+        preview_x = x + w - bezel - pad - preview_w
+        preview_y = y + bezel + pad
+        left_w = preview_x - 22 - left_x
 
-        # --- status badge (state pill) ---
-        self._hero_badge_geom = (left_x, y + 16, 120, 24)
-        self._hero_badge_item = self._glass(left_x, y + 16, 120, 24, tint=ACCENT,
-                                            radius=12, tint_alpha=40, border_alpha=0)
-        self.rec_dot_id = self.bg.create_text(left_x + 15, y + 28, text="●",
-                                              fill=ACCENT, font=("Segoe UI", 9))
-        self._hero_badge_text = self.bg.create_text(left_x + 28, y + 28, anchor="w",
-                                                    text="WATCHING", fill=ACCENT_LIGHT,
-                                                    font=("Segoe UI", 10, "bold"))
-        self._hero_sub_id = self.bg.create_text(left_x + 132, y + 28, anchor="w",
-                                                text="", fill=MUTED, font=("Segoe UI", 12))
+        # --- eyebrow badge (the state pill) ---
+        self._hero_badge_geom = (left_x, y + pad + 2, 128, 22)
+        self._hero_badge_item = self._glass(left_x, y + pad + 2, 128, 22, tint=ACCENT,
+                                            radius=7, tint_alpha=40, border_alpha=0)
+        self.rec_dot_id = self.bg.create_text(
+            left_x + 13, y + pad + 13, text=ICON_GLYPHS["record"],
+            fill=ACCENT, font=(ICON_FONT, -7))
+        self._hero_badge_text = self.bg.create_text(
+            left_x + 26, y + pad + 13, anchor="w", text=self._track("Watching"),
+            fill=ACCENT_LIGHT, font=dv.type_font("eyebrow"))
+        self._hero_sub_id = self.bg.create_text(
+            left_x + 142, y + pad + 13, anchor="w", text="", fill=MUTED,
+            font=dv.type_font("meta"))
 
-        # --- game name ---
+        # --- game title + its source line ---
         self.game_label_id = self.bg.create_text(
-            left_x, y + 82, anchor="w", text="No game detected",
-            fill=MUTED, font=("Segoe UI Semibold", 32),
-        )
+            left_x, y + 74, anchor="w", text="No game detected",
+            fill=MUTED, font=dv.type_font("game_title"))
+        self._hero_source_id = self.bg.create_text(
+            left_x, y + 98, anchor="w", text="", fill=FAINT,
+            font=dv.font(11, mono=True), width=left_w)
 
         # --- folder chip ---
-        self._glass(left_x, y + 112, left_w, 30, tint=LOG_TINT, radius=9,
+        self._glass(left_x, y + 116, left_w, 28, tint=dv.GROUND, radius=dv.RADIUS_CONTROL,
                     tint_alpha=170, border_hex=CARD_BORDER, border_alpha=24)
-        self.bg.create_text(left_x + 12, y + 127, anchor="w", text="▸",
-                            fill=ACCENT, font=("Segoe UI", 12))
+        self.bg.create_text(left_x + 11, y + 130, anchor="w",
+                            text=ICON_GLYPHS[dv.ICONS["reveal"]],
+                            fill=ACCENT, font=(ICON_FONT, -11))
         self.folder_label_id = self.bg.create_text(
-            left_x + 28, y + 127, anchor="w", text=self.config["recording_root"],
-            fill=MUTED, font=("Consolas", 11), width=left_w - 40,
+            left_x + 30, y + 130, anchor="w", text=self.config["recording_root"],
+            fill=MUTED, font=dv.font(11, mono=True), width=left_w - 42,
         )
 
-        # --- elapsed + size readouts ---
-        self._elapsed_label_id = self.bg.create_text(
-            left_x, y + 162, anchor="w", text="ELAPSED", fill=FAINT,
-            font=("Segoe UI", 10, "bold"))
-        self.timer_label_id = self.bg.create_text(
-            left_x, y + 194, anchor="w", text="--:--:--", fill=TEXT,
-            font=("Consolas", 40, "bold"))
-        self._size_label_id = self.bg.create_text(
-            left_x + 250, y + 162, anchor="w", text="SIZE", fill=FAINT,
-            font=("Segoe UI", 10, "bold"))
-        self.storage_label_id = self.bg.create_text(
-            left_x + 250, y + 192, anchor="w", text="--", fill=TEXT_SOFT,
-            font=("Consolas", 22))
-        # Shown instead of the readout while nothing is being recorded, so the
+        # --- the three readouts: Elapsed / File size / Bitrate ---
+        # Every one is real. Elapsed and File size come straight from OBS's
+        # GetRecordStatus; Bitrate is computed from successive polls of it
+        # (see _poll_obs_status) rather than being drawn in as a number.
+        self._readouts = {}
+        col_w = left_w / 3.0
+        for i, (key, label) in enumerate((("elapsed", "Elapsed"),
+                                          ("size", "File size"),
+                                          ("bitrate", "Bitrate"))):
+            rx = left_x + i * col_w
+            cap = self.bg.create_text(rx, y + 168, anchor="w", text=self._track(label),
+                                      fill=FAINT, font=dv.type_font("eyebrow"))
+            val = self.bg.create_text(
+                rx, y + 192, anchor="w", text="--",
+                fill=TEXT, font=dv.font(dv.TYPE["timer"]["size"] if key == "elapsed" else 19,
+                                        mono=True))
+            self._readouts[key] = (cap, val)
+        # Kept under the old names - _poll_obs_status and the tests use them.
+        self.timer_label_id = self._readouts["elapsed"][1]
+        self.storage_label_id = self._readouts["size"][1]
+        self._elapsed_label_id = self._readouts["elapsed"][0]
+        self._size_label_id = self._readouts["size"][0]
+
+        # Shown instead of the readouts while nothing is being recorded, so the
         # card reads as calm-and-ready rather than simply empty.
         self._hero_hint_id = self.bg.create_text(
             left_x, y + 180, anchor="w", text="", fill=FAINT,
-            font=("Segoe UI", 13), width=left_w)
+            font=dv.type_font("body"), width=left_w)
 
         # --- transport buttons ---
-        bt_y = y + h - pad - 40
-        rec_bg = self._bg_at(left_x + 78, bt_y + 20)
+        # Two, not the frame's three: "Mark clip" has no backend, and a button
+        # that silently does nothing is worse than an absent one. Same reason v2
+        # dropped it. Both buttons are relabelled and rebound per state by
+        # _set_hero_state - that is what "one state enum" means here.
+        bt_y = y + h - bezel - pad - 40
+        self._hero_primary_cmd = self._toggle_record
+        self._hero_secondary_cmd = self._toggle_pause
         self.record_toggle_btn = ctk.CTkButton(
-            self.root, text="●  Record now", command=self._toggle_record, state="disabled",
-            fg_color=GREEN_TINT, hover_color=GREEN_TINT_HOVER, text_color=GREEN,
-            bg_color=rec_bg, border_width=1, border_color=EDGE, corner_radius=11,
+            self.root, text="Record now", command=lambda: self._hero_primary_cmd(),
+            state="disabled",
+            fg_color=GREEN_TINT, hover_color=GREEN_TINT_HOVER, text_color=ACCENT_LIGHT,
+            bg_color=self._bg_at(left_x + 78, bt_y + 20), border_width=1,
+            border_color=ACCENT, corner_radius=dv.RADIUS_CONTROL,
             font=ctk.CTkFont(size=13, weight="bold"),
         )
         self._record_btn_win = self.bg.create_window(
-            left_x, bt_y, anchor="nw", window=self.record_toggle_btn, width=156, height=40)
+            left_x, bt_y, anchor="nw", window=self.record_toggle_btn, width=164, height=40)
         self._dashboard_widgets.append(self.record_toggle_btn)
-        pause_bg = self._bg_at(left_x + 166 + 60, bt_y + 20)
         self.pause_btn = ctk.CTkButton(
-            self.root, text="❚❚  Pause", command=self._toggle_pause,
-            fg_color=AMBER_TINT, hover_color="#4A3A1A", text_color=AMBER_LIGHT,
-            bg_color=pause_bg, border_width=1, border_color=EDGE, corner_radius=11,
-            font=ctk.CTkFont(size=13, weight="bold"),
+            self.root, text="Pause", command=lambda: self._hero_secondary_cmd(),
+            fg_color="transparent", hover_color=SURFACE_HOVER, text_color=MUTED,
+            bg_color=self._bg_at(left_x + 174 + 60, bt_y + 20), border_width=1,
+            border_color=EDGE, corner_radius=dv.RADIUS_CONTROL,
+            font=ctk.CTkFont(size=13),
         )
         self._pause_btn_win = self.bg.create_window(
-            left_x + 166, bt_y, anchor="nw", window=self.pause_btn, width=120, height=40)
+            left_x + 174, bt_y, anchor="nw", window=self.pause_btn, width=150, height=40)
         self._dashboard_widgets.append(self.pause_btn)
 
         # --- scene preview + info row (right column) ---
         self._build_preview(preview_x, preview_y, preview_w, preview_h)
-        self._glass(preview_x, preview_y + preview_h + 12, preview_w, 40,
-                    tint=CARD_TINT, radius=11, tint_alpha=120,
+        self._preview_geom = (preview_x, preview_y, preview_w, preview_h)
+        info_y = preview_y + preview_h + 10
+        self._glass(preview_x, info_y, preview_w, 36, tint=CARD_TINT,
+                    radius=dv.RADIUS_TILE, tint_alpha=120,
                     border_hex=CARD_BORDER, border_alpha=26)
-        self.bg.create_text(preview_x + 15, preview_y + preview_h + 32, anchor="w",
-                            text="◆", fill=ACCENT, font=("Segoe UI", 12))
+        self.bg.create_text(preview_x + 14, info_y + 18, anchor="w",
+                            text=ICON_GLYPHS[dv.ICONS["scene"]],
+                            fill=ACCENT, font=(ICON_FONT, -12))
         self._preview_info_id = self.bg.create_text(
-            preview_x + 33, preview_y + preview_h + 32, anchor="w",
-            text="Scene capture idle", fill=TEXT_SOFT, font=("Segoe UI", 12))
+            preview_x + 34, info_y + 18, anchor="w",
+            text="Scene capture idle", fill=TEXT_SOFT, font=dv.type_font("meta"))
 
-        self._set_hero_state("offline")
+        self._set_hero_state("disconnected")
 
     def _build_preview(self, x, y, w, h):
         """A stylised 16:9 'scene preview' tile - a violet gradient stand-in for
@@ -1539,70 +1772,117 @@ class AppWindow:
         return img
 
     def _set_hero_state(self, state):
-        """Recolours the whole hero card for one of: offline / watching /
-        recording / paused. Timer + size text are filled in by
-        _poll_obs_status; this owns the badge, subtitle, border and buttons."""
+        """Swap the hero card between the four v3 states from one enum.
+
+        Frames 2a (recording), 2f (idle - watching), 2g (paused) and 2h (OBS
+        disconnected). Per the spec only the eyebrow, the tint and the primary
+        action change - the padding and the button row stay put, so nothing
+        else on the dashboard moves. Elapsed / size / bitrate are filled in by
+        _poll_obs_status; this owns everything else.
+
+        Note the tints: v3 is a two-hue system and "Disconnected - the only
+        place the ember hue leads". Recording is therefore accent, not red.
+        """
         self._hero_state = state
-        spec = {
-            "offline":   (RED,    RED_LIGHT,    "OFFLINE",   "OBS not connected"),
-            "watching":  (ACCENT, ACCENT_LIGHT, "WATCHING",  "Monitoring · auto-records on launch"),
-            "recording": (RED,    RED_LIGHT,    "REC",       "Now recording · auto-detected"),
-            "paused":    (AMBER,  AMBER_LIGHT,  "PAUSED",    "Idle — auto-paused, resumes on input"),
+        tint = dv.HERO_STATES[state]["tint"] or CARD_BORDER
+        light = EMBER if tint is EMBER else ACCENT_LIGHT
+        eyebrow = {
+            "disconnected": "OBS disconnected",
+            "watching": "Idle - watching",
+            "recording": "Recording",
+            "paused": f"Paused - idle {self.config.get('idle_timeout_seconds', 4)} s",
         }[state]
-        base, light, badge_text, sub = spec
-        bx, by, bw, bh = self._hero_badge_geom
-        self._regen_glass(self._hero_badge_item, bx, by, bw, bh, tint=base,
-                          radius=12, tint_alpha=40, border_alpha=0)
-        self.bg.itemconfigure(self._hero_badge_text, text=badge_text, fill=light)
-        self.bg.itemconfigure(self.rec_dot_id, fill=base)
-        self.bg.itemconfigure(self._hero_sub_id, text=sub)
+        sub = {
+            "disconnected": "Can't reach OBS",
+            "watching": "",
+            "recording": "",
+            "paused": "",
+        }[state]
 
-        # Card border tint follows the state (calm violet vs. hot red/amber).
+        # The badge sizes itself to the eyebrow. The four labels differ a lot in
+        # length ("Recording" vs "Paused - idle 4 s"), and tracking them out
+        # widens them further - a fixed pill overflowed on two of the states and
+        # collided with the subtitle.
+        badge_label = self._track(eyebrow)
+        bx, by, _, bh = self._hero_badge_geom
+        bw = 26 + self._text_w(badge_label, dv.type_font("eyebrow")) + 12
+        self._hero_badge_geom = (bx, by, bw, bh)
+        self._regen_glass(self._hero_badge_item, bx, by, bw, bh, tint=tint,
+                          radius=7, tint_alpha=40, border_alpha=0)
+        self.bg.itemconfigure(self._hero_badge_text, text=badge_label, fill=light)
+        self.bg.itemconfigure(self.rec_dot_id, fill=tint)
+        self.bg.itemconfigure(self._hero_sub_id, text=sub, fill=light if sub else MUTED)
+        self.bg.coords(self._hero_sub_id, bx + bw + 12, by + bh / 2)
+
         hx, hy, hw, hh = self._status_card_geom
-        border = {"offline": RED, "watching": CARD_BORDER, "recording": RED,
-                  "paused": AMBER}[state]
-        self._regen_glass(self._status_card_item, hx, hy, hw, hh, radius=18,
-                          border_hex=border, border_alpha=70)
+        self._regen_glass(self._status_card_item, hx, hy, hw, hh, radius=dv.RADIUS_CORE,
+                          tint=CARD_TINT, tint_alpha=110,
+                          border_hex=tint, border_alpha=70)
 
-        # Timer / size only carry meaning while a recording exists.
+        # Readouts only carry meaning while a recording exists. 2f is explicit:
+        # "Idle - neutral tint, no timer, no scene preview."
         show_readout = state in ("recording", "paused")
-        for item in (self._elapsed_label_id, self._size_label_id,
-                     self.timer_label_id, self.storage_label_id):
-            self.bg.itemconfigure(item, state="normal" if show_readout else "hidden")
-        self.bg.itemconfigure(self.timer_label_id,
-                              fill=AMBER_LIGHT if state == "paused" else TEXT)
+        for cap, val in self._readouts.values():
+            self.bg.itemconfigure(cap, state="normal" if show_readout else "hidden")
+            self.bg.itemconfigure(val, state="normal" if show_readout else "hidden")
+        # "Paused - accent tint, timer frozen at 60% opacity." No alpha on a
+        # canvas item, so the 60% is composited against the card core.
+        self.bg.itemconfigure(
+            self.timer_label_id,
+            fill=dv.over(dv.TEXT, dv.PAUSED_TIMER_OPACITY, dv.CARD_CORE)
+            if state == "paused" else TEXT)
+
         self.bg.itemconfigure(
             self._hero_hint_id,
             state="hidden" if show_readout else "normal",
-            text="" if show_readout else (
-                "Start monitoring to connect to OBS and watch for a game."
-                if state == "offline" else
-                "Standing by — recording starts by itself the moment a game launches."
-            ),
+            text="" if show_readout else {
+                "disconnected": (
+                    f"Retrying every {self.config.get('reconnect_interval_seconds', 10)}s. "
+                    "Launching from obs_path if it's set."),
+                "watching": "Standing by — recording starts by itself the moment a game launches.",
+            }.get(state, ""),
         )
 
         # Scene-preview caption follows the capture, so the right column isn't
         # claiming "idle" while a recording is plainly running.
-        if state == "recording":
-            info = f"Game Capture → {self._current_game}" if self._current_game else "Capturing"
-        elif state == "paused":
-            info = "Capture held — paused"
-        elif state == "watching":
-            info = "Scene capture idle"
-        else:
-            info = "No scene — OBS offline"
+        info = {
+            "recording": (f"Game Capture → {self._current_game}"
+                          if self._current_game else "Capturing"),
+            "paused": "Capture held — paused",
+            "watching": "Scene capture idle",
+            "disconnected": "No scene — OBS offline",
+        }[state]
         self.bg.itemconfigure(self._preview_info_id, text=info)
-        self.bg.itemconfigure(self._preview_dot_id,
-                              fill=RED if state == "recording" else
-                              (AMBER if state == "paused" else FAINT))
+        self.bg.itemconfigure(self._preview_dot_id, fill=tint if show_readout else FAINT)
 
-        # Buttons: primary record/stop always shown; pause only mid-recording.
-        self.bg.itemconfigure(self._pause_btn_win,
-                              state="normal" if show_readout else "hidden")
-        if state == "paused":
-            self.pause_btn.configure(text="▶  Resume")
-        else:
-            self.pause_btn.configure(text="❚❚  Pause")
+        # The button row: same position always, different label / binding /
+        # emphasis per state (2f-2h). Ember only leads on a real disconnection.
+        primary, secondary = {
+            "recording":    (("Stop recording", self._toggle_record, True),
+                             ("Pause", self._toggle_pause, False)),
+            "paused":       (("Resume", self._toggle_pause, False),
+                             ("Stop & save", self._toggle_record, False)),
+            "watching":     (("Record anyway", self._toggle_record, False),
+                             ("Pause monitoring", self._toggle_monitoring, False)),
+            "disconnected": (("Retry now", self._start, False),
+                             ("Connection settings", lambda: self._show_view("settings"), False)),
+        }[state]
+
+        text, command, is_ember = primary
+        self._hero_primary_cmd = command
+        self.record_toggle_btn.configure(
+            text=text,
+            fg_color=RED_TINT if is_ember else GREEN_TINT,
+            hover_color=RED_TINT_HOVER if is_ember else GREEN_TINT_HOVER,
+            text_color=EMBER if is_ember else ACCENT_LIGHT,
+            border_color=EMBER if is_ember else ACCENT,
+        )
+        text, command, _ = secondary
+        self._hero_secondary_cmd = command
+        self.pause_btn.configure(text=text)
+        # Both buttons are meaningful in every v3 state, so unlike v2 the
+        # secondary is never hidden - only relabelled.
+        self.bg.itemconfigure(self._pause_btn_win, state="normal")
 
     # ---- stat tiles ----
     def _build_stats(self, x0, y, w):
@@ -1620,57 +1900,57 @@ class AppWindow:
 
         # 1) Today's clips (filled in by _poll_disk_stats)
         tx, ty = cell(0)
-        self._stat_tile(tx, ty, tw, h, "▤", ACCENT, "Today")
+        self._stat_tile(tx, ty, tw, h, "film-strip", ACCENT, "Clips today")
         self._stat_today_val = self.bg.create_text(
-            tx + 16, ty + 48, anchor="w", text="–", fill=TEXT,
-            font=("Segoe UI Semibold", 22))
+            tx + 15, ty + 48, anchor="w", text="–", fill=TEXT,
+            font=dv.font(21, 500))
         self._stat_today_sub = self.bg.create_text(
-            tx + 16, ty + 72, anchor="w", text="scanning…", fill=MUTED,
-            font=("Segoe UI", 12))
+            tx + 15, ty + 71, anchor="w", text="scanning…", fill=MUTED,
+            font=dv.type_font("meta"))
 
         # 2) Disk free
         tx, ty = cell(1)
-        self._stat_tile(tx, ty, tw, h, "▥", TEAL, "Disk free")
+        self._stat_tile(tx, ty, tw, h, "hard-drives", ACCENT, "Disk free")
         self._stat_disk_val = self.bg.create_text(
-            tx + 16, ty + 48, anchor="w", text="–", fill=TEXT,
-            font=("Segoe UI Semibold", 22))
+            tx + 15, ty + 48, anchor="w", text="–", fill=TEXT,
+            font=dv.font(21, 500))
         self._stat_disk_sub = self.bg.create_text(
-            tx + 16, ty + 72, anchor="w", text="", fill=MUTED,
-            font=("Segoe UI", 12))
+            tx + 15, ty + 71, anchor="w", text="", fill=MUTED,
+            font=dv.type_font("meta"))
 
         # 3) Idle timeout - value + live slider (keeps the old control alive)
         tx, ty = cell(2)
-        self._stat_tile(tx, ty, tw, h, "◔", AMBER, "Idle timeout")
+        self._stat_tile(tx, ty, tw, h, "timer", ACCENT, "Idle timeout")
         self.timeout_value_id = self.bg.create_text(
-            tx + 16, ty + 48, anchor="w",
+            tx + 15, ty + 48, anchor="w",
             text=f"{self.config['idle_timeout_seconds']}s", fill=TEXT,
-            font=("Segoe UI Semibold", 22))
+            font=dv.font(21, 500))
         slider_bg = self._bg_at(tx + tw / 2, ty + 74)
         slider = ctk.CTkSlider(
             self.root, from_=1, to=60, number_of_steps=59, command=self._on_timeout_change,
-            fg_color=SURFACE, progress_color=AMBER, button_color=AMBER,
-            button_hover_color=AMBER_LIGHT, bg_color=slider_bg, height=14,
+            fg_color=SURFACE, progress_color=ACCENT, button_color=ACCENT,
+            button_hover_color=ACCENT_LIGHT, bg_color=slider_bg, height=14,
         )
         slider.set(self.config["idle_timeout_seconds"])
-        self.bg.create_window(tx + 16, ty + 68, anchor="w", window=slider,
-                              width=int(tw - 32), height=14)
+        self.bg.create_window(tx + 15, ty + 70, anchor="w", window=slider,
+                              width=int(tw - 30), height=14)
         self._dashboard_widgets.append(slider)
 
         # 4) Sync + offload status. Top line: game-list sync (GitHub). Sub line:
         # NAS offload state, updated live by on_offload_state().
         tx, ty = cell(3)
-        self._stat_tile(tx, ty, tw, h, "⟳", BLUE, "Sync")
+        self._stat_tile(tx, ty, tw, h, "steam-logo", ACCENT, "Sync")
         gh_on = bool(self.gamesync and self.gamesync.enabled)
         offload_on = bool(self.offloader and self.offloader.enabled)
-        self.bg.create_text(tx + 16, ty + 48, anchor="w",
+        self.bg.create_text(tx + 15, ty + 48, anchor="w",
                             text="GitHub" if gh_on else "Local",
                             fill=TEXT if gh_on else MUTED,
-                            font=("Segoe UI Semibold", 22))
+                            font=dv.font(21, 500))
         self._stat_sync_sub = self.bg.create_text(
-            tx + 16, ty + 72, anchor="w",
+            tx + 15, ty + 71, anchor="w",
             text=("NAS offload on" if offload_on else "game list") if gh_on
                  else "local only",
-            fill=MUTED, font=("Segoe UI", 12))
+            fill=MUTED, font=dv.type_font("meta"))
 
     def on_offload_state(self, pending):
         """Called (from the offloader's thread) as the NAS queue drains."""
@@ -1686,23 +1966,27 @@ class AppWindow:
             self.bg.itemconfigure(self._stat_sync_sub, text=text)
         self._ui(apply)
 
-    def _stat_tile(self, x, y, w, h, glyph, color, label):
-        self._glass(x, y, w, h, tint=CARD_TINT, radius=14, tint_alpha=120,
+    def _stat_tile(self, x, y, w, h, role, color, label):
+        """One stat tile - two layers, per "a flat card is a bug"."""
+        self._glass(x, y, w, h, tint=CARD_TINT, radius=dv.RADIUS_TILE, tint_alpha=120,
                     border_hex=CARD_BORDER, border_alpha=26)
-        self.bg.create_text(x + 16, y + 20, anchor="w", text=glyph, fill=color,
-                            font=("Segoe UI Symbol", 14))
-        self.bg.create_text(x + 36, y + 20, anchor="w", text=label, fill=FAINT,
-                            font=("Segoe UI", 11))
+        self._glass(x + 4, y + 4, w - 8, h - 8, tint=CARD_CORE,
+                    radius=dv.RADIUS_TILE - 4, tint_alpha=150, border_alpha=0)
+        self.bg.create_text(x + 15, y + 20, anchor="w", text=ICON_GLYPHS[role],
+                            fill=color, font=(ICON_FONT, -13))
+        self.bg.create_text(x + 34, y + 20, anchor="w", text=self._track(label),
+                            fill=FAINT, font=dv.type_font("eyebrow"))
 
     # ---- activity log ----
     def _build_activity(self, x0, y, w, h):
         # h is the whole footprint (header + panel). Header sits on top; the log
         # panel fills the rest, so the block works at any grid height/width.
-        self.bg.create_text(x0, y, anchor="nw", text="ACTIVITY", fill=FAINT,
-                            font=("Segoe UI", 10, "bold"))
+        self.bg.create_text(x0, y, anchor="nw", text=self._track("Activity"),
+                            fill=FAINT, font=dv.type_font("eyebrow"))
         py = y + 22
         panel_h = h - 22
-        self._glass(x0, py, w, panel_h, tint=LOG_TINT, radius=14, tint_alpha=195)
+        self._glass(x0, py, w, panel_h, tint=CARD_TINT, radius=dv.RADIUS_TILE, tint_alpha=120,
+                    border_hex=CARD_BORDER, border_alpha=26)
 
         # Rounded plate + a flat square textbox inset inside it (see the note in
         # the old build - a tall widget can't match a sheen gradient's corners).
@@ -1735,11 +2019,14 @@ class AppWindow:
         root_dir = self.config.get("recording_root", "")
 
         def worker():
-            free_txt, drive = "", ""
+            free_txt, drive, usage_pair = "", "", None
             try:
                 usage = shutil.disk_usage(root_dir if os.path.isdir(root_dir) else os.path.expanduser("~"))
                 free_txt = _format_bytes(usage.free)
                 drive = os.path.splitdrive(os.path.abspath(root_dir))[0] or ""
+                # The rail's storage card needs the total as well as the free
+                # space - it shows a fill bar and "X free of Y" (frame 2a).
+                usage_pair = (usage.free, usage.total)
             except Exception:
                 pass
             clips, total = 0, 0
@@ -1776,14 +2063,15 @@ class AppWindow:
             except Exception:
                 pass
             try:
-                self.root.after(0, lambda: self._apply_disk_stats(clips, total, free_txt, drive))
+                self.root.after(0, lambda: self._apply_disk_stats(
+                    clips, total, free_txt, drive, usage_pair))
             except RuntimeError:
                 pass  # window torn down while the scan was still running
 
         threading.Thread(target=worker, daemon=True).start()
         self.root.after(300000, self._poll_disk_stats)  # 5 min; it's a slow-moving stat
 
-    def _apply_disk_stats(self, clips, total, free_txt, drive):
+    def _apply_disk_stats(self, clips, total, free_txt, drive, usage_pair=None):
         self.bg.itemconfigure(self._stat_today_val,
                               text=f"{clips} clip" + ("" if clips == 1 else "s"))
         self.bg.itemconfigure(self._stat_today_sub,
@@ -1792,12 +2080,34 @@ class AppWindow:
             self.bg.itemconfigure(self._stat_disk_val, text=free_txt)
             self.bg.itemconfigure(self._stat_disk_sub, text=f"on {drive}" if drive else "free")
 
-    # ---- sidebar status updaters ----
+        # The rail storage card. Left blank until a real reading arrives - an
+        # empty bar beats a bar sitting at zero, which would read as "disk full".
+        if usage_pair:
+            free, capacity = usage_pair
+            used_frac = 0.0 if not capacity else max(0.0, min(1.0, (capacity - free) / capacity))
+            self.bg.itemconfigure(self._store_pct, text=f"{used_frac * 100:.0f}%")
+            x0, bar_y, full_w, bar_h = self._store_bar_rect
+            self.bg.coords(self._store_bar,
+                           x0, bar_y, x0 + full_w * used_frac, bar_y + bar_h)
+            self.bg.itemconfigure(
+                self._store_free,
+                text=f"{_format_bytes(free)} free of {_format_bytes(capacity)}")
+
+    # ---- titlebar status updaters ----
     def _set_obs_status(self, text, color):
-        """Update the sidebar OBS card (replaces the old OBS status pill)."""
-        light = {RED: RED_LIGHT, GREEN: GREEN_LIGHT, AMBER: AMBER_LIGHT}.get(color, color)
-        self.bg.itemconfigure(self._obs_card_dot, fill=color)
-        self.bg.itemconfigure(self._obs_card_title, text=f"OBS {text.lower()}", fill=light)
+        """Update the OBS readout in the titlebar.
+
+        v3 has only two hues, so this reads accent for anything healthy or
+        in-flight and ember only for a real disconnection - "the only place the
+        ember hue leads" (frame 2h).
+        """
+        disconnected = color in (EMBER, RED)
+        role = "plugs" if disconnected else "plugs-connected"
+        self.bg.itemconfigure(self._obs_card_dot,
+                              text=ICON_GLYPHS[role],
+                              fill=EMBER if disconnected else ACCENT_LIGHT)
+        self.bg.itemconfigure(self._obs_card_title, text=f"OBS {text.lower()}",
+                              fill=EMBER if disconnected else MUTED)
 
     def _set_monitoring(self, on):
         self._monitoring_on = on
@@ -1899,6 +2209,28 @@ class AppWindow:
         box.configure(state="disabled")
 
     # ---- recording indicator (pulsing dot + elapsed timer + live storage) ----
+    def _update_bitrate(self, duration_ms, written_bytes):
+        """Fill the Bitrate readout from two successive GetRecordStatus polls.
+
+        The frame draws "14.2 Mb/s". OBS's status carries no bitrate field, so
+        rather than print a plausible number this derives the real one from how
+        many bytes actually landed between polls. Until there are two samples
+        far enough apart to be meaningful it shows nothing - an honest blank,
+        not a made-up figure (see CLAUDE.md's no-fabricated-data rule).
+        """
+        prev = getattr(self, "_bitrate_sample", None)
+        self._bitrate_sample = (duration_ms, written_bytes)
+        if not prev:
+            return
+        d_ms = duration_ms - prev[0]
+        d_bytes = written_bytes - prev[1]
+        # A short or backwards interval (a paused recording, a restarted file)
+        # gives a meaningless rate; wait for the next pair instead.
+        if d_ms < 500 or d_bytes < 0:
+            return
+        mbits = (d_bytes * 8.0) / (d_ms / 1000.0) / 1_000_000.0
+        self.bg.itemconfigure(self._readouts["bitrate"][1], text=f"{mbits:.1f} Mb/s")
+
     def _poll_obs_status(self):
         """Source of truth for the timer/storage/pulse is OBS's own
         GetRecordStatus, not a client-side timestamp taken when the monitor
@@ -1917,17 +2249,22 @@ class AppWindow:
                     hh, rem = divmod(total_seconds, 3600)
                     mm, ss = divmod(rem, 60)
                     self.bg.itemconfigure(self.timer_label_id, text=f"{hh:02d}:{mm:02d}:{ss:02d}")
-                    self.bg.itemconfigure(self.storage_label_id, text=_format_bytes(status.get("outputBytes", 0)))
+                    written = status.get("outputBytes", 0)
+                    self.bg.itemconfigure(self.storage_label_id, text=_format_bytes(written))
+                    self._update_bitrate(status.get("outputDuration", 0), written)
             except OBSError:
                 pass
 
         self._is_paused = is_paused
         self._is_recording = is_recording
 
+        if not is_recording:
+            self._bitrate_sample = None
+
         # The hero card owns the badge/border/readout visibility; pick the state
         # that matches what OBS and the monitor are actually doing right now.
         if not self.obs.connected:
-            state = "offline"
+            state = "disconnected"
         elif is_recording and is_paused:
             state = "paused"
         elif is_recording:
@@ -1937,15 +2274,11 @@ class AppWindow:
         if state != self._hero_state:
             self._set_hero_state(state)
 
-        self.record_toggle_btn.configure(state="normal" if self.obs.connected else "disabled")
-        if is_recording:
-            self.record_toggle_btn.configure(
-                text="■  Stop recording", fg_color=RED_TINT, hover_color=RED_TINT_HOVER, text_color=RED,
-            )
-        else:
-            self.record_toggle_btn.configure(
-                text="●  Record now", fg_color=GREEN_TINT, hover_color=GREEN_TINT_HOVER, text_color=GREEN,
-            )
+        # Only enablement here - the label, binding and emphasis belong to
+        # _set_hero_state, which is the one place the state enum is expressed.
+        # "Retry now" has to stay clickable precisely when OBS is unreachable.
+        self.record_toggle_btn.configure(
+            state="normal" if (self.obs.connected or state == "disconnected") else "disabled")
 
         # A second is right when you're watching the timer tick; while hidden in
         # the tray nothing renders it, so back off. The monitor thread drives the
@@ -1991,18 +2324,19 @@ class AppWindow:
         confirmed even if you're not staring at the timer/name text."""
         x, y, w, h = self._status_card_geom
         steps = [1.0, 0.6, 0.25, 0.0]
-        border = {"offline": RED, "watching": CARD_BORDER, "recording": RED,
-                  "paused": AMBER}.get(self._hero_state, CARD_BORDER)
+        border = dv.HERO_STATES.get(self._hero_state, {}).get("tint") or CARD_BORDER
 
         def step(i=0):
             if i >= len(steps):
                 # Settle back on the border the current hero state owns, not the
                 # generic default - otherwise a flash would wash out the state tint.
-                self._regen_glass(self._status_card_item, x, y, w, h, radius=18,
+                self._regen_glass(self._status_card_item, x, y, w, h,
+                                  radius=dv.RADIUS_CORE, tint=CARD_TINT, tint_alpha=110,
                                   border_hex=border, border_alpha=70)
                 return
             border_alpha = int(70 + (230 - 70) * steps[i])
-            self._regen_glass(self._status_card_item, x, y, w, h, radius=18,
+            self._regen_glass(self._status_card_item, x, y, w, h,
+                              radius=dv.RADIUS_CORE, tint=CARD_TINT, tint_alpha=110,
                               border_hex=border, border_alpha=min(border_alpha, 255))
             self.root.after(110, lambda: step(i + 1))
 
@@ -2323,7 +2657,7 @@ class AppWindow:
         self.obs.disconnect()
         self._set_obs_status("Disconnected", RED)
         self._set_monitoring(False)
-        self._set_hero_state("offline")
+        self._set_hero_state("disconnected")
 
     def _register_hotkey(self):
         binding = self.config.get("toggle_hotkey")
