@@ -1,0 +1,6 @@
+Copy the Claude Code prompt to Downloads:
+
+  copy "C:\Users\antho\nebula\design\ui-v3\NEBULA-UI-V3-CLAUDE-CODE-PROMPT.md" "C:\Users\antho\Downloads\NEBULA-UI-V3-CLAUDE-CODE-PROMPT.md"
+
+Then open that file in Claude Code. Pull branch cursor/implement-mockup-v3-2b0d
+(or main after merge). Open Nebula UI Mockups v3.dc.html beside the live app.
