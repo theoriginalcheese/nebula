@@ -22,6 +22,7 @@ import os
 #               warning, never an error (a NAS or removable drive is allowed to
 #               be absent right now and appear later)
 # secret        free string, masked in the UI (tokens/passwords)
+# bool          True/False toggle (frame 2c Launch OBS / Start minimised)
 # int           whole number, optionally range-bounded
 # optional_int  whole number or blank (blank means None, i.e. "unset")
 # list          comma-separated strings -> list[str]
@@ -80,6 +81,11 @@ FIELDS = (
     Field("obs_path", "OBS executable", "path", "obs",
           hint="Used to launch OBS when it isn't already running. Skipped "
                "silently if this path doesn't exist here."),
+    Field("launch_obs_with_nebula", "Launch OBS with Nebula", "bool", "obs",
+          hint="Also relaunches if OBS crashes mid-session."),
+    Field("start_minimised_to_tray", "Start minimised to tray", "bool", "obs",
+          hint="Window opens hidden; tray icon still shows state.",
+          restart="the window is withdrawn only at launch"),
     Field("reconnect_interval_seconds", "Reconnect every", "int", "obs",
           minimum=1, maximum=3600,
           hint="Seconds between retries while OBS is unreachable."),
@@ -163,6 +169,12 @@ def parse(field, raw):
     Returns (value, error). `error` is a lower-case fragment meant to be read
     after the field's label ("Port: needs a whole number"), or None on success.
     """
+    if field.kind == "bool":
+        if isinstance(raw, bool):
+            return raw, None
+        text = _unquote(str(raw or "").strip())
+        return text.lower() in ("1", "true", "yes", "on"), None
+
     text = _unquote((raw or "").strip())
 
     if field.kind in ("text", "path", "secret"):
@@ -193,6 +205,8 @@ def parse(field, raw):
 
 def render(field, value):
     """The text a widget should show for a stored config value."""
+    if field.kind == "bool":
+        return "1" if value else "0"
     if field.kind == "list":
         if isinstance(value, (list, tuple, set)):
             return ", ".join(str(v) for v in value)

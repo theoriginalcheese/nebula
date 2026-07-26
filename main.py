@@ -168,7 +168,9 @@ def main():
     offloader.start(on_state=app.on_offload_state)
     coordinator.pull_at_startup()
 
-    app.root.after(200, app.root.withdraw)  # start minimized to tray
+    # Frame 2c "Start minimised to tray" — default on (day-to-day pythonw).
+    if config.get("start_minimised_to_tray", True):
+        app.root.after(200, app.root.withdraw)
     app.root.after(500, app.autostart)  # connect + start monitoring on its own
     app.run()
 

@@ -236,3 +236,14 @@ class OBSClient:
     def get_current_program_scene(self):
         data = self.call("GetCurrentProgramScene")
         return data.get("currentProgramSceneName") or data.get("sceneName")
+
+    def create_record_chapter(self, chapter_name=None):
+        """Mark a chapter in the current recording (OBS 30.2+).
+
+        Soft-fails via OBSError when the running OBS build lacks the request —
+        the UI treats that as an honest toast, not a crash.
+        """
+        data = {}
+        if chapter_name:
+            data["chapterName"] = chapter_name
+        return self.call("CreateRecordChapter", data or None)

@@ -121,11 +121,18 @@ def _launch_via_scheduled_task(log):
         return False
 
 
-def ensure_obs_running(obs_path, log=lambda msg: None):
+def ensure_obs_running(obs_path, log=lambda msg: None, launch=True):
     """Launch OBS if it isn't already running. Used both for the initial
     connection (in case OBS isn't set to autostart with Windows) and for
-    recovering after OBS crashes/closes mid-session."""
+    recovering after OBS crashes/closes mid-session.
+
+    ``launch=False`` (Settings → Launch OBS with Nebula off) skips starting
+    OBS and only returns — connect still retries against whatever is already
+    listening.
+    """
     if is_obs_running():
+        return
+    if not launch:
         return
     if _launch_via_scheduled_task(log):
         log("[OBS] Launched OBS (elevated, via scheduled task).")
@@ -213,6 +220,7 @@ class Monitor:
         self._last_reconnect_attempt = 0.0
         self._was_disconnected = False
         self._auto_paused = False
+        self._last_foreground = None  # (basename, kind) last pushed to the GUI
         # Session stats for the dashboard tiles (frame 2a). Real counters —
         # never shown as a fabricated zero that means "not implemented".
         self.auto_culled = 0
@@ -222,6 +230,16 @@ class Monitor:
         self._audio_keep_alive = AudioKeepAlive(
             config.get("keep_alive_audio_processes", ["discord.exe"]), on_log=self.log,
         )
+
+    def seconds_until_reconnect(self):
+        """Seconds until the next reconnect attempt, or None if connected."""
+        if self.obs.connected:
+            return None
+        interval = float(self.config.get("reconnect_interval_seconds", 10) or 10)
+        if self._last_reconnect_attempt <= 0:
+            return int(interval)
+        left = interval - (time.time() - self._last_reconnect_attempt)
+        return max(0, int(left))
 
     def _roll_stats_day(self):
         """Reset the 'today' counters when the calendar day flips."""
@@ -505,17 +523,39 @@ class Monitor:
             return False
         self._last_reconnect_attempt = now
 
-        ensure_obs_running(self.config.get("obs_path"), log=self.log)
+        ensure_obs_running(
+            self.config.get("obs_path"), log=self.log,
+            launch=bool(self.config.get("launch_obs_with_nebula", True)),
+        )
         try:
             self.obs.connect()
         except Exception as e:
             self.log(f"[OBS] Reconnect attempt failed: {e}")
         return self.obs.connected
 
+    def _report_foreground(self):
+        """Push the foreground exe for frame 2f's watching source line.
+
+        Separate from the recording `exe=` payload so stopping a clip doesn't
+        wipe the chrome.exe line the mockup shows while idle-watching.
+        """
+        fg = get_foreground_window_info()
+        if not fg:
+            payload = (None, None)
+        else:
+            basename = os.path.basename(fg[1]).lower() if fg[1] else fg[2].lower()
+            kind = self.classifier.peek_kind(basename)
+            payload = (basename, kind)
+        if payload == self._last_foreground:
+            return
+        self._last_foreground = payload
+        self.on_state(foreground=payload[0], foreground_kind=payload[1])
+
     def _loop(self):
         while self._running:
             try:
                 if not self._maybe_reconnect():
+                    self._report_foreground()
                     time.sleep(self.config["poll_interval_seconds"])
                     continue
 
@@ -551,6 +591,7 @@ class Monitor:
                 # being held idle, not just the raw local input timer - so it
                 # won't read "idle" while a stream or a voice call keeps it live.
                 self.on_state(idle=should_pause)
+                self._report_foreground()
 
                 if game_still_running and should_pause:
                     # Pause in place rather than stopping - the game's still

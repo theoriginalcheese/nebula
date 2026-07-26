@@ -100,8 +100,9 @@ Standing rule, from `CLAUDE.md` and [[nebula-aurora-ui]] in the vault:
 > ⚠️ Don't put fabricated numbers in the UI — the Games badge reads the classifier
 > (`_game_count()`) and returns `None` (no badge) rather than inventing a count.
 
-This is why v2 dropped "Mark clip", the search pill and the resolution/fps chips, and why
-**Macropad is deliberately an empty page**. Audit against v3:
+This is why v2 dropped fabricated chips, and why **Macropad is deliberately an empty
+page** until an HID layer exists. Mark clip is wired to OBS `CreateRecordChapter`
+(soft-fails with a toast when the build lacks the request). Audit against v3:
 
 | Frame element | Backed by | Verdict |
 |---|---|---|
@@ -173,21 +174,16 @@ point-sized fonts get DPI-scaled **on top of** `self.scale`.
 
 ## 3. State of play
 
-**Done (this session):** design files imported to `design/ui-v3/`; the § 05 contract
-transcribed to `BUILD-SPEC.md`; frames 2a–2k transcribed to `FRAMES.md`; the conflicts above
-identified against `CLAUDE.md` and the Obsidian vault; `obsauto/design_v3.py` written — the
-tokens, geometry, type scale, icon legend and config map from § 05 as one machine-checkable
-module, with `tests/test_design_v3.py` asserting it matches the spec.
+**Done:** build order steps 1–7 on `main` / `cursor/implement-mockup-v3-2b0d`, plus a
+fidelity pass against the local mockup (hero enum, stats, toast dismiss, Settings Reveal /
+Test again, Games decide card, honest Macropad empty, mini overlay). Follow-up pass added
+watching foreground line, AppID + seen-count, disconnected countdown, Settings Browse /
+password eye / Launch OBS + Start minimised toggles, and Mark clip via `CreateRecordChapter`.
 
-**Not started:** every `_build_*` in `obsauto/gui.py` still renders the v2 "Aurora" layout.
-No pane has been rewritten. Toast, tray menu rework and mini overlay do not exist.
+**Still out of scope unless asked:** ffmpeg Length/thumbs, live `GetSourceScreenshot`
+preview, HID macropad subsystem, per-frame aurora (blocked by § 2.1).
 
-**Follow the spec's own build order** (§ *Build order & don't-forget*, restated in
-`BUILD-SPEC.md`) — steps 1→7. It is a good order; step 1 explicitly says nothing else until
-the chassis matches 2a.
-
-Two decisions to make before step 1, both in section 2 above: **the background** (2.1) and
-**resize vs fixed-pixel** (2.4).
+**Decisions already taken:** static randomised backdrop (§ 2.1); fixed-pixel 1280×808 (§ 2.4a).
 
 ---
 

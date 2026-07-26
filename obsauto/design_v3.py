@@ -388,7 +388,7 @@ TOAST_OUT_MS = 200
 #  error -> ember."
 TOAST_TINTS = {
     "start": EMBER, "stop": EMBER, "error": EMBER,
-    "pause": ACCENT, "resume": ACCENT,
+    "pause": ACCENT, "resume": ACCENT, "mark": ACCENT,
 }
 
 MINI_W, MINI_H = 296, 54

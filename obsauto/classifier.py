@@ -10,6 +10,7 @@ import json
 import os
 import re
 import threading
+import time
 
 from . import steam_scanner
 from .paths import APP_DIR
@@ -70,10 +71,16 @@ class Classifier:
         self.on_saved = on_saved or (lambda data: None)
         self._lock = threading.Lock()
         self._data = self._load()
-        self._steam_index = {}  # installdir_lower -> display name
+        self._steam_index = {}  # installdir_lower -> {"name", "appid"} (or legacy str)
         self._steam_index_loaded = False
         self._pending_manual = {}  # key -> (basenames, suggested_name) awaiting a GUI prompt
         self._in_review = set()  # keys currently being handled by the GUI
+        # Frame 2d "seen 4×": distinct notice bursts, not poll ticks. Debounced
+        # so a game left in the foreground doesn't inflate the counter every
+        # second while the review card is sitting there.
+        self._sightings = {}  # review key -> count
+        self._sighting_at = {}  # review key -> last count bump (monotonic)
+        self._sighting_gap = 120.0  # seconds between countable re-notices
 
     def log(self, msg):
         self.on_log(msg)
@@ -170,6 +177,7 @@ class Classifier:
 
             is_game, store_name = steam_scanner.classify_appid(info["appid"], log=self.log)
             display_name = store_name or info["name"]
+            appid = info.get("appid")
 
             exe_basenames = set()
             for _root, _dirs, files in os.walk(install_path):
@@ -189,7 +197,7 @@ class Classifier:
                     self.mark_non_game(basename)
                     continue
                 if is_game:
-                    self.mark_game(basename, display_name, source="steam")
+                    self.mark_game(basename, display_name, source="steam", appid=appid)
                     registered.append(basename)
                 else:
                     unresolved.append(basename)
@@ -234,8 +242,10 @@ class Classifier:
                 self.refresh_steam_index()
             installdir = self._steam_installdir_for_path(exe_path)
             if installdir and installdir in self._steam_index:
-                display_name = self._steam_index[installdir]
-                self.mark_game(basename, display_name, source="steam")
+                display_name, appid = self._steam_entry(installdir)
+                self.mark_game(basename, display_name, source="steam", appid=appid)
+                if appid:
+                    self.log(f"[Steam] Matched {basename} -> {display_name} (AppID {appid})")
                 return "game", display_name
             if installdir:
                 # Installed via Steam but Steam says it's not a "game" (tool/dlc/server)
@@ -244,13 +254,59 @@ class Classifier:
 
         return "unknown", None
 
-    def mark_game(self, basename, display_name, source="manual"):
+    def _steam_entry(self, installdir):
+        """Normalise a steam-index value to (display_name, appid_or_None)."""
+        entry = self._steam_index.get(installdir)
+        if entry is None:
+            return None, None
+        if isinstance(entry, str):
+            return entry, None
+        return entry.get("name") or installdir, entry.get("appid")
+
+    def peek_kind(self, basename):
+        """Side-effect-free classification for the watching hero line.
+
+        Returns ``"game"`` / ``"non_game"`` / ``"unknown"`` without queuing
+        reviews or writing games.json — the monitor needs this every poll.
+        """
+        basename = (basename or "").lower()
+        if not basename:
+            return "unknown"
+        with self._lock:
+            if basename in self._data["games"]:
+                return "game"
+            if basename in self._data["non_games"]:
+                return "non_game"
+        if basename in DENYLIST or _looks_like_installer_helper(basename):
+            return "non_game"
+        return "unknown"
+
+    def appid_for(self, basename):
+        """Steam AppID stored on a game entry, or None."""
+        basename = (basename or "").lower()
+        with self._lock:
+            entry = self._data["games"].get(basename)
+        if isinstance(entry, dict):
+            return entry.get("appid")
+        return None
+
+    def mark_game(self, basename, display_name, source="manual", appid=None):
         basename = basename.lower()
         with self._lock:
-            self._data["games"][basename] = {"display_name": display_name, "source": source}
+            entry = {"display_name": display_name, "source": source}
+            if appid:
+                entry["appid"] = str(appid)
+            else:
+                # Keep a previously-known AppID when re-marking the same exe
+                # without one (e.g. promote from Not games).
+                prev = self._data["games"].get(basename)
+                if isinstance(prev, dict) and prev.get("appid"):
+                    entry["appid"] = prev["appid"]
+            self._data["games"][basename] = entry
             self._data["non_games"].pop(basename, None)
             self._save()
-        self.log(f"[Classifier] {basename} -> game ({display_name}) [{source}]")
+        suffix = f" AppID {appid}" if appid else ""
+        self.log(f"[Classifier] {basename} -> game ({display_name}) [{source}]{suffix}")
 
     def mark_non_game(self, basename):
         basename = basename.lower()
@@ -280,9 +336,24 @@ class Classifier:
             # name), since classify() still says "unknown" until the answer
             # is actually saved.
             if key in self._pending_manual or key in self._in_review:
+                # Still a re-notice — bump the "seen N×" counter (debounced).
+                self._bump_sighting_unlocked(key)
                 return False
             self._pending_manual[key] = (list(basenames), suggested_name)
+            self._bump_sighting_unlocked(key, force=True)
             return True
+
+    def _bump_sighting_unlocked(self, key, force=False):
+        now = time.monotonic()
+        last = self._sighting_at.get(key, 0.0)
+        if not force and (now - last) < self._sighting_gap:
+            return
+        self._sighting_at[key] = now
+        self._sightings[key] = self._sightings.get(key, 0) + 1
+
+    def sighting_count(self, key):
+        with self._lock:
+            return self._sightings.get(key, 0)
 
     def peek_pending_reviews(self):
         """Read the manual-review queue WITHOUT draining it.
@@ -341,6 +412,8 @@ class Classifier:
     def finish_review(self, key):
         with self._lock:
             self._in_review.discard(key)
+            self._sightings.pop(key, None)
+            self._sighting_at.pop(key, None)
 
     def resolve_review(self, basenames, is_game, display_name=None):
         if is_game:

@@ -192,12 +192,20 @@ def classify_appid(appid, cache=None, log=lambda msg: None):
 
 
 def build_steam_game_index(log=lambda msg: None):
-    """Return {installdir_lower: display_name} for installdir's that are real games."""
+    """Return {installdir_lower: {"name", "appid"}} for real Steam games.
+
+    Older callers that treated the value as a bare display-name string still
+    work via Classifier's normalisation — AppID is what the Games pane and
+    hero source line need for frame 2d / 2a.
+    """
     manifests = scan_app_manifests()
     cache = _load_cache()
     index = {}
     for installdir, info in manifests.items():
         is_game, store_name = classify_appid(info["appid"], cache=cache, log=log)
         if is_game:
-            index[installdir] = store_name or info["name"]
+            index[installdir] = {
+                "name": store_name or info["name"],
+                "appid": info["appid"],
+            }
     return index

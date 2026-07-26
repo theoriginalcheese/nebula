@@ -8,6 +8,7 @@ import threading
 import time
 import tkinter as tk
 import tkinter.font as tkfont
+import tkinter.filedialog
 import tkinter.messagebox
 import traceback
 
@@ -157,6 +158,8 @@ _ICON_CODEPOINTS = {
     "funnel-simple": 0xE71C,        # Activity tag filter
     "copy-simple": 0xE8C8,          # Copy log
     "microphone": 0xE720,           # Mic label on the hero info row
+    "eye": 0xE7B3,                  # password reveal (Settings 2c)
+    "folder": 0xE8B7,               # Browse path (Settings 2c)
 }
 ICON_GLYPHS = {name: chr(cp) for name, cp in _ICON_CODEPOINTS.items()}
 
@@ -448,7 +451,10 @@ class AppWindow:
         self._hero_state = "disconnected"  # disconnected | watching | recording | paused
         self._bitrate_sample = None   # (duration_ms, bytes) from the previous poll
         self._current_game = None
-        self._current_exe = None      # basename for the hero source line (frame 2a)
+        self._current_exe = None      # recording target basename (hero source while live)
+        self._foreground_exe = None   # frame 2f watching line — any foreground app
+        self._foreground_kind = None  # game | non_game | unknown
+        self._next_connect_at = None  # monotonic deadline for disconnected countdown
         self._obs_version = None      # e.g. "30.2" from GetVersion
         self._video_label = None      # e.g. "2560×1440 · 60 fps" from GetVideoSettings
         self._scene_name = None       # current program scene
@@ -1775,14 +1781,7 @@ class AppWindow:
     # ---- Games (frame 2d) ----
     # Three blocks: what's awaiting a decision, the games, the ignored apps.
     #
-    # Two things the frame draws are absent for want of a source: the Steam
-    # AppID beside each game (the classifier stores {display_name, source}, no
-    # id) and "seen 4x" on an unclassified row (nothing counts sightings).
-    #
-    # The unclassified block is read-only on purpose. Deciding still happens in
-    # the existing modal flow (_poll_manual_review), which owns the queue's
-    # _in_review bookkeeping; this block PEEKS so that showing an item can never
-    # swallow the prompt the user is waiting on.
+        # AppID + "seen N×" now come from Classifier (Steam index / sightings).
     def _build_games(self):
         (x, y, w, h), sub = self._view_panel("Games", "What the classifier has learned.")
         self._games_sub = sub
@@ -1845,10 +1844,14 @@ class AppWindow:
             if isinstance(value, dict):
                 name = value.get("display_name") or key
                 source = value.get("source", "")
+                appid = value.get("appid")
             else:
-                name, source = key, ""
-            entry = by_name.setdefault(name, {"exes": [], "source": source})
+                name, source, appid = key, "", None
+            entry = by_name.setdefault(
+                name, {"exes": [], "source": source, "appid": appid})
             entry["exes"].append(key)
+            if appid and not entry.get("appid"):
+                entry["appid"] = appid
 
         awaiting = (f"{len(pending_names)} awaiting your call   ·   "
                     if pending_names else "")
@@ -1875,10 +1878,14 @@ class AppWindow:
         else:
             for name in sorted(by_name, key=str.lower):
                 entry = by_name[name]
-                exes = ", ".join(sorted(entry["exes"])[:3])
-                if len(entry["exes"]) > 3:
-                    exes += f"  +{len(entry['exes']) - 3} more"
-                self._list_row(self._games_list, name, exes, entry["source"] or "manual")
+                # Frame 2d: name + AppID when known; otherwise a short exe list.
+                if entry.get("appid"):
+                    meta = str(entry["appid"])
+                else:
+                    meta = ", ".join(sorted(entry["exes"])[:2])
+                    if len(entry["exes"]) > 2:
+                        meta += f"  +{len(entry['exes']) - 2} more"
+                self._list_row(self._games_list, name, meta, entry["source"] or "manual")
 
         if not non_games:
             self._empty_note(self._nongames_list, "Nothing ignored yet.")
@@ -1901,7 +1908,15 @@ class AppWindow:
         title = suggested or suggest_display_name(key)
         exe_line = basenames[0] if basenames else key
         more = max(0, pending_count - 1)
-        sub = f"{exe_line}  ·  not classified yet"
+        seen = 0
+        try:
+            seen = self.classifier.sighting_count(key)
+        except Exception:
+            seen = 0
+        # Frame 2d: vintagestory.exe · not in Steam library · seen 4×
+        sub = f"{exe_line}  ·  not in Steam library"
+        if seen:
+            sub += f"  ·  seen {seen}\u00d7"
         if more:
             sub += f"  ·  +{more} more waiting"
 
@@ -2192,7 +2207,10 @@ class AppWindow:
             try:
                 if self.obs.connected:
                     self.obs.disconnect()
-                ensure_obs_running(self.config.get("obs_path"), log=self._log)
+                ensure_obs_running(
+                    self.config.get("obs_path"), log=self._log,
+                    launch=bool(self.config.get("launch_obs_with_nebula", True)),
+                )
                 self.obs.connect()
                 ms = int((time.perf_counter() - t0) * 1000)
             except Exception as exc:
@@ -2212,6 +2230,7 @@ class AppWindow:
                             text=f"Failed — {err}", text_color=EMBER)
                     return
                 self._handshake_ms = ms
+                self._next_connect_at = None
                 self._refresh_obs_meta()
                 self._set_obs_status("Connected", GREEN)
                 self._obs_connected = True
@@ -2251,18 +2270,68 @@ class AppWindow:
                 command=lambda _v, k=field.key: self._settings_commit(k))
             widget.set(settings_spec.render(field, value) or field.choices[0])
             widget.pack(anchor="w", pady=(4, 0))
+        elif field.kind == "bool":
+            # Frame 2c toggles — write immediately on flip (no blur target).
+            var = tk.BooleanVar(value=bool(value))
+            switch = ctk.CTkSwitch(
+                row, text="", variable=var, width=44,
+                progress_color=ACCENT, button_color=TEXT, button_hover_color=TEXT_SOFT,
+                fg_color=SURFACE,
+                command=lambda k=field.key: self._settings_commit(k))
+            switch.pack(anchor="w", pady=(6, 0))
+
+            class _BoolShim:
+                """Lets _settings_commit keep calling widget.get() uniformly."""
+                def get(self_inner):
+                    return "1" if var.get() else "0"
+
+                def delete(self_inner, *_a, **_k):
+                    pass
+
+                def insert(self_inner, _idx, text):
+                    var.set(str(text) in ("1", "true", "True", "yes", "on"))
+
+                def cget(self_inner, key):
+                    if key == "show":
+                        return ""
+                    raise tk.TclError(key)
+
+            widget = _BoolShim()
+            self._settings_bool_vars = getattr(self, "_settings_bool_vars", {})
+            self._settings_bool_vars[field.key] = var
         else:
+            entry_row = ctk.CTkFrame(row, fg_color="transparent")
+            entry_row.pack(fill="x", pady=(4, 0))
             widget = ctk.CTkEntry(
-                row, fg_color=dv.GROUND, border_color=EDGE, border_width=1,
-                text_color=TEXT, corner_radius=dv.RADIUS_CONTROL, height=30,
+                entry_row, fg_color=dv.GROUND, border_color=EDGE, border_width=1,
+                text_color=TEXT, corner_radius=dv.RADIUS_CONTROL, height=36,
                 font=ctk.CTkFont(family="Consolas", size=12),
                 show="*" if field.kind == "secret" else "")
             widget.insert(0, settings_spec.render(field, value))
-            widget.pack(fill="x", pady=(4, 0))
+            widget.pack(side="left", fill="x", expand=True)
             # "Write on blur, not per keystroke." Return commits too, so a field
             # you finish typing in doesn't need defocusing first.
             widget.bind("<FocusOut>", lambda _e, k=field.key: self._settings_commit(k))
             widget.bind("<Return>", lambda _e, k=field.key: self._settings_commit(k))
+            if field.kind == "secret":
+                eye = ctk.CTkButton(
+                    entry_row, text=ICON_GLYPHS["eye"], width=36, height=36,
+                    fg_color="transparent", hover_color=SURFACE_HOVER,
+                    text_color=MUTED, border_width=0, corner_radius=10,
+                    font=ctk.CTkFont(family=ICON_FONT, size=14),
+                    command=lambda e=widget: self._toggle_secret_visibility(e))
+                eye.pack(side="left", padx=(8, 0))
+                self._focus_ring(eye)
+            if field.kind == "path":
+                browse = ctk.CTkButton(
+                    entry_row, text=f"{ICON_GLYPHS['folder']}  Browse",
+                    width=100, height=36,
+                    fg_color="transparent", hover_color=SURFACE_HOVER,
+                    text_color=MUTED, border_width=1, border_color=EDGE,
+                    corner_radius=dv.RADIUS_CONTROL, font=ctk.CTkFont(size=12),
+                    command=lambda k=field.key: self._settings_browse(k))
+                browse.pack(side="left", padx=(8, 0))
+                self._focus_ring(browse)
 
         hint = field.hint
         if field.restart:
@@ -2273,6 +2342,32 @@ class AppWindow:
                 anchor="w", pady=(2, 0))
 
         self._settings_fields[field.key] = (widget, field)
+
+    def _toggle_secret_visibility(self, entry):
+        entry.configure(show="" if entry.cget("show") == "*" else "*")
+
+    def _settings_browse(self, key):
+        """Frame 2c Browse — file picker for executables, folder otherwise."""
+        widget, field = self._settings_fields[key]
+        initial = widget.get() or ""
+        if key.endswith("_path") or key == "obs_path":
+            path = tkinter.filedialog.askopenfilename(
+                parent=self.root,
+                title=field.label,
+                initialdir=os.path.dirname(initial) if initial else None,
+                filetypes=[("Executables", "*.exe"), ("All files", "*.*")],
+            )
+        else:
+            path = tkinter.filedialog.askdirectory(
+                parent=self.root,
+                title=field.label,
+                initialdir=initial or None,
+            )
+        if not path:
+            return
+        widget.delete(0, "end")
+        widget.insert(0, path)
+        self._settings_commit(key)
 
     def _settings_commit(self, key):
         widget, field = self._settings_fields[key]
@@ -2431,7 +2526,8 @@ class AppWindow:
             left_x, readout_y + 12, anchor="w", text="", fill=FAINT,
             font=dv.type_font("body"), width=left_w)
 
-        # Transport — Mark clip omitted (no backend). Relabelled per state.
+        # Transport — primary / secondary / Mark clip (recording only).
+        # Relabelled per state; trailing icons sit in the pill circle.
         bt_y = y + h - bezel - pad - 40
         self._hero_primary_cmd = self._toggle_record
         self._hero_primary_text = ACCENT_LIGHT
@@ -2461,6 +2557,27 @@ class AppWindow:
             left_x + 190, bt_y, anchor="nw", window=self.pause_btn, width=150,
             height=dv.CONTROL_PILL_H)
         self._dashboard_widgets.append(self.pause_btn)
+        self.mark_clip_btn = ctk.CTkButton(
+            self.root, text="Mark clip", command=self._mark_clip,
+            fg_color="transparent", hover_color=SURFACE_HOVER, text_color=MUTED,
+            bg_color=self._bg_at(left_x + 360, bt_y + 20), border_width=1,
+            border_color=EDGE, corner_radius=999,
+            font=ctk.CTkFont(size=13),
+        )
+        self._focus_ring(self.mark_clip_btn)
+        mark_circle = pill_trailing_icon(
+            ICON_GLYPHS["scissors"], MUTED, dv.CARD_CORE,
+            dv.PILL_TRAILING_CIRCLE[0], self.scale)
+        self._mark_pill_image = ctk.CTkImage(
+            light_image=mark_circle, dark_image=mark_circle,
+            size=(dv.PILL_TRAILING_CIRCLE[0], dv.PILL_TRAILING_CIRCLE[0]))
+        self.mark_clip_btn.configure(
+            image=self._mark_pill_image, compound="right", anchor="w")
+        self._mark_btn_win = self.bg.create_window(
+            left_x + 350, bt_y, anchor="nw", window=self.mark_clip_btn, width=140,
+            height=dv.CONTROL_PILL_H)
+        self.bg.itemconfigure(self._mark_btn_win, state="hidden")
+        self._dashboard_widgets.append(self.mark_clip_btn)
 
         # Right column: 16:9 preview + scene/mic row (hidden while idle)
         self._preview_items = []
@@ -2582,14 +2699,12 @@ class AppWindow:
         # Title / source / hint copy per frame 2f / 2h
         if state == "watching":
             title = "No game in focus"
-            source = (f"Foreground: {self._current_exe} — classified as not a game."
-                      if self._current_exe else "")
+            source = self._watching_source_text()
             hint = "Recording starts by itself the moment a game launches."
         elif state == "disconnected":
             title = "Can't reach OBS"
             source = ""
-            interval = self.config.get("reconnect_interval_seconds", 10)
-            hint = (f"Retrying every {interval}s — launching from obs_path if set.")
+            hint = self._disconnected_hint_text()
         elif state in ("recording", "paused"):
             title = self._current_game or "Recording"
             source = self._hero_source_text()
@@ -2630,7 +2745,8 @@ class AppWindow:
             except Exception:
                 pass
         if preview_on:
-            scene = self._scene_name or "Game Capture"
+            # Blank until GetCurrentProgramScene answers — never invent "Game Capture".
+            scene = self._scene_name or "—"
             self.bg.itemconfigure(
                 self._preview_info_id,
                 text=f"Scene — {scene}")
@@ -2673,14 +2789,69 @@ class AppWindow:
         )
         text, command, _ = secondary
         self._hero_secondary_cmd = command
-        self.pause_btn.configure(text=text)
+        sec_role = {
+            "recording": "pause", "paused": "square",
+            "watching": "pause", "disconnected": "settings",
+        }[state]
+        sec_glyph = ICON_GLYPHS.get(sec_role) or ICON_GLYPHS.get(
+            dv.ICONS.get(sec_role, ""), ICON_GLYPHS["sliders-horizontal"])
+        sec_circle = pill_trailing_icon(
+            sec_glyph, MUTED, dv.CARD_CORE, dv.PILL_TRAILING_CIRCLE[0], self.scale)
+        self._hero_secondary_image = ctk.CTkImage(
+            light_image=sec_circle, dark_image=sec_circle,
+            size=(dv.PILL_TRAILING_CIRCLE[0], dv.PILL_TRAILING_CIRCLE[0]))
+        self.pause_btn.configure(
+            text=text, image=self._hero_secondary_image,
+            compound="right", anchor="w")
         self.bg.itemconfigure(self._pause_btn_win, state="normal")
+        # Frame 2a Mark clip — only while actively recording (not paused/idle).
+        show_mark = state == "recording"
+        self.bg.itemconfigure(
+            self._mark_btn_win, state="normal" if show_mark else "hidden")
+
+    def _watching_source_text(self):
+        """Frame 2f: Foreground: chrome.exe — classified as not a game."""
+        exe = self._foreground_exe
+        if not exe:
+            return ""
+        kind = self._foreground_kind or self.classifier.peek_kind(exe)
+        if kind == "non_game":
+            return f"Foreground: {exe} — classified as not a game."
+        if kind == "unknown":
+            return f"Foreground: {exe} — awaiting classification."
+        if kind == "game":
+            return f"Foreground: {exe} — classified as a game."
+        return f"Foreground: {exe}"
+
+    def _disconnected_hint_text(self):
+        """Frame 2h countdown — real seconds until the next connect attempt."""
+        interval = int(self.config.get("reconnect_interval_seconds", 10) or 10)
+        left = None
+        if self._next_connect_at is not None:
+            left = max(0, int(self._next_connect_at - time.time()))
+        else:
+            try:
+                left = self.monitor.seconds_until_reconnect()
+            except Exception:
+                left = None
+        if left is None:
+            left = interval
+        launch = "Launching from obs_path…" if self.config.get(
+            "launch_obs_with_nebula", True) else "Launch OBS is off — waiting for it to appear."
+        return (f"Retrying every {interval}s — next attempt in {left}s. {launch}")
 
     def _hero_source_text(self):
-        """Mono source line under the game title — real exe only; no fake AppID."""
-        if self._current_exe:
-            return self._current_exe
-        return ""
+        """Mono source line under the game title — exe · AppID when known."""
+        if not self._current_exe:
+            return ""
+        appid = None
+        try:
+            appid = self.classifier.appid_for(self._current_exe)
+        except Exception:
+            appid = None
+        if appid:
+            return f"{self._current_exe}  ·  {appid}"
+        return self._current_exe
 
     # ---- stat tiles (frame 2a: Clips today · Recorded · Auto-culled · Idle pauses) ----
     def _build_stats(self, x0, y, w):
@@ -3126,6 +3297,11 @@ class AppWindow:
             state = "watching"
         if state != self._hero_state:
             self._set_hero_state(state)
+        elif state == "disconnected":
+            # Refresh the "next attempt in Ns" countdown without a full
+            # glass regen — only the hint string changes each second.
+            self.bg.itemconfigure(
+                self._hero_hint_id, text=self._disconnected_hint_text())
 
         # Only enablement here - the label, binding and emphasis belong to
         # _set_hero_state, which is the one place the state enum is expressed.
@@ -3139,6 +3315,38 @@ class AppWindow:
         # actual recording independently of this poll.
         self.root.after(1000 if self._visible else 5000, self._poll_obs_status)
 
+
+    def _mark_clip(self):
+        """Frame 2a Mark clip — OBS CreateRecordChapter, soft-fail if missing."""
+        if not self._is_recording or self._is_paused:
+            return
+        name = None
+        if self._current_game:
+            stamp = time.strftime("%H:%M:%S")
+            name = f"{self._current_game} {stamp}"
+
+        def worker():
+            error = None
+            try:
+                self.obs.create_record_chapter(name)
+            except Exception as exc:
+                error = exc
+
+            def apply():
+                if error is not None:
+                    err = error
+                    self._log(f"[Manual] Mark clip failed: {err}")
+                    self._toast_replace(
+                        "error", "Mark clip unavailable",
+                        {"detail": str(err)})
+                    return
+                self._log("[Manual] Marked chapter"
+                          + (f" ({name})" if name else ""))
+                self._toast_replace("mark", name or self._current_game or "Chapter")
+
+            self._ui(apply)
+
+        threading.Thread(target=worker, daemon=True).start()
 
     def _toggle_record(self):
         """Manual override, independent of auto-detection. Note: if
@@ -3259,12 +3467,17 @@ class AppWindow:
         """Everything the toast renders, resolved from an event name."""
         tint = dv.TOAST_TINTS.get(event, ACCENT)
         role = {"start": "start", "stop": "square", "pause": "pause",
-                "resume": "resume", "error": "disconnected"}.get(event, "start")
-        glyph = ICON_GLYPHS[dv.ICONS[role]] if role in dv.ICONS else ICON_GLYPHS[role]
+                "resume": "resume", "error": "disconnected",
+                "mark": "mark_clip"}.get(event, "start")
+        if role in dv.ICONS:
+            glyph = ICON_GLYPHS[dv.ICONS[role]]
+        else:
+            glyph = ICON_GLYPHS.get(role, ICON_GLYPHS["broadcast"])
         title = {
             "start": "Recording started", "stop": "Recording stopped",
             "pause": "Recording paused", "resume": "Recording resumed",
             "error": "Something went wrong",
+            "mark": "Clip marked",
         }.get(event, str(event))
 
         parts = []
@@ -3276,6 +3489,9 @@ class AppWindow:
             size = details.get("size")
             if size is not None:
                 parts.append(_format_bytes(size))
+            detail = details.get("detail")
+            if detail:
+                parts.append(str(detail))
         return {"tint": tint, "glyph": glyph, "title": title,
                 "sub": display_name, "detail": "  ·  ".join(parts)}
 
@@ -3740,6 +3956,12 @@ class AppWindow:
             if "exe" in kwargs:
                 self._current_exe = kwargs["exe"]
                 self._set_hero_state(self._hero_state)
+            if "foreground" in kwargs:
+                self._foreground_exe = kwargs["foreground"]
+                self._foreground_kind = kwargs.get("foreground_kind")
+                if self._hero_state == "watching":
+                    self.bg.itemconfigure(
+                        self._hero_source_id, text=self._watching_source_text())
             if "idle" in kwargs:
                 self._tray_idle = kwargs["idle"]
                 self._refresh_monitor_stats()
@@ -3902,7 +4124,10 @@ class AppWindow:
         def worker():
             ms = None
             try:
-                ensure_obs_running(self.config.get("obs_path"), log=self._log)
+                ensure_obs_running(
+                    self.config.get("obs_path"), log=self._log,
+                    launch=bool(self.config.get("launch_obs_with_nebula", True)),
+                )
                 t0 = time.perf_counter()
                 self.obs.connect()
                 ms = int((time.perf_counter() - t0) * 1000)
@@ -3939,6 +4164,7 @@ class AppWindow:
     def _connect_failed(self, error):
         if self._abort_connect:
             return
+        interval = int(self.config.get("reconnect_interval_seconds", 10) or 10)
         # Distinguish the two very different failures that both surface as a
         # refused socket: OBS isn't running at all, vs OBS IS running but its
         # WebSocket server isn't listening (server disabled in OBS, or the
@@ -3949,12 +4175,17 @@ class AppWindow:
             self._log("[Monitor] OBS is running but its WebSocket server isn't "
                       "accepting connections. In OBS: Tools -> WebSocket Server "
                       "Settings -> tick 'Enable WebSocket server' (or restart OBS). "
-                      "Retrying in 10s...")
+                      f"Retrying in {interval}s...")
             self._set_obs_status("Enable WS in OBS", AMBER)
         else:
-            self._log(f"[Monitor] OBS not available yet ({error}); retrying in 10s...")
+            self._log(f"[Monitor] OBS not available yet ({error}); "
+                      f"retrying in {interval}s...")
             self._set_obs_status("Disconnected", RED)
-        self.root.after(10000, self.autostart)
+        self._next_connect_at = time.time() + interval
+        if self._hero_state == "disconnected":
+            self.bg.itemconfigure(
+                self._hero_hint_id, text=self._disconnected_hint_text())
+        self.root.after(interval * 1000, self.autostart)
 
     def _connect_succeeded(self, handshake_ms=None):
         if self._abort_connect:
@@ -3963,6 +4194,7 @@ class AppWindow:
             self.obs.disconnect()
             self._set_obs_status("Disconnected", RED)
             return
+        self._next_connect_at = None
         if handshake_ms is not None:
             self._handshake_ms = handshake_ms
         self._on_connected()

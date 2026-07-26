@@ -39,6 +39,11 @@ DEFAULTS = {
     # again if it crashes/closes mid-session). Skipped silently if this path
     # doesn't exist on this machine - just set it per-machine if different.
     "obs_path": "C:/Program Files/obs-studio/bin/64bit/obs64.exe",
+    # Frame 2c toggles. launch_obs_with_nebula also covers mid-session
+    # relaunch after a crash; start_minimised_to_tray matches the day-to-day
+    # pythonw tray launch (window opens hidden; tray icon still shows state).
+    "launch_obs_with_nebula": True,
+    "start_minimised_to_tray": True,
     # How often (seconds) to retry launching+connecting to OBS while
     # disconnected, either at startup or after an unexpected drop.
     "reconnect_interval_seconds": 10,
