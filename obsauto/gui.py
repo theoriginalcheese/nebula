@@ -1740,9 +1740,11 @@ class AppWindow:
         if not by_name:
             self._empty_note(
                 self._games_list,
-                "Nothing classified yet.\n\nHit Rescan to pull in your installed "
-                "Steam library, or just launch a game — Nebula asks once and "
-                "remembers the answer.")
+                "Nothing classified yet.\n\nJust launch a game — Nebula asks once "
+                "and remembers the answer. That's the main path, and the only one "
+                "for launcher games (HoYoPlay, Roblox, CurseForge and friends).\n\n"
+                "Rescan library only imports games installed through Steam; if "
+                "your Steam library is empty it will correctly find nothing.")
         else:
             for name in sorted(by_name, key=str.lower):
                 entry = by_name[name]
@@ -3589,9 +3591,22 @@ class AppWindow:
         def worker():
             try:
                 registered = self.classifier.register_all_steam_games()
-                self.root.after(0, lambda: self._log(
-                    f"[Steam] Rescan complete - {len(registered)} game(s) registered."
-                ))
+                # "0 game(s) registered" is ambiguous: it reads like a failure
+                # when the usual cause is simply having no Steam games
+                # installed. Say which it is - a machine whose games all come
+                # from HoYoPlay / Roblox / CurseForge has an empty Steam
+                # library, and the classifier is meant to learn those by
+                # watching instead.
+                from .steam_scanner import scan_app_manifests
+                if registered:
+                    message = f"[Steam] Rescan complete - {len(registered)} game(s) registered."
+                elif not scan_app_manifests():
+                    message = ("[Steam] No Steam games installed - nothing to import. "
+                               "Non-Steam games are learned as you play them.")
+                else:
+                    message = ("[Steam] Rescan complete - no new games; "
+                               "everything installed is already classified.")
+                self.root.after(0, lambda: self._log(message))
             except Exception as exc:
                 # Same late-binding trap as the connect worker: `exc` is gone by
                 # the time Tk runs this callback, so capture it in a local.

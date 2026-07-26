@@ -172,6 +172,22 @@ offload worker needs waking so a backed-off queue retries at once.
 > - keystrokes are sparse relative to the heartbeat - which is why that test measures
 > the keystroke directly.
 
+## Single instance, and the two-data-directories trap
+
+`main.py` claims a named mutex (`Nebula.SingleInstance`) at startup; a second
+launch logs and exits. This is not theoretical - a dev `python main.py` running
+alongside `dist/Nebula.exe` was observed fighting over the same OBS (the idle
+timer flapped the recording on and off every few seconds, and one instance logged
+`Start failed: SetRecordDirectory failed`), grabbing the same global hotkey, and
+- because `APP_DIR` resolves **next to the executable** - reading *different*
+`games.json` and `config.json` files, so one window's Games tab looked empty while
+the other's was populated.
+
+⚠️ **Frozen and dev runs do not share data.** The exe uses `dist/config.json`,
+`dist/games.json`, `dist/logs/`; a source run uses the repo root. A setting changed
+in one is invisible to the other. When checking whether a build works, read
+`dist/logs/obsauto.log`, not `logs/obsauto.log`.
+
 ## Config (`config.json`)
 - OBS: `obs_host` localhost, `obs_port` 4455, `obs_password` empty (obs-websocket v5)
 - `recording_root`: `D:/OBS Recordings` · `sync_folder`: default **empty** (local only);

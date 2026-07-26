@@ -24,6 +24,31 @@ try:
 except Exception:
     pass
 
+
+# ---- single instance -------------------------------------------------------
+# Two Nebulas running at once is worse than it sounds, and it happened for real:
+# a dev `python main.py` alongside dist/Nebula.exe. They both drive the same OBS,
+# so they fight over start/stop and the idle timer flaps the recording on and off
+# every few seconds; they both grab the same global hotkey; and because APP_DIR
+# resolves next to the executable, they read DIFFERENT games.json and config.json
+# files - so one window's Games tab looks empty while the other's is populated.
+#
+# A named kernel mutex is the cheapest reliable guard. It is released
+# automatically when the process dies, so a crash can't leave the app locked out.
+_INSTANCE_MUTEX = None
+
+
+def _claim_single_instance():
+    """True if we're the only instance; False if another already holds the name."""
+    global _INSTANCE_MUTEX
+    ERROR_ALREADY_EXISTS = 183
+    try:
+        _INSTANCE_MUTEX = ctypes.windll.kernel32.CreateMutexW(None, False, "Nebula.SingleInstance")
+        return ctypes.windll.kernel32.GetLastError() != ERROR_ALREADY_EXISTS
+    except Exception:
+        return True   # never let the guard itself stop the app starting
+
+
 from obsauto.config import load_config
 from obsauto import classifier as classifier_module
 from obsauto import steam_scanner
@@ -109,6 +134,10 @@ class _GameListSync:
 
 def main():
     setup_logging()
+    if not _claim_single_instance():
+        log_to_file("[Nebula] Already running - this second instance is exiting. "
+                    "Use the tray icon to show the existing window.")
+        return
     config = load_config()
     _apply_sync_folder(config)
 
