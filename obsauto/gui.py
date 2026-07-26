@@ -1370,15 +1370,70 @@ class AppWindow:
             anchor="w", padx=14, pady=14)
 
     # ---- Recordings ----
+    # ---- Clips (frame 2b) ----
+    # v2 listed per-game *folders*. v3 lists the clips themselves: a By-game
+    # sidebar with counts, then a table of Clip / Size / Recorded / Actions.
+    #
+    # Two columns the frame draws are deliberately absent:
+    #   * Length - reading a duration out of an .mkv needs ffprobe, which this
+    #     project doesn't depend on. No source, so no column (CLAUDE.md).
+    #   * Thumbnails - same reason. The frame's leading chip is the game's
+    #     initials ("HD" for Helldivers 2), which is real data, so that stays.
+    CLIP_LIST_CAP = 400          # newest N; a recording root can hold terabytes
+
     def _build_clips(self):
-        (x, y, w, h), sub = self._view_panel(
-            "Per-game folders", self.config.get("recording_root", ""))
+        (x, y, w, h), sub = self._view_panel("Clips", self.config.get("recording_root", ""))
         self._rec_sub = sub
-        self._view_button(x + w - 136, y + 20, 116, "Open folder",
+
+        self._clip_search = ctk.CTkEntry(
+            self.root, placeholder_text="Search clips", fg_color=dv.GROUND,
+            border_color=EDGE, border_width=1, text_color=TEXT,
+            corner_radius=dv.RADIUS_CONTROL, font=ctk.CTkFont(size=12), height=30)
+        self._clip_search.bind("<KeyRelease>", lambda _e: self._render_clips_rows())
+        self.bg.create_window(x + w - 330, y + 20, anchor="nw",
+                              window=self._clip_search, width=190, height=30)
+        self._dashboard_widgets.append(self._clip_search)
+
+        self._clip_sort = ctk.CTkOptionMenu(
+            self.root, values=["Newest", "Oldest", "Largest"],
+            command=lambda _v: self._render_clips_rows(),
+            fg_color=SURFACE, button_color=SURFACE, button_hover_color=SURFACE_HOVER,
+            text_color=MUTED, corner_radius=dv.RADIUS_CONTROL,
+            font=ctk.CTkFont(size=12), width=110, height=30)
+        self.bg.create_window(x + w - 130, y + 20, anchor="nw",
+                              window=self._clip_sort, width=110, height=30)
+
+        # Left: By game. Right: the clip table.
+        side_w = 224
+        body_y = y + 96
+        body_h = h - 96 - 34
+        self.bg.create_text(x + 16, y + 82, anchor="w", text=self._track("By game"),
+                            fill=FAINT, font=dv.type_font("eyebrow"))
+        self.bg.create_text(x + 16 + side_w + 16, y + 82, anchor="w",
+                            text=self._track("Clip"), fill=FAINT,
+                            font=dv.type_font("eyebrow"))
+        for label, dx in (("Size", w - 300), ("Recorded", w - 210), ("Actions", w - 96)):
+            self.bg.create_text(x + dx, y + 82, anchor="w", text=self._track(label),
+                                fill=FAINT, font=dv.type_font("eyebrow"))
+
+        self._clip_games = self._scroll_list(x + 16, body_y, side_w, body_h)
+        self._rec_list = self._scroll_list(x + 16 + side_w + 16, body_y,
+                                           w - 48 - side_w, body_h)
+
+        self._view_button(x + 16, y + h - 26, side_w, "Reveal recording root",
                           self._open_recording_root)
-        self._view_button(x + w - 262, y + 20, 116, "↻  Refresh",
-                          self._refresh_clips)
-        self._rec_list = self._scroll_list(x + 16, y + 74, w - 32, h - 90)
+
+        # "Clips under min_clip_seconds are deleted automatically and never
+        # listed here." Per the build order this note IS the empty state.
+        self._clip_note_text = (
+            f"Clips under min_clip_seconds ({self.config.get('min_clip_seconds', 10)}s) "
+            "are deleted automatically and never listed here.")
+        self.bg.create_text(x + 16 + side_w + 16, y + h - 14, anchor="w",
+                            text=self._clip_note_text, fill=FAINT,
+                            font=dv.type_font("meta"))
+
+        self._clips = []
+        self._clip_filter_game = None
         self._rec_loaded = False
 
     def _refresh_clips(self):
@@ -1388,53 +1443,190 @@ class AppWindow:
         self._empty_note(self._rec_list, "Scanning…")
 
         def worker():
-            folders, error = [], None
+            clips, error = [], None
             try:
-                with os.scandir(root_dir) as it:
-                    for entry in it:
-                        if not entry.is_dir(follow_symlinks=False):
-                            continue
-                        clips, size, newest = 0, 0, 0
-                        try:
-                            with os.scandir(entry.path) as inner:
-                                for f in inner:
-                                    if f.is_file() and f.name.lower().endswith(VIDEO_EXTS):
-                                        st = f.stat()
-                                        clips += 1
-                                        size += st.st_size
-                                        newest = max(newest, st.st_mtime)
-                        except OSError:
-                            pass
-                        folders.append((entry.name, entry.path, clips, size, newest))
+                for game in sorted(os.listdir(root_dir)):
+                    folder = os.path.join(root_dir, game)
+                    if not os.path.isdir(folder):
+                        continue
+                    with os.scandir(folder) as inner:
+                        for f in inner:
+                            if not (f.is_file() and f.name.lower().endswith(VIDEO_EXTS)):
+                                continue
+                            st = f.stat()
+                            clips.append({
+                                "game": game, "name": f.name, "path": f.path,
+                                "rel": f"{game}/{f.name}",
+                                "size": st.st_size, "mtime": st.st_mtime,
+                            })
             except Exception as exc:
                 error = exc
-            folders.sort(key=lambda f: (-f[4], f[0].lower()))
-            self._ui(lambda: self._render_clips(folders, error, root_dir))
+            self._ui(lambda: self._render_clips(clips, error, root_dir))
 
         threading.Thread(target=worker, daemon=True).start()
 
-    def _render_clips(self, folders, error, root_dir):
-        for child in self._rec_list.winfo_children():
+    def _render_clips(self, clips, error, root_dir):
+        self._clips = clips
+        self._clips_error = error
+        self._clips_root = root_dir
+
+        for child in self._clip_games.winfo_children():
             child.destroy()
-        if error is not None:
-            self._empty_note(self._rec_list, f"Couldn't read {root_dir}\n{error}")
-            return
-        if not folders:
-            self._empty_note(
-                self._rec_list,
-                f"No per-game folders in {root_dir} yet.\n\n"
-                "Nebula creates one the first time it records a game.")
-            return
-        total = sum(f[3] for f in folders)
+        if not error:
+            counts = {}
+            for c in clips:
+                counts[c["game"]] = counts.get(c["game"], 0) + 1
+            self._game_button(None, "All clips", len(clips))
+            for game, n in sorted(counts.items(), key=lambda kv: (-kv[1], kv[0].lower())):
+                self._game_button(game, game, n)
+
+        total = sum(c["size"] for c in clips)
         self.bg.itemconfigure(
             self._rec_sub,
-            text=f"{root_dir}   ·   {len(folders)} folders   ·   {_format_bytes(total)}")
-        for name, path, clips, size, newest in folders:
-            when = time.strftime("%d %b %Y", time.localtime(newest)) if newest else "—"
-            self._list_row(
-                self._rec_list, name,
-                f"{clips} clip{'' if clips == 1 else 's'}   ·   {_format_bytes(size)}",
-                when, command=lambda p=path: self._open_path(p))
+            text=f"{len(clips)} clip{'' if len(clips) == 1 else 's'}  ·  "
+                 f"{_format_bytes(total)}  ·  {root_dir}")
+        self._render_clips_rows()
+
+    def _game_button(self, game, label, count):
+        row = ctk.CTkFrame(self._clip_games, fg_color=CARD_TINT, corner_radius=dv.RADIUS_CONTROL)
+        row.pack(fill="x", padx=2, pady=2)
+        active = self._clip_filter_game == game
+        ctk.CTkLabel(row, text=label, anchor="w", text_color=TEXT if active else MUTED,
+                     font=ctk.CTkFont(size=12)).pack(side="left", padx=(10, 4), pady=6)
+        ctk.CTkLabel(row, text=str(count), text_color=ACCENT_LIGHT if active else FAINT,
+                     font=ctk.CTkFont(size=11)).pack(side="right", padx=10)
+
+        def pick(_e=None):
+            self._clip_filter_game = game
+            self._render_clips(self._clips, self._clips_error, self._clips_root)
+
+        for widget in (row, *row.winfo_children()):
+            widget.bind("<Button-1>", pick)
+
+    def _render_clips_rows(self):
+        for child in self._rec_list.winfo_children():
+            child.destroy()
+        if getattr(self, "_clips_error", None) is not None:
+            self._empty_note(self._rec_list,
+                             f"Couldn't read {self._clips_root}\n{self._clips_error}")
+            return
+
+        query = (self._clip_search.get() or "").strip().lower()
+        rows = [c for c in self._clips
+                if (self._clip_filter_game in (None, c["game"]))
+                and (not query or query in c["rel"].lower())]
+        sort = self._clip_sort.get()
+        if sort == "Oldest":
+            rows.sort(key=lambda c: c["mtime"])
+        elif sort == "Largest":
+            rows.sort(key=lambda c: -c["size"])
+        else:
+            rows.sort(key=lambda c: -c["mtime"])
+
+        if not rows:
+            # Empty state is the min-clip note only, exactly as the frame says.
+            self._empty_note(self._rec_list, self._clip_note_text)
+            return
+        for clip in rows[:self.CLIP_LIST_CAP]:
+            self._clip_row(clip)
+        if len(rows) > self.CLIP_LIST_CAP:
+            self._empty_note(
+                self._rec_list,
+                f"Showing the newest {self.CLIP_LIST_CAP} of {len(rows)}. "
+                "Narrow it with the search box.")
+
+    @staticmethod
+    def _initials(name):
+        words = [w for w in re.split(r"[\s_\-]+", name) if w]
+        return ("".join(w[0] for w in words[:2]) or name[:2]).upper()
+
+    @staticmethod
+    def _recorded_label(mtime):
+        now = time.time()
+        delta = now - mtime
+        if delta < 3600:
+            return f"{max(1, int(delta // 60))} min ago"
+        today = time.localtime(now)
+        when = time.localtime(mtime)
+        if (when.tm_year, when.tm_yday) == (today.tm_year, today.tm_yday):
+            return time.strftime("Today %H:%M", when)
+        if delta < 86400 * 2:
+            return "Yesterday"
+        if delta < 86400 * 7:
+            return time.strftime("%a", when)
+        return time.strftime("%d %b", when)
+
+    def _clip_row(self, clip):
+        row = ctk.CTkFrame(self._rec_list, fg_color=CARD_TINT, corner_radius=dv.RADIUS_CONTROL)
+        row.pack(fill="x", padx=2, pady=3)
+
+        ctk.CTkLabel(row, text=self._initials(clip["game"]), width=34, height=34,
+                     fg_color=ACCENT_TINT, corner_radius=8, text_color=ACCENT_LIGHT,
+                     font=ctk.CTkFont(size=11, weight="bold")).pack(
+            side="left", padx=(8, 10), pady=6)
+
+        # Actions pack right-first so they keep their place as the title flexes.
+        for role, command, tip in (
+            ("delete_clip", lambda: self._delete_clip(clip), "Delete"),
+            ("reveal", lambda: self._open_path(os.path.dirname(clip["path"])), "Reveal"),
+        ):
+            btn = ctk.CTkButton(
+                row, text=ICON_GLYPHS[dv.ICONS[role]], width=28, height=28,
+                fg_color="transparent", hover_color=SURFACE_HOVER, text_color=MUTED,
+                corner_radius=8, font=ctk.CTkFont(family=ICON_FONT, size=13),
+                command=command)
+            btn.pack(side="right", padx=2)
+
+        ctk.CTkLabel(row, text=self._recorded_label(clip["mtime"]), width=90, anchor="e",
+                     text_color=MUTED, font=ctk.CTkFont(size=11)).pack(side="right", padx=6)
+        ctk.CTkLabel(row, text=_format_bytes(clip["size"]), width=80, anchor="e",
+                     text_color=TEXT_SOFT, font=ctk.CTkFont(size=11)).pack(side="right")
+
+        text = ctk.CTkFrame(row, fg_color="transparent")
+        text.pack(side="left", fill="x", expand=True)
+        ctk.CTkLabel(text, text=os.path.splitext(clip["name"])[0], anchor="w",
+                     text_color=TEXT, font=ctk.CTkFont(size=12)).pack(anchor="w")
+        ctk.CTkLabel(text, text=clip["rel"], anchor="w", text_color=FAINT,
+                     font=ctk.CTkFont(family="Consolas", size=10)).pack(anchor="w")
+
+    def _delete_clip(self, clip):
+        """Manual delete, under obs-footage-sacred's copy-verify-then-delete rule.
+
+        The offloader never removes a local clip without a byte-verified NAS
+        copy; a delete button in the UI must not be a way around that. So if
+        offload is on and this clip is still queued - i.e. not yet verified at
+        the far end - the delete is refused outright rather than confirmed.
+        Everything else asks first.
+        """
+        pending = set()
+        if self.offloader and self.offloader.enabled:
+            try:
+                pending = self.offloader.pending_paths()
+            except Exception:
+                pending = set()
+        if clip["path"] in pending:
+            tkinter.messagebox.showwarning(
+                "Not offloaded yet",
+                f"{clip['name']} hasn't been copied to the NAS and verified yet.\n\n"
+                "Nebula won't delete a clip that has no second copy. It'll be "
+                "safe to remove once the offload queue has drained.",
+                parent=self.root)
+            return
+        if not tkinter.messagebox.askyesno(
+                "Delete clip",
+                f"Permanently delete {clip['rel']}?\n\n"
+                f"{_format_bytes(clip['size'])} · this cannot be undone.",
+                parent=self.root):
+            return
+        try:
+            os.remove(clip["path"])
+        except OSError as exc:
+            error = exc
+            self._log(f"[Manual] Couldn't delete {clip['name']}: {error}")
+            return
+        self._log(f"[Manual] Deleted {clip['rel']}")
+        self._clips = [c for c in self._clips if c["path"] != clip["path"]]
+        self._render_clips(self._clips, None, self._clips_root)
 
     def _open_recording_root(self):
         self._open_path(self.config.get("recording_root", ""))

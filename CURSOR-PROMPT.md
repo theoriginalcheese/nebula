@@ -115,7 +115,7 @@ performance lesson), `nebula-dpi-scaling`, `nebula-roadmap-ideas`, `obs-auto-fol
 
 <!-- STATE:BEGIN — keep this block current; it is the whole point of the file -->
 
-**Updated:** 2026-07-26 — **steps 1–4 are done and verified. Step 5 (the Clips pane) is next.**
+**Updated:** 2026-07-26 — **steps 1–5 are done and verified. Step 6 (Settings) is next.**
 
 Committed on local branch **`ui-v3`** (not pushed; `main` untouched).
 
@@ -235,12 +235,34 @@ Committed on local branch **`ui-v3`** (not pushed; `main` untouched).
   rate, which looks like a product bug and isn't. Set `remaining` and let the real chain run.
   There's a check that asserts the 1× drain rate.
 
-**Not started — step 5 onward**
-- **Step 5 (next): the Clips pane (frame 2b).** Table of Clip · Length · Size · Recorded ·
-  Actions, a per-game sidebar with counts, search and sort. Empty state is *only* the min-clip
-  note. The three row actions map to `folder-open` / `scissors` / `trash` — and a delete action
-  must respect the copy-verify-then-delete rule (`CURSOR-HANDOFF.md` §4.7).
-- Steps 6–7: Settings, Games, Macropad, mini overlay.
+**Done — step 5, the Clips pane (frame 2b)**
+- Lists the **clips**, not v2's per-game folders: by-game sidebar with counts, search, sort
+  (Newest / Oldest / Largest), and rows carrying a game-initials chip, filename, relative path,
+  size and a relative "Recorded" label. Newest 400 shown; beyond that it says so rather than
+  crawling a terabyte root into the UI.
+- **Empty state is the min-clip note only**, exactly as the build order states.
+- **Delete obeys copy-verify-then-delete.** If offload is on and the clip is still in the
+  offloader queue — i.e. no byte-verified NAS copy yet — the delete is **refused outright**,
+  not merely confirmed. Everything else asks first. `Offloader.pending_paths()` was added for
+  this. A UI delete must not be a way around `obs-footage-sacred`.
+- **Two frame columns omitted for want of a source**: **Length** and **thumbnails** both need
+  ffprobe/ffmpeg, which this project does not depend on. The frame's leading chip is the game's
+  initials (real data), so that stayed. Add ffmpeg and both can come back.
+- Initials are word-initials: "Helldivers 2" → `H2`. The frame draws `HD`, which is not
+  derivable from the name.
+- `tests/test_clips.py` — 22 checks against a temp recording root.
+  ⚠️ It runs under a **real `mainloop()`**: the scan is a worker that marshals back through
+  `_ui()` → `root.after`, and Tk refuses a cross-thread `after()` under `update()`-pumping while
+  `_ui()` swallows the failure. An `update()`-pumped version of this test sat on "Scanning…"
+  forever. Same trap `CLAUDE.md` warns about; it cost time again here.
+
+**Not started — step 6 onward**
+- **Step 6 (next): Settings (frame 2c).** Sections Connection / Storage / Idle & audio / Hotkey
+  / Sync. The **mono config-key label under each field is part of the design**, not a debug aid.
+  Write on **blur**, not per keystroke. Show the saved timestamp in the pane header. Merge over
+  `DEFAULTS`; never drop an unknown key. `dv.CONFIG_MAP` already holds label → key → section →
+  unit, and every `*_seconds` field must render its unit suffix.
+- Step 7: Games, Macropad, mini overlay.
 - **Transitional wart**: v3 has no standalone Activity page (it's a dashboard block), but the
   `activity` view is still registered and still mirrors the log, because `_log()` writes to
   both consoles. Not reachable from the rail — see `gui.RAIL_VIEWS`. Fold it away when

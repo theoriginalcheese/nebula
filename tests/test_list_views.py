@@ -42,16 +42,26 @@ def check(name, passed, detail=""):
 
 
 def labels(frame):
-    """Every text label currently rendered inside a scroll list."""
+    """Every text label currently rendered inside a scroll list.
+
+    Walks the whole subtree: a v3 clip row nests its title and relative path
+    inside a sub-frame, so a one-level scan misses exactly the text that
+    identifies the row.
+    """
     found = []
+
+    def walk(widget):
+        try:
+            text = widget.cget("text")
+        except Exception:
+            text = None
+        if text:
+            found.append(text)
+        for child in widget.winfo_children():
+            walk(child)
+
     for child in frame.winfo_children():
-        for widget in (child, *child.winfo_children()):
-            try:
-                text = widget.cget("text")
-            except Exception:
-                continue
-            if text:
-                found.append(text)
+        walk(child)
     return found
 
 
@@ -80,9 +90,11 @@ games = captured.get("games", [])
 
 check("clips list resolved", rec and not any("Scanning" in r for r in rec),
       f"{len(rec)} labels")
-# Either real folders or an honest empty state - never a stuck spinner.
-check("clips shows folders or an empty state",
-      any("clip" in r for r in rec) or any("No per-game folders" in r for r in rec),
+# v3 lists the clips themselves, not per-game folders. Each row carries a
+# relative path like "Game/2026-07-23 21-14-02.mkv". Either real rows or the
+# min-clip note as the empty state - never a stuck spinner.
+check("clips shows rows or the min-clip empty state",
+      any("/" in r for r in rec) or any("min_clip_seconds" in r for r in rec),
       rec[0][:60] if rec else "(nothing)")
 check("games list resolved", bool(games), f"{len(games)} labels")
 check("games shows entries or an empty state",

@@ -92,6 +92,17 @@ class Offloader:
         self._notify()
         self._wake.set()
 
+    def pending_paths(self):
+        """Clips still waiting on a verified NAS copy.
+
+        A clip in here has NOT been byte-verified at the far end yet, so the
+        Clips pane refuses to delete it - that is obs-footage-sacred's
+        copy-verify-then-delete rule applied to a manual delete, not just to
+        the offloader's own move mode.
+        """
+        with self._lock:
+            return {item["path"] for item in self._queue}
+
     # ---- persistence ----
     def _load_queue(self):
         try:

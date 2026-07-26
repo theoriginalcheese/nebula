@@ -86,10 +86,10 @@ and a mock keypad that does nothing would be a lie.
 
 ## UI v3 — dashboard + tray built, other panes still v2 (2026-07-26)
 
-Work lives on branch **`ui-v3`**. **Steps 1–4 of the v3 build order are done**: palette,
+Work lives on branch **`ui-v3`**. **Steps 1–5 of the v3 build order are done**: palette,
 geometry, backdrop, titlebar, rail, pane header (frame 2a); the hero card with its four states
-(2a, 2f–2h) plus stat tiles and activity header; the tray icon + menu (2j); and the toast (2i).
-Clips / Games / Macropad / Settings are **still v2's**, and the mini overlay doesn't exist.
+(2a, 2f–2h) plus stat tiles and activity header; the tray icon + menu (2j); the toast (2i); and the Clips pane (2b).
+Games / Macropad / Settings are **still v2's**, and the mini overlay doesn't exist.
 Full state and next actions: `CURSOR-PROMPT.md`.
 
 **The toast is a single slot.** One `Toplevel` for the whole process life — the first event
@@ -243,6 +243,7 @@ three static icons swapped on state change.
   python tests/test_design_v3.py       # v3 contract vs design/ui-v3/BUILD-SPEC.md (no GUI)
   python tests/test_tray.py            # tray icon states + menu contract (frame 2j)
   python tests/test_toast.py           # single-slot toast: replace-in-place, drain (2i)
+  python tests/test_clips.py           # Clips pane + the delete rule (2b)
   ```
   ⚠️ Anything async **must** be tested under a real `mainloop()`. Tk refuses a cross-thread
   `root.after()` when driven by `update()`-pumping, and `_ui()` swallows that — so an
