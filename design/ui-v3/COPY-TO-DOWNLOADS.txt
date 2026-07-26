@@ -1,0 +1,17 @@
+Nebula UI v3 — make the Claude Code prompt reachable from Downloads
+
+On the Windows machine (Anthony’s laptop/desktop):
+
+  copy "<path-to-nebula-clone>\design\ui-v3\NEBULA-UI-V3-CLAUDE-CODE-PROMPT.md" "%USERPROFILE%\Downloads\NEBULA-UI-V3-CLAUDE-CODE-PROMPT.md"
+
+Example if the clone is C:\Users\antho\nebula:
+
+  copy "C:\Users\antho\nebula\design\ui-v3\NEBULA-UI-V3-CLAUDE-CODE-PROMPT.md" "C:\Users\antho\Downloads\NEBULA-UI-V3-CLAUDE-CODE-PROMPT.md"
+
+Then open that Downloads file in Claude Code. Work in the Nebula git clone
+(pull main first). Optionally also open:
+
+  design\ui-v3\Nebula UI Mockups v3.dc.html
+
+in a browser (needs network for CDN fonts/icons). Keep support.js and _ds\
+beside the HTML.

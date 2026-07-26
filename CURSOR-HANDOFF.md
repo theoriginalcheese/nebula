@@ -173,21 +173,21 @@ point-sized fonts get DPI-scaled **on top of** `self.scale`.
 
 ## 3. State of play
 
-**Done (this session):** design files imported to `design/ui-v3/`; the § 05 contract
-transcribed to `BUILD-SPEC.md`; frames 2a–2k transcribed to `FRAMES.md`; the conflicts above
-identified against `CLAUDE.md` and the Obsidian vault; `obsauto/design_v3.py` written — the
-tokens, geometry, type scale, icon legend and config map from § 05 as one machine-checkable
-module, with `tests/test_design_v3.py` asserting it matches the spec.
+**Framework complete on `main` (2026-07-26).** Do not treat this section as a greenfield
+todo list. The living “where next” block is in `CURSOR-PROMPT.md` (`<!-- STATE:BEGIN -->`).
+Claude Code refine prompt (copy to Downloads):
+`design/ui-v3/NEBULA-UI-V3-CLAUDE-CODE-PROMPT.md`.
 
-**Not started:** every `_build_*` in `obsauto/gui.py` still renders the v2 "Aurora" layout.
-No pane has been rewritten. Toast, tray menu rework and mini overlay do not exist.
+**Done:**
+- Design imported to `design/ui-v3/` (mockup, `support.js`, Nocturne DS for provenance).
+- § 05 contract → `BUILD-SPEC.md`; frames 2a–2k → `FRAMES.md`; collisions documented here.
+- `obsauto/design_v3.py` + `tests/test_design_v3.py` (33 checks against the markdown).
+- Build-order steps 1–7 in `obsauto/gui.py` and friends: chassis, hero enum + dashboard,
+  tray/chrome, single-slot toast, Clips, Settings, Games, honest-empty Macropad, mini overlay.
+- Decisions locked: **static randomised backdrop** (§2.1); **fixed-pixel 1280×808** (§2.4).
 
-**Follow the spec's own build order** (§ *Build order & don't-forget*, restated in
-`BUILD-SPEC.md`) — steps 1→7. It is a good order; step 1 explicitly says nothing else until
-the chassis matches 2a.
-
-Two decisions to make before step 1, both in section 2 above: **the background** (2.1) and
-**resize vs fixed-pixel** (2.4).
+**Refine next** (see the Claude Code prompt): fold dead Activity view; wire real sources for
+remaining mockup gaps; Macropad HID only as a full subsystem; fidelity polish; rebuild exe.
 
 ---
 
