@@ -1,6 +1,13 @@
-Copy the Claude Code prompt to Downloads:
+Two prompts — use the right one:
 
-  copy "C:\Users\antho\nebula\design\ui-v3\NEBULA-UI-V3-CLAUDE-CODE-PROMPT.md" "C:\Users\antho\Downloads\NEBULA-UI-V3-CLAUDE-CODE-PROMPT.md"
+1) LOCAL CURSOR (Desktop Agent, this machine) — structural build pass
+   copy "C:\Users\antho\nebula\design\ui-v3\NEBULA-UI-V3-LOCAL-CURSOR-PROMPT.md" "C:\Users\antho\Downloads\NEBULA-UI-V3-LOCAL-CURSOR-PROMPT.md"
 
-Then open that file in Claude Code. Pull branch cursor/implement-mockup-v3-2b0d
-(or main after merge). Open Nebula UI Mockups v3.dc.html beside the live app.
+   Or without pulling first (PowerShell):
+   Invoke-WebRequest -Uri "https://raw.githubusercontent.com/theoriginalcheese/nebula/cursor/implement-mockup-v3-2b0d/design/ui-v3/NEBULA-UI-V3-LOCAL-CURSOR-PROMPT.md" -OutFile "$env:USERPROFILE\Downloads\NEBULA-UI-V3-LOCAL-CURSOR-PROMPT.md"
+
+2) CLAUDE CODE — final polish after Local Cursor is done
+   copy "C:\Users\antho\nebula\design\ui-v3\NEBULA-UI-V3-CLAUDE-CODE-PROMPT.md" "C:\Users\antho\Downloads\NEBULA-UI-V3-CLAUDE-CODE-PROMPT.md"
+
+Pull branch cursor/implement-mockup-v3-2b0d (or main after merge).
+Open Nebula UI Mockups v3.dc.html beside the live app.
