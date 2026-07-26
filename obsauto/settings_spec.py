@@ -89,8 +89,7 @@ FIELDS = (
           hint="Per-game folders are created in here."),
     Field("idle_timeout_seconds", "Idle timeout", "int", "recording",
           minimum=1, maximum=3600,
-          hint="Seconds of no input before recording auto-pauses. The "
-               "dashboard's Idle timeout slider writes this same value."),
+          hint="Seconds of no input before recording auto-pauses."),
     Field("min_clip_seconds", "Minimum clip", "int", "recording",
           minimum=0, maximum=3600,
           hint="Clips shorter than this are deleted when they finish \u2014 "
