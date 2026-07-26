@@ -84,12 +84,19 @@ and a mock keypad that does nothing would be a lie.
 ⚠️ Don't put fabricated numbers in the UI — the Games badge reads the classifier
 (`_game_count()`) and returns `None` (no badge) rather than inventing a count.
 
-## UI v3 — dashboard built, other panes still v2 (2026-07-26)
+## UI v3 — dashboard + tray built, other panes still v2 (2026-07-26)
 
-**Steps 1–2 of the v3 build order are done**: palette, geometry, backdrop, titlebar, rail, pane
-header (frame 2a) and the hero card with its four states (2a, 2f–2h), plus the stat tiles and
-activity header. Clips / Games / Macropad / Settings are **still v2's**, and the toast, tray
-menu and mini overlay don't exist. Full state and next actions: `CURSOR-PROMPT.md`.
+Work lives on branch **`ui-v3`**. **Steps 1–3 of the v3 build order are done**: palette,
+geometry, backdrop, titlebar, rail, pane header (frame 2a); the hero card with its four states
+(2a, 2f–2h) plus stat tiles and activity header; and the tray icon + menu (2j). Clips / Games /
+Macropad / Settings are **still v2's**, and the toast and mini overlay don't exist. Full state
+and next actions: `CURSOR-PROMPT.md`.
+
+**The tray is state-driven** (`icon_art.render_state_icon`, `AppWindow.tray_status()`): three
+icons — idle accent outline, recording ember filled, disconnected neutral-with-a-slash — and a
+menu whose text is callables, re-evaluated each time it opens. Quit exists **only** there; both
+`−` and `×` hide. `tests/test_tray.py` covers it, including that the icons stay
+distinguishable once shrunk to 16px.
 
 **The hero is one enum.** `_set_hero_state()` owns the eyebrow, tint, both button labels *and*
 both button bindings for `disconnected | watching | recording | paused` (v2's `"offline"` was
@@ -186,8 +193,13 @@ frames (~9fps), one core at 95%**. Removing all of it gives **p50 16ms at ~4%**.
 
 The backdrop (nebula drift, glow breathing, star twinkle), the hero equaliser and the REC dot
 pulse are therefore all **static by design**. What remains mutates the canvas at most once a
-second, and only while recording. The tray icon still animates — separate surface, never touches
-this window. `tests/test_frame_pacing.py` fails if a per-frame timer comes back.
+second, and only while recording. `tests/test_frame_pacing.py` fails if a per-frame timer comes
+back.
+
+The tray icon used to animate — a separate surface, so it was never part of this problem — but
+v3 retired the spin anyway: frame 2j wants the icon to *mean* something (idle / recording /
+disconnected), and a permanent 12fps rotation said nothing while redrawing forever. It is now
+three static icons swapped on state change.
 
 > Two earlier diagnoses of this were **wrong** and cost time: "it's the big image moves" (no —
 > a 2px star costs the same) and "it's the extra views' widgets" (no — dashboard-only is barely
@@ -223,6 +235,7 @@ this window. `tests/test_frame_pacing.py` fails if a per-frame timer comes back.
   python tests/test_list_views.py      # Recordings/Games actually populate (real mainloop)
   python tests/test_frame_pacing.py    # visible-window frame budget (briefly shows the window)
   python tests/test_design_v3.py       # v3 contract vs design/ui-v3/BUILD-SPEC.md (no GUI)
+  python tests/test_tray.py            # tray icon states + menu contract (frame 2j)
   ```
   ⚠️ Anything async **must** be tested under a real `mainloop()`. Tk refuses a cross-thread
   `root.after()` when driven by `update()`-pumping, and `_ui()` swallows that — so an

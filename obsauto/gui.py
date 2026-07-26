@@ -404,6 +404,8 @@ class AppWindow:
         self.tray_icon = None  # set by main.py after the tray icon is built
         self._tray_game = None
         self._tray_idle = False
+        self._tray_elapsed = ""       # mirrors the hero timer for the tray tooltip
+        self._tray_icon_state = None  # last icon pushed, so we only swap on change
         self._is_recording = False  # tracked from OBS's own GetRecordStatus, not a client-side timestamp
         self._is_paused = False
         self._images = []  # keeps PhotoImage refs alive - Tk GCs them otherwise
@@ -2248,18 +2250,24 @@ class AppWindow:
                     total_seconds = status.get("outputDuration", 0) // 1000
                     hh, rem = divmod(total_seconds, 3600)
                     mm, ss = divmod(rem, 60)
-                    self.bg.itemconfigure(self.timer_label_id, text=f"{hh:02d}:{mm:02d}:{ss:02d}")
+                    self._tray_elapsed = f"{hh:02d}:{mm:02d}:{ss:02d}"
+                    self.bg.itemconfigure(self.timer_label_id, text=self._tray_elapsed)
                     written = status.get("outputBytes", 0)
                     self.bg.itemconfigure(self.storage_label_id, text=_format_bytes(written))
                     self._update_bitrate(status.get("outputDuration", 0), written)
             except OBSError:
                 pass
 
+        was = (self._is_recording, self._is_paused, self._obs_connected)
         self._is_paused = is_paused
         self._is_recording = is_recording
+        self._obs_connected = bool(self.obs.connected)
+        if was != (is_recording, is_paused, self._obs_connected):
+            self._update_tray_tooltip()   # icon + tooltip follow the real state
 
         if not is_recording:
             self._bitrate_sample = None
+            self._tray_elapsed = ""
 
         # The hero card owns the badge/border/readout visibility; pick the state
         # that matches what OBS and the monitor are actually doing right now.
@@ -2529,15 +2537,67 @@ class AppWindow:
             self._update_tray_tooltip()
         self.root.after(0, apply)
 
+    # ---- tray (frame 2j) ----
+    def tray_status(self):
+        """Everything the tray menu and tooltip need, in one snapshot.
+
+        Called from pystray's thread each time the menu is opened, so it only
+        reads plain attributes - no Tk calls, nothing that could block.
+        """
+        if not self._obs_connected:
+            state = "disconnected"
+        elif self._is_recording and self._is_paused:
+            state = "paused"
+        elif self._is_recording:
+            state = "recording"
+        else:
+            state = "idle"
+
+        heading = {
+            "recording": "Recording",
+            "paused": "Paused",
+            "idle": "Watching for a game",
+            "disconnected": "OBS disconnected",
+        }[state]
+
+        game = self._current_game or self._tray_game
+        elapsed = getattr(self, "_tray_elapsed", "")
+        if state in ("recording", "paused") and game:
+            detail = f"{game} · {elapsed}" if elapsed else game
+        elif state == "disconnected":
+            detail = f"{self.config.get('obs_host', 'localhost')}:{self.config.get('obs_port', 4455)}"
+        elif game:
+            detail = game
+        else:
+            detail = "No game in focus"
+
+        return {
+            "state": state,
+            "heading": heading,
+            "detail": detail,
+            "monitoring": self._monitoring_on,
+        }
+
     def _update_tray_tooltip(self):
+        """Tooltip and icon both follow the state - "tooltip = game + elapsed"."""
         if not self.tray_icon:
             return
-        if self._tray_game:
-            text = f"Recording: {self._tray_game}"
-        elif self._tray_idle:
-            text = "Nebula - idle"
-        else:
-            text = "Nebula - watching for a game"
+        status = self.tray_status()
+        # The tray icon's three states collapse paused into recording: the
+        # spec names idle / recording / disconnected, and a paused recording is
+        # still a live one as far as the tray is concerned.
+        icon_state = "recording" if status["state"] in ("recording", "paused") else (
+            "disconnected" if status["state"] == "disconnected" else "idle")
+        try:
+            icons = getattr(self.tray_icon, "_nebula_icons", None)
+            if icons and getattr(self, "_tray_icon_state", None) != icon_state:
+                self.tray_icon.icon = icons[icon_state]
+                self._tray_icon_state = icon_state
+        except Exception:
+            pass
+        text = f"Nebula — {status['heading']}"
+        if status["detail"] and status["state"] != "disconnected":
+            text += f"\n{status['detail']}"
         try:
             self.tray_icon.title = text[:127]  # Windows tray tooltip length limit
         except Exception:
@@ -2647,9 +2707,17 @@ class AppWindow:
         self._log("[Monitor] Auto-started.")
 
     def _on_connection_change(self, connected):
+        # _obs_connected was declared in __init__ and then never assigned - it
+        # sat False for the whole run. Nothing read it until the v3 tray needed
+        # a "disconnected" state, at which point a permanently-false flag would
+        # have pinned the tray icon to the slashed variant forever. Keep it in
+        # step here and in _poll_obs_status, which is the other place the truth
+        # is observed.
+        self._obs_connected = bool(connected)
         self.root.after(0, lambda: self._set_obs_status(
             *(("Connected", GREEN) if connected else ("Reconnecting...", RED))
         ))
+        self.root.after(0, self._update_tray_tooltip)
 
     def _stop(self):
         self._abort_connect = True  # cancel any connect attempt still in flight

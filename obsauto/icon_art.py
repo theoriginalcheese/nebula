@@ -65,6 +65,61 @@ def _draw_tilted_ellipse(base_img, cx, cy, rx, ry, tilt_deg, color, width):
     base_img.alpha_composite(layer, (int(cx - pad / 2), int(cy - pad / 2)))
 
 
+# ---------------------------------------------------------------------------
+# v3 tray states (frame 2j)
+# ---------------------------------------------------------------------------
+# "Tray icon states: idle = accent outline, recording = ember filled,
+#  disconnected = neutral with a slash."
+#
+# This replaces the constantly-spinning tray animation. The spec asks the icon
+# to *mean* something - which state the app is in - and a 12fps spin says
+# nothing while redrawing the icon 12 times a second forever. Three static
+# icons, swapped on state change, carry more information for no ongoing cost.
+
+EMBER = (255, 92, 122, 255)      # matches design_v3.EMBER
+NEUTRAL = (154, 147, 196, 255)   # matches design_v3.TEXT_SECONDARY
+
+TRAY_STATES = ("idle", "recording", "disconnected")
+
+
+def render_state_icon(state, size=64, supersample=4):
+    """The tray mark in one of the three v3 states."""
+    if state not in TRAY_STATES:
+        raise ValueError(f"unknown tray state: {state!r}")
+    s = size * supersample
+    img = Image.new("RGBA", (s, s), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(img)
+    cx = cy = s / 2
+    ring_w = max(int(s * 0.05), 2)
+
+    color = {"idle": VIOLET, "recording": EMBER, "disconnected": NEUTRAL}[state]
+
+    _draw_tilted_ellipse(img, cx, cy, s * 0.46, s * 0.46 * 0.6, 22, color, ring_w)
+
+    if state == "recording":
+        # Filled: the one state that should read as "live" at a glance.
+        _draw_sparkle(draw, cx, cy, s * 0.34, color)
+    else:
+        # Outline: same silhouette, drawn as a stroke. PIL's polygon has no
+        # outline width, so stroke it as a closed line loop.
+        points = _four_point_star(cx, cy, s * 0.34, s * 0.34 * 0.34)
+        draw.line(points + [points[0]], fill=color, width=max(int(s * 0.035), 2),
+                  joint="curve")
+
+    if state == "disconnected":
+        # A slash across the whole mark - unmistakable at 16px, where a colour
+        # change alone is not.
+        pad = s * 0.16
+        draw.line([(pad, s - pad), (s - pad, pad)], fill=color,
+                  width=max(int(s * 0.075), 2))
+
+    return img.resize((size, size), Image.LANCZOS)
+
+
+def generate_state_icons(size=64):
+    return {state: render_state_icon(state, size=size) for state in TRAY_STATES}
+
+
 def generate_static_icon(size=256):
     return render_frame(size=size, ring_rotation=0.0)
 

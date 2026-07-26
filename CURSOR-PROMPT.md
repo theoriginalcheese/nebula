@@ -115,7 +115,9 @@ performance lesson), `nebula-dpi-scaling`, `nebula-roadmap-ideas`, `obs-auto-fol
 
 <!-- STATE:BEGIN — keep this block current; it is the whole point of the file -->
 
-**Updated:** 2026-07-26 — **steps 1 and 2 are done and verified. Step 3 is next.**
+**Updated:** 2026-07-26 — **steps 1–3 are done and verified. Step 4 (the toast) is next.**
+
+Committed on local branch **`ui-v3`** (not pushed; `main` untouched).
 
 **Done — the import and the contract**
 - v3 design files imported to `design/ui-v3/` from Claude Design project
@@ -182,14 +184,41 @@ performance lesson), `nebula-dpi-scaling`, `nebula-roadmap-ideas`, `obs-auto-fol
 - **Tests: 137 checks + frame pacing, all green.** `test_views.py` grew to 59, including a
   four-state hero matrix and the bitrate derivation. Frame pacing still **p50 16.1ms**.
 
-**Not started — step 3 onward**
-- Steps 3–7: tray/chrome rework, single-slot toast, Clips, Settings, Games, Macropad,
-  mini overlay. Step 3 is next: `−` and `×` already both hide, but the tray menu still needs
-  the 2j treatment (header block that isn't a menu item, Quit only there, icon per state).
+**Done — step 3, tray + window chrome (frame 2j)**
+- **Three tray icon states** from `icon_art.render_state_icon()` — idle = accent outline,
+  recording = ember filled, disconnected = neutral with a slash. A test asserts they stay
+  distinguishable **after shrinking to 16px**, which is why disconnected gets a slash and not
+  just a colour change.
+- **The permanent 12fps tray animation is gone.** The spec wants the icon to mean something;
+  a spin meant nothing and redrew forever. `CLAUDE.md`'s old "the tray icon still animates"
+  line was corrected.
+- **Menu matches 2j**: a disabled two-line header (state, then `game · elapsed`), Show Nebula
+  as the `default` item so a single click opens the window, Pause/Stop **only visible while
+  recording** (Pause becomes Resume when paused), a Monitoring toggle carrying a checkmark,
+  Open recordings, and Quit Nebula. Menu text is callables, so it is re-evaluated each time
+  the menu opens; every action marshals back to the Tk thread via `root.after(0, ...)`.
+- **Header block honesty**: the spec says it is "not a menu item — not hoverable, not
+  clickable". A native Win32 tray menu can only contain items, so the true equivalent is a
+  **disabled** item, which Windows neither highlights nor activates. Two of them, since an
+  item can't be two lines. Verified with real pystray, not just the stub.
+- 🐛 **Fixed a pre-existing bug**: `_obs_connected` was declared in `__init__` and then
+  *never assigned* — it sat `False` for the entire run. Nothing read it until the tray needed a
+  disconnected state, which would have pinned the icon to the slashed variant forever. It is
+  now kept in step in both `_on_connection_change` and `_poll_obs_status`.
+- `tests/test_tray.py` — 26 checks, no OBS and no real tray registration needed.
+
+**Not started — step 4 onward**
+- **Step 4 (next): the single-slot toast.** The spec is emphatic: one toast ever, a new event
+  **replaces the current one in place** — never a stack, never a queue — and
+  "build the replace path before the visuals". 4s life, 2px drain line left→right that resets
+  to full on replace, hover freezes the drain, click focuses the window. Bottom-right of the
+  **active** screen, 24px from both edges. There is an existing `_show_notification()` in
+  `gui.py` that slides a popup in; it needs reworking to the replace-in-place contract.
+- Steps 5–7: Clips, Settings, Games, Macropad, mini overlay.
 - **Transitional wart**: v3 has no standalone Activity page (it's a dashboard block), but the
   `activity` view is still registered and still mirrors the log, because `_log()` writes to
   both consoles. Not reachable from the rail — see `gui.RAIL_VIEWS`. Fold it away when
-  convenient; it was left alone in step 2 to avoid churning the log plumbing.
+  convenient; it was left alone to avoid churning the log plumbing.
 
 **Deliberate departures from the frames — don't "fix" these without deciding**
 - **No "Mark clip" button** (frame 2a shows three). There is no clip-marking backend, and a
