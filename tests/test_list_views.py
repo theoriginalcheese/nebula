@@ -11,6 +11,7 @@ worse, fail a working one. This bit twice during development; hence its own file
 """
 import os
 import sys
+import tempfile
 import traceback
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -25,7 +26,20 @@ from obsauto.classifier import Classifier
 from obsauto.config import load_config
 from obsauto.gui import AppWindow
 
-app = AppWindow(load_config(), Classifier(), on_close_to_tray=lambda: None)
+# Point recording_root at a real temp tree so this passes on Linux cloud boxes
+# that have no D: drive. The default config path is Windows-only and would make
+# the Recordings view render "Couldn't read …" — which is honest in production
+# but not what this test is checking.
+tmp_root = tempfile.mkdtemp(prefix="nebula-list-views-")
+game_dir = os.path.join(tmp_root, "Zenless Zone Zero")
+os.makedirs(game_dir)
+with open(os.path.join(game_dir, "clip1.mkv"), "wb") as fh:
+    fh.write(b"\x00" * 64)
+
+cfg = load_config()
+cfg["recording_root"] = tmp_root
+
+app = AppWindow(cfg, Classifier(), on_close_to_tray=lambda: None)
 app.root.withdraw()
 
 callback_errors = []

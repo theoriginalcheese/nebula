@@ -740,22 +740,25 @@ class AppWindow:
             cx + 34, oy + 33, anchor="w", text=self._obs_endpoint(),
             fill=FAINT, font=("Segoe UI", 10))
 
-        # Monitoring toggle row - clickable, flips monitoring on/off (same
-        # action as the hotkey), with the bound key shown as a keycap.
+        # Monitoring toggle row - matches the Aurora mockup: label + switch.
+        # Clickable (same action as the hotkey). The bound key stays as a
+        # keycap between the label and the switch so a rebind is visible here.
         my = HEIGHT - 60
         self._mon_tile = self._glass(cx, my, cw, 44, tint=CARD_TINT, radius=11,
                                      tint_alpha=110, border_hex=CARD_BORDER, border_alpha=30)
-        self._mon_icon = self.bg.create_text(cx + 16, my + 22, anchor="w", text="◉",
-                                            fill=ACCENT, font=("Segoe UI Symbol", 14))
-        self._mon_label = self.bg.create_text(cx + 36, my + 22, anchor="w",
+        self._mon_label = self.bg.create_text(cx + 16, my + 22, anchor="w",
                                             text="Monitoring off", fill=TEXT_SOFT,
                                             font=("Segoe UI", 12))
-        self._keycap_geom = (cx + cw - 24, my + 22)
+        self._keycap_geom = (cx + cw - 58, my + 22)
         self._keycap_items = []
         self._set_keycap(self.config.get("toggle_hotkey"))
+        # iOS-style switch on the far right (mockup: purple when on).
+        self._mon_switch_geom = (cx + cw - 38, my + 14, 34, 16)
+        self._mon_switch_track, self._mon_switch_knob = self._draw_toggle(
+            *self._mon_switch_geom, on=False)
         # Whole tile is the hit target.
         hit = self.bg.create_rectangle(cx, my, cx + cw, my + 44, fill="", outline="")
-        for item in (hit, self._mon_icon, self._mon_label):
+        for item in (hit, self._mon_label, self._mon_switch_track, self._mon_switch_knob):
             self.bg.tag_bind(item, "<Button-1>", lambda _e: self._toggle_monitoring())
             self.bg.tag_bind(item, "<Enter>", lambda _e: self.bg.configure(cursor="hand2"))
             self.bg.tag_bind(item, "<Leave>", lambda _e: self.bg.configure(cursor=""))
@@ -802,6 +805,22 @@ class AppWindow:
 
     def _obs_endpoint(self):
         return f"{self.config.get('obs_host', 'localhost')}:{self.config.get('obs_port', 4455)}"
+
+    def _draw_toggle(self, x, y, w, h, on):
+        """Pill track + circular knob (Aurora mockup). Returns (track, knob)."""
+        track_img = make_solid_tile(
+            self._S(w), self._S(h),
+            ACCENT if on else SURFACE,
+            radius=self._S(h / 2),
+        )
+        track_photo = to_photo(track_img)
+        self._images.append(track_photo)
+        track = self.bg.create_image(x, y, anchor="nw", image=track_photo)
+        knob_d = h - 4
+        knob_x = (x + w - knob_d - 2) if on else (x + 2)
+        knob = self.bg.create_oval(knob_x, y + 2, knob_x + knob_d, y + 2 + knob_d,
+                                  outline="", fill=TEXT)
+        return track, knob
 
     def _set_keycap(self, binding):
         """(Re)draw the nav rail's keycap chip for the current hotkey. Drawn
@@ -1958,15 +1977,25 @@ class AppWindow:
 
     def _refresh_sync_tile(self, pending=None):
         """Paint the Sync tile from live state: whether the game list is going
-        to GitHub or staying local, and what the NAS queue is doing. Called on
-        build, whenever the offloader reports progress, and after the sync or
-        offload settings are edited."""
+        to GitHub / the legacy OneDrive folder or staying local, and what the
+        NAS queue is doing. Called on build, whenever the offloader reports
+        progress, and after the sync or offload settings are edited.
+
+        Top-line labels match the Aurora mockup's "OneDrive" / "synced" happy
+        path when those are what's configured; GitHub takes priority when on."""
         if not hasattr(self, "_stat_sync_val"):
             return
         gh_on = bool(self.gamesync and self.gamesync.enabled)
-        self.bg.itemconfigure(self._stat_sync_val,
-                              text="GitHub" if gh_on else "Local",
-                              fill=TEXT if gh_on else MUTED)
+        sync_folder = (self.config.get("sync_folder") or "").strip()
+        if gh_on:
+            top, top_fill = "GitHub", TEXT
+        elif sync_folder and "onedrive" in sync_folder.lower().replace("\\", "/"):
+            top, top_fill = "OneDrive", TEXT
+        elif sync_folder:
+            top, top_fill = "Synced", TEXT
+        else:
+            top, top_fill = "Local", MUTED
+        self.bg.itemconfigure(self._stat_sync_val, text=top, fill=top_fill)
         offload_on = bool(self.offloader and self.offloader.enabled)
         if pending is None and self.offloader is not None:
             pending = self.offloader.pending_count()
@@ -1974,8 +2003,10 @@ class AppWindow:
             text = f"NAS: {pending} queued"
         elif offload_on:
             text = "NAS: up to date"
+        elif gh_on or sync_folder:
+            text = "synced"
         else:
-            text = "game list" if gh_on else "local only"
+            text = "local only"
         self.bg.itemconfigure(self._stat_sync_sub, text=text)
 
     def on_offload_state(self, pending):
@@ -2104,7 +2135,24 @@ class AppWindow:
         self.bg.itemconfigure(self._mon_label,
                               text="Monitoring on" if on else "Monitoring off",
                               fill=NAV_ACTIVE_TEXT if on else TEXT_SOFT)
-        self.bg.itemconfigure(self._mon_icon, fill=ACCENT if on else FAINT)
+        # Rebuild the switch at its fixed geometry so the knob slides and the
+        # track recolours. Cheap: two canvas items, only on user toggle.
+        if hasattr(self, "_mon_switch_geom"):
+            x, y, w, h = self._mon_switch_geom
+            try:
+                self.bg.delete(self._mon_switch_track)
+                self.bg.delete(self._mon_switch_knob)
+            except Exception:
+                pass
+            self._mon_switch_track, self._mon_switch_knob = self._draw_toggle(
+                x, y, w, h, on=on)
+            for item in (self._mon_switch_track, self._mon_switch_knob):
+                self.bg.tag_bind(item, "<Button-1>",
+                                 lambda _e: self._toggle_monitoring())
+                self.bg.tag_bind(item, "<Enter>",
+                                 lambda _e: self.bg.configure(cursor="hand2"))
+                self.bg.tag_bind(item, "<Leave>",
+                                 lambda _e: self.bg.configure(cursor=""))
 
     # ---- logging ----
     def _log(self, message):

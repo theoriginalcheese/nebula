@@ -51,8 +51,9 @@ Most-connected hubs (start here when orienting): `AppWindow`, `OBSClient`, `Moni
 A 1180×760 fixed-pixel canvas design (base design units; `self.scale` multiplies everything
 for high-DPI — see the DPI notes below). Built by five `_build_*` methods:
 - `_build_sidebar` — 236px nav rail: logo, WORKSPACE nav items, and at the bottom the OBS
-  connection card + clickable "Monitoring on/off" toggle (same action as the hotkey).
-- `_build_topbar` — title, Rescan / Game data ghost buttons, minimise + close.
+  connection card + clickable "Monitoring on/off" row with a pill switch (same action as
+  the hotkey; the bound keycap sits beside the switch).
+- `_build_topbar` — title, Customise / Game data / Rescan ghost buttons, minimise + close.
 - `_build_hero` — the cinematic status card. `_set_hero_state()` switches it between
   **offline / watching / recording / paused**, owning the badge, subtitle, border tint,
   readout visibility and transport buttons. `_poll_obs_status()` picks the state from OBS's
@@ -71,11 +72,11 @@ each builder — so builders stay plain drawing code with no bookkeeping. Switch
   widgets sample the shell and not whichever view happened to paint there first.
 
 ### Rearrangeable dashboard
-Dashboard panels are additionally tagged `blk_<name>`. A canvas `move()` shifts every item
-with a tag (embedded widget windows included), so reordering is pure translation — which is
-why block heights are **fixed** (`DEFAULT_BLOCKS`, `BLOCK_GAP`). Order persists as
-`dashboard_layout` in config.json; `_saved_layout()` drops unknown names and appends missing
-ones so a hand-edited file can never lose a panel.
+Dashboard panels are additionally tagged `blk_<name>`. The layout is a 2-column tile grid
+(`dashboard_grid`: ordered `{name, span}` list; consecutive half-spans pair side by side).
+Block heights are **fixed** per `(block, span)` so laying out is pure arithmetic.
+`_saved_grid()` drops unknown names and appends missing ones so a hand-edited file can
+never lose a panel. Old `dashboard_layout` lists are migrated then retired.
 
 Views backed by real data: Recordings (scans `recording_root`), Games (reads the classifier),
 Activity, Settings (edits `config.json` — see below). **Macropad is deliberately empty** —
