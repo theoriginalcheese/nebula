@@ -40,6 +40,7 @@ and `RESOURCE_DIR` (`sys._MEIPASS` when frozen) only for bundled read-only asset
 | `obsauto/audio_detect.py` | `AudioKeepAlive` | Detect whether a watched app (e.g. Discord) is producing audio |
 | `obsauto/session_detect.py` | `moonlight_session_active()` | Detect a live Moonlight streaming session |
 | `obsauto/config.py` | `load_config()`, `save_config()` | Config persistence |
+| `obsauto/settings_spec.py` | `FIELDS`, `parse()`, `render()` | Declares what the Settings view edits + pure validation (no Tk, so it's unit-testable) |
 | `obsauto/paths.py` | `APP_DIR`, `RESOURCE_DIR` | Dev vs. frozen-onefile path resolution |
 | `obsauto/app_log.py` | `setup_logging()`, `log_to_file()` | File logging (works under silent `pythonw`) |
 | `obsauto/tray_app.py`, `theme_art.py`, `icon_art.py` | — | Tray icon + generated icon/theme art |
@@ -77,11 +78,38 @@ why block heights are **fixed** (`DEFAULT_BLOCKS`, `BLOCK_GAP`). Order persists 
 ones so a hand-edited file can never lose a panel.
 
 Views backed by real data: Recordings (scans `recording_root`), Games (reads the classifier),
-Activity, Settings (read-only). **Macropad is deliberately empty** — there's no binding layer,
-and a mock keypad that does nothing would be a lie.
+Activity, Settings (edits `config.json` — see below). **Macropad is deliberately empty** —
+there's no binding layer, and a mock keypad that does nothing would be a lie.
 
 ⚠️ Don't put fabricated numbers in the UI — the Games badge reads the classifier
 (`_game_count()`) and returns `None` (no badge) rather than inventing a count.
+
+### Settings view (editable, applies live)
+Rows are generated from `settings_spec.FIELDS`, not hand-positioned — add a setting there
+and the page grows a row. `parse()`/`render()` are pure inverses (a test asserts every
+`DEFAULTS` value round-trips, so opening the page and pressing Save is a guaranteed no-op).
+
+- **Validation is all-or-nothing on Save.** One bad field means nothing is written, so you
+  can never half-apply a batch. `_settings_reload()` re-reads config on every visit to the
+  page, which is what keeps it honest about the dashboard's idle slider and hand-edits —
+  the flip side being that unsaved typing is dropped when you navigate away. That's the
+  right way round: the page must never show a value that isn't in effect.
+- **`_apply_settings(changed)` is the live-apply seam.** Most keys need nothing (the monitor
+  re-reads `self.config` every tick, the offloader per item). It handles the objects that
+  snapshot config — `OBSClient` host/port/password, `AudioKeepAlive.set_processes()`,
+  `GameSync.configure()`, `Offloader.refresh()`, the global hotkey — plus the chrome that
+  displays a config value (sidebar endpoint, keycap, folder chip, Sync tile).
+- **Only `sync_folder` needs a restart** (`Field(restart=True)`), because `_apply_sync_folder()`
+  repoints the classifier's data file before `Classifier()` is constructed.
+- **A path that doesn't exist is a warning, never an error.** An unmounted NAS or a drive on
+  the other machine must be configurable ahead of time — the offloader is explicitly built
+  to queue and retry, so refusing the value would break the documented setup order.
+- **Never log a secret's value.** The save line lists changed *key names* only;
+  `github_token`/`obs_password` go through it and the activity log is on screen and on disk.
+- ⚠️ **Repaint budget.** A text field costs one window composite per keystroke and there is
+  no way around that — so spend exactly that and no more. Nothing here validates, restyles
+  or updates the status line as you type. What made the old animation fatal was repainting
+  *without* input; a form only costs while it's being used. Don't add live validation.
 
 ## Config (`config.json`)
 - OBS: `obs_host` localhost, `obs_port` 4455, `obs_password` empty (obs-websocket v5)
@@ -144,6 +172,10 @@ this window. `tests/test_frame_pacing.py` fails if a per-frame timer comes back.
   booting). `autostart()` used to do this inline and froze the whole window for seconds on
   launch, then again on every 10s retry. It now runs on a worker and marshals back via
   `_ui()`; `_abort_connect` stops a in-flight attempt from restarting monitoring after a stop.
+  Corollary: a stop-then-start (repointing OBS from Settings) can't just call `autostart()`,
+  which no-ops while `_connecting` — the in-flight attempt then resolves against the
+  `_abort_connect` the stop just set and neither connects nor retries, leaving monitoring off
+  for good. `_restart_monitoring()` waits (bounded) for the flight to land first.
 - **`_regen_glass()` results are cached** (`_glass_cache`). Regenerating the hero panel costs
   ~35ms and it's re-rendered on every state change plus 5× per flash — uncached, a game
   switch stalled the UI ~200ms *and* leaked a PhotoImage per frame.
@@ -165,6 +197,7 @@ this window. `tests/test_frame_pacing.py` fails if a per-frame timer comes back.
   python tests/test_views.py           # every tab opens; modular layout reorders + persists
   python tests/test_list_views.py      # Recordings/Games actually populate (real mainloop)
   python tests/test_frame_pacing.py    # visible-window frame budget (briefly shows the window)
+  python tests/test_settings.py        # Settings round-trips, validates, and applies live
   ```
   ⚠️ Anything async **must** be tested under a real `mainloop()`. Tk refuses a cross-thread
   `root.after()` when driven by `update()`-pumping, and `_ui()` swallows that — so an

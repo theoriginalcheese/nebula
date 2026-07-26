@@ -57,8 +57,13 @@ The whole thing is a fixed-pixel canvas design with a generated nebula backdrop 
 translucent glass panels, scaled by one uniform factor so it stays crisp and proportional on
 high-DPI displays.
 
-> The nav rail's other destinations (Recordings, Games, Activity, Macropad, Settings) are
-> scaffolded but not yet implemented — Dashboard is the working view.
+The rest of the nav rail: **Recordings** lists your per-game folders with clip counts and
+sizes, **Games** shows what the classifier has learned, **Activity** is the full session log,
+and **Settings** edits every option below — validated, and applied to the running app rather
+than on next launch.
+
+> **Macropad** is the one destination that's deliberately empty. There's no binding layer yet,
+> and a mock keypad that did nothing would be a lie.
 
 ## Requirements
 
@@ -95,19 +100,25 @@ Produces a single-file, windowed `dist/Nebula.exe` — no separate Python instal
 
 ## Configuration
 
-Settings live in `config.json` next to the executable (created on first run):
+Settings live in `config.json` next to the executable (created on first run). You can edit
+all of them in the app under **Settings**, which validates before it writes and applies the
+result immediately — no restart, with one exception noted in the table. Editing the file by
+hand still works; the page re-reads it every time you open it.
 
 | Key | Default | What it does |
 |-----|---------|--------------|
 | `obs_host` / `obs_port` | `localhost` / `4455` | obs-websocket connection |
 | `obs_password` | *(empty)* | obs-websocket password, if you've set one |
 | `recording_root` | `D:/OBS Recordings` | Where per-game folders are created |
-| `sync_folder` | *(empty — local only)* | Where `games.json` lives. Point it at e.g. `OneDrive/ObsAutoFolder` so classifications follow you between machines |
+| `sync_folder` | *(empty — local only)* | Legacy folder sync for `games.json`, superseded by the GitHub sync below. **The one setting that needs a restart** — the classifier resolves its data path at launch |
 | `idle_timeout_seconds` | `4` | Idle time before recording auto-pauses |
 | `poll_interval_seconds` | `1` | How often the monitor checks the foreground window |
 | `min_clip_seconds` | `10` | Clips shorter than this are auto-deleted (catches a window that just flickered) |
+| `keep_alive_audio_processes` | `["discord.exe"]` | While one of these is producing audio, recording won't auto-pause on idle |
 | `obs_path` | — | OBS executable, used to auto-launch it if it isn't running |
+| `reconnect_interval_seconds` | `10` | How often to retry launching/connecting while OBS is unreachable |
 | `toggle_hotkey` | — | Global key to toggle monitoring on/off |
+| `toggle_hotkey_scancode` | `41` | Optional: bind this exact physical key instead of resolving the name (needed when one character maps to several scan codes) |
 | `github_token` | *(empty)* | Token with `repo` scope for the game-list sync. **Local only — never committed or synced.** |
 | `github_gamedata_repo` | *(empty)* | `owner/name` of the private repo holding `games.json` |
 | `github_gamedata_path` | `games.json` | File path within that repo |
@@ -134,7 +145,8 @@ Settings live in `config.json` next to the executable (created on first run):
 | `obsauto/obs_client.py` | Minimal obs-websocket v5 client |
 | `obsauto/classifier.py` | Game vs non-game classification (Steam-aware) |
 | `obsauto/steam_scanner.py` | Scans Steam libraries, parses VDF, classifies AppIDs |
-| `obsauto/gui.py` | The Aurora UI (nav-rail shell, tile-grid dashboard) |
+| `obsauto/gui.py` | The Aurora UI (nav-rail shell, tile-grid dashboard, Settings editor) |
+| `obsauto/settings_spec.py` | What Settings can edit, plus the validation behind it |
 | `obsauto/gamesync.py` | Game-list sync via the GitHub contents API (merge-safe, fails soft) |
 | `obsauto/offload.py` | Copy-verify-delete recording offload to the NAS |
 | `obsauto/theme_art.py` | Generates the nebula backdrop and glass panels |
@@ -148,6 +160,7 @@ python tests/test_async_connect.py   # async OBS connect, error handling
 python tests/test_views.py           # nav views + tile-grid dashboard
 python tests/test_list_views.py      # Recordings/Games populate
 python tests/test_frame_pacing.py    # visible-window frame budget
+python tests/test_settings.py        # Settings round-trips, validates, applies live
 python tests/test_gamesync.py        # game-list sync (mocked GitHub API)
 python tests/test_offload.py         # NAS offload safety invariants
 python tests/stress_test.py          # integrated stress under adverse load
