@@ -911,6 +911,7 @@ class AppWindow:
             # in effect (the dashboard slider and a hand-edited config.json both
             # change things behind its back).
             self._settings_reload()
+            self._claim_focus()
 
     # ---- content column: geometry ----
     # The main column lives to the right of the nav rail. Everything here is in
@@ -1447,12 +1448,16 @@ class AppWindow:
                      width=138, font=ctk.CTkFont(size=12)).pack(side="left")
 
         if field.kind == "choice":
-            widget = ctk.CTkOptionMenu(
-                row, values=list(field.choices), width=120, height=28,
-                fg_color=SURFACE, button_color=SURFACE, button_hover_color=SURFACE_HOVER,
-                text_color=TEXT, dropdown_fg_color=CARD_SURFACE,
-                dropdown_text_color=TEXT_SOFT, dropdown_hover_color=SURFACE_HOVER,
-                corner_radius=8, font=ctk.CTkFont(size=12),
+            # A segmented button rather than a dropdown: both options stay
+            # readable (which matters when one of them deletes local files), and
+            # it avoids opening a native menu popup over an overrideredirect
+            # window, where Windows' stacking rules are not on our side.
+            widget = ctk.CTkSegmentedButton(
+                row, values=list(field.choices), height=28, corner_radius=8,
+                fg_color=SURFACE, selected_color=ACCENT_TINT,
+                selected_hover_color=SURFACE_HOVER, unselected_color=SURFACE,
+                unselected_hover_color=SURFACE_HOVER, text_color=TEXT_SOFT,
+                font=ctk.CTkFont(size=12),
             )
             widget.pack(side="left")
         else:
@@ -1471,10 +1476,19 @@ class AppWindow:
                 self._settings_secrets.append(widget)
             # Enter saves, so the form is usable without reaching for the mouse.
             widget.bind("<Return>", lambda _e: self._save_settings())
+            # The main window is overrideredirect, i.e. not a normally
+            # activatable window - clicking it doesn't reliably hand Windows'
+            # keyboard focus over, and typing would go to whatever was focused
+            # before. Claiming focus on click makes the field actually typeable.
+            # add="+" so CTkEntry's own click handling (caret placement,
+            # selection) still runs.
+            widget.bind("<Button-1>", lambda _e: self._claim_focus(), add="+")
 
         hint = field.hint
         if field.restart:
-            hint = (hint + "  " if hint else "") + "Needs a restart."
+            reason = field.restart if isinstance(field.restart, str) else ""
+            marker = f"Needs a restart — {reason}." if reason else "Needs a restart."
+            hint = (hint + "  " if hint else "") + marker
         if hint:
             ctk.CTkLabel(card, text=hint, text_color=FAINT, anchor="w",
                          justify="left", wraplength=640,
@@ -1483,6 +1497,12 @@ class AppWindow:
         else:
             ctk.CTkFrame(card, fg_color="transparent", height=4).pack(fill="x")
         self._settings_widgets[field.key] = widget
+
+    def _claim_focus(self):
+        try:
+            self.root.focus_force()
+        except Exception:
+            pass
 
     def _apply_secret_masking(self):
         show = bool(self._settings_show_secrets.get())

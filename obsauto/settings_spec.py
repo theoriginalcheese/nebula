@@ -33,6 +33,8 @@ class Field:
 
     def __init__(self, key, label, kind="text", group="", hint="",
                  minimum=None, maximum=None, choices=(), restart=False):
+        # `restart` is either False (applies live) or the reason it can't, so
+        # the view can say *why* rather than just refusing to be helpful.
         self.key = key
         self.label = label
         self.kind = kind
@@ -130,11 +132,11 @@ FIELDS = (
                "deletes the original after the NAS copy is SHA-256 verified."),
 
     # ---- Legacy ----
-    Field("sync_folder", "Sync folder", "path", "legacy", restart=True,
+    Field("sync_folder", "Sync folder", "path", "legacy",
+          restart="the classifier resolves its data path at launch",
           hint="Old folder-based sync for games.json, superseded by the GitHub "
                "sync above \u2014 leave blank. A relative path resolves against "
-               "your home folder. The classifier's data path is resolved once "
-               "at launch, so this one can't be applied live."),
+               "your home folder."),
 )
 
 BY_KEY = {field.key: field for field in FIELDS}
