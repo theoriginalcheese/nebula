@@ -32,8 +32,13 @@ import traceback
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from obsauto import gui, hotkey
+from obsauto import config as config_module, gui, hotkey
 
+# Nothing here means to touch the real config.json sitting next to the app, but
+# a window writes it through save_config() on a layout or idle-timeout change -
+# so stub it, the same way the other window tests do, rather than rely on this
+# test never growing an assertion that trips one.
+config_module.save_config = lambda *a, **k: None
 hotkey.register = lambda *a, **k: None            # don't grab a global hotkey
 gui.ensure_obs_running = lambda *a, **k: time.sleep(0.2)  # don't launch OBS
 # Make the OBS-running check deterministic. A failed connect reports differently

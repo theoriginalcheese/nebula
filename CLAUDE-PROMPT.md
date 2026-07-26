@@ -1,11 +1,65 @@
 # Handoff → Claude Code
 
-**Disposable.** This is a baton-pass, not documentation. Delete it once the branch lands;
-anything worth keeping is already in `CLAUDE.md`.
+**Disposable.** This is a baton-pass, not documentation. Delete it once the branch lands —
+along with the pointer line at the top of `CLAUDE.md`. Anything worth keeping is already in
+`CLAUDE.md` proper.
 
 Written by Cursor (cloud agent, Linux) after picking up "refine the settings" from
 `CURSOR-PROMPT.md`. You're back on Windows with a real OBS and the vault — which is exactly
 what the remaining work needs, because the things I couldn't verify are all Windows things.
+
+---
+
+## Start here
+
+Everything below assumes you're on the branch. Check first, because if you're reading this
+from `main` you're reading a file that shouldn't be there:
+
+```
+cd C:\Users\antho\nebula
+git branch --show-current
+```
+
+If that isn't `cursor/editable-settings-view-dd92`:
+
+```
+git fetch origin cursor/editable-settings-view-dd92
+git checkout cursor/editable-settings-view-dd92
+```
+
+Local edits in the way? `git stash` first — but **check what they are before stashing**; if
+Anthony has been running Nebula from this checkout, uncommitted work here may be his, not
+leftovers. `config.json`, `games.json`, `steam_appid_cache.json` and `logs/` are gitignored
+and carry across untouched, so his real settings and game list are safe either way.
+
+Then, if you haven't run this checkout before:
+
+```
+pip install -r requirements.txt
+python tests/test_settings.py
+```
+
+**The tests are safe to run on the real machine.** Every test that opens a window stubs both
+`save_config` and `hotkey.register`, so none of them can write `config.json` or disturb
+Anthony's real key binding (`test_gamesync` and `test_offload` open no window and touch
+neither). `test_settings.py` reads his live config as a starting point and mutates only its
+own in-memory copy. I had to add the `save_config` stub to `test_async_connect` to make that
+true — it was the one window test relying on never happening to trigger a write.
+
+### Where everything is
+
+| | |
+|---|---|
+| **This brief** | `CLAUDE-PROMPT.md` — the branch state and what still needs verifying |
+| **Durable design rules** | `CLAUDE.md` → "Settings view (editable, applies live)" |
+| **What the user sees** | `README.md` → Configuration |
+| **The change itself** | `obsauto/settings_spec.py`, `_build_settings`/`_apply_settings` in `obsauto/gui.py` |
+| **Tests** | `tests/test_settings.py`, `tests/test_settings_typing.py` |
+| **PR** | [#1](https://github.com/theoriginalcheese/nebula/pull/1) (draft) — the description is the long-form rationale |
+| **Runtime data** | `config.json` and `logs/` next to the repo root (gitignored, per-machine) |
+
+Read `CLAUDE.md`'s Settings section before changing anything in the form. Don't re-derive the
+rules from the code — several encode a decision that isn't visible in it.
 
 ---
 
@@ -14,11 +68,6 @@ what the remaining work needs, because the things I couldn't verify are all Wind
 Branch `cursor/editable-settings-view-dd92`, PR
 [#1](https://github.com/theoriginalcheese/nebula/pull/1) (draft). Commits:
 `git log --oneline main..HEAD`.
-
-```
-git fetch origin cursor/editable-settings-view-dd92
-git checkout cursor/editable-settings-view-dd92
-```
 
 **Settings is now a real editor.** It was the last view that only reported — it listed eight
 config keys and told you to edit `config.json` and restart. It now edits all 18, validates
@@ -35,9 +84,6 @@ still needs a restart, and the page says so and says why.
 | `obsauto/offload.py` | `refresh()` — wakes the worker |
 | `tests/test_settings.py` | **new** — 76 checks |
 | `tests/test_settings_typing.py` | **new** — measures per-keystroke repaint cost (see below) |
-
-Read `CLAUDE.md` → "Settings view (editable, applies live)" for the design rules. Don't
-re-derive them from the code; several encode a decision that isn't obvious from reading it.
 
 ## What I could and couldn't verify
 

@@ -1,5 +1,10 @@
 # OBS auto-folder
 
+> 🔁 **Handover in progress — read `CLAUDE-PROMPT.md` first.** The editable Settings view was
+> built by Cursor on a Linux cloud box, so several Windows-only behaviours (per-keystroke
+> repaint cost, keyboard focus, a live hotkey rebind) are still unverified and listed there in
+> risk order. Delete that file *and this paragraph* once the branch lands.
+
 Windows desktop app (Python + CustomTkinter) that watches for the active game, drives
 **OBS** recording over the obs-websocket v5 API, and sorts recordings into per-game folders.
 Runs from the system tray. Active code lives in the `obsauto/` package; `main.py` is the entry point.
