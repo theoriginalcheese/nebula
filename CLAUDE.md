@@ -282,6 +282,7 @@ three static icons swapped on state change.
   python tests/test_settings.py        # editable Settings + config rules (2c)
   python tests/test_settings_typing.py # what a keystroke in a form really costs
   python tests/test_step7.py           # Games, Macropad honesty, mini overlay (2d/2e/2k)
+  python tests/test_fidelity.py        # fine-detail conformance to BUILD-SPEC.md
   ```
   ⚠️ Anything async **must** be tested under a real `mainloop()`. Tk refuses a cross-thread
   `root.after()` when driven by `update()`-pumping, and `_ui()` swallows that — so an

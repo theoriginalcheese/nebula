@@ -12,7 +12,7 @@ import tkinter.messagebox
 import traceback
 
 import customtkinter as ctk
-from PIL import Image, ImageDraw, ImageFilter
+from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 from . import classifier as classifier_module
 from . import design_v3 as dv
@@ -161,6 +161,30 @@ ICON_GLYPHS = {name: chr(cp) for name, cp in _ICON_CODEPOINTS.items()}
 def icon(role, size=16):
     """(glyph, font) for a v3 icon role, e.g. icon("dashboard")."""
     return ICON_GLYPHS[dv.ICONS[role]], (ICON_FONT, -int(round(size)))
+
+
+ICON_FONT_FILE = r"C:\Windows\Fonts\SegoeIcons.ttf"
+
+
+def pill_trailing_icon(glyph, tint, bg, size, scale=1.0):
+    """The circle a primary pill's trailing icon sits in.
+
+    "Trailing icons on primary pills live in their own 26-28px circle, flush to
+    the right padding." A CTkButton can't hold a canvas item, and an embedded
+    widget always paints above canvas art, so the circle can't be drawn behind
+    it either. Rendering it as the button's own image (compound="right") is what
+    puts a real circle inside the pill, flush right, at the correct size.
+    """
+    px = max(1, int(round(size * scale)))
+    img = Image.new("RGBA", (px, px), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(img)
+    draw.ellipse([0, 0, px - 1, px - 1], fill=dv.over(tint, 0.20, bg))
+    try:
+        font = ImageFont.truetype(ICON_FONT_FILE, int(px * 0.46))
+        draw.text((px / 2, px / 2), glyph, font=font, fill=tint, anchor="mm")
+    except Exception:
+        pass  # font missing - the tinted circle alone still reads as a chip
+    return img
 
 # v3 chassis. All base design units - self.scale multiplies them on high-DPI
 # monitors, exactly as before (see nebula-dpi-scaling). Values come from
@@ -867,6 +891,58 @@ class AppWindow:
             cx + 14, oy + 54, anchor="w", text="", fill=FAINT,
             font=dv.type_font("meta"))
 
+    # ---- themed interaction states (spec: "Motion & states") ----
+    def _focus_ring(self, widget, resting_border=None):
+        """"Focus ring 2px #8B7CF6, offset 2" - never the platform default.
+
+        Tk has no :focus-visible, so keyboard focus is drawn as the widget's own
+        border switching to the accent at the spec's width. Applied to anything
+        focusable; the resting border is restored on the way out.
+
+        The spec also asks for `offset 2`. A CTk widget's border is drawn on its
+        own edge and has no outset, and these widgets are embedded in canvas
+        windows, so there is nowhere to put a detached ring without laying a
+        second widget behind every control. dv.FOCUS_RING_OFFSET is therefore
+        recorded but not applied - the width and colour carry the affordance.
+        """
+        resting = resting_border if resting_border is not None else EDGE
+        try:
+            resting_w = int(widget.cget("border_width"))
+        except Exception:
+            resting_w = 1
+
+        def enter(_event=None):
+            try:
+                widget.configure(border_color=ACCENT, border_width=dv.FOCUS_RING_W)
+            except Exception:
+                pass
+
+        def leave(_event=None):
+            try:
+                widget.configure(border_color=resting, border_width=resting_w)
+            except Exception:
+                pass
+
+        widget.bind("<FocusIn>", enter)
+        widget.bind("<FocusOut>", leave)
+        return widget
+
+    @staticmethod
+    def _disabled_color(color, bg=None):
+        """"Disabled opacity .45" - composited, since a widget has no alpha."""
+        return dv.over(color, dv.DISABLED_OPACITY, bg or dv.CARD_CORE)
+
+    def _set_enabled(self, widget, enabled, text_color=MUTED):
+        """Enable/disable with the spec's disabled treatment and no hover."""
+        try:
+            widget.configure(
+                state="normal" if enabled else "disabled",
+                text_color=text_color if enabled else self._disabled_color(text_color),
+                hover=bool(enabled),
+            )
+        except Exception:
+            pass
+
     def _text_w(self, text, font):
         """Width of `text` in **base design units** for a v3 font tuple.
 
@@ -974,8 +1050,12 @@ class AppWindow:
 
         # Pane actions, right-aligned in the header.
         cy = top + 34
+        # One label, remembered - the scanning animation and the finally-block
+        # both restore it, and a button whose text silently changes after a scan
+        # is its own small bug.
+        self._rescan_label = "Rescan Steam"
         self.rescan_btn = ctk.CTkButton(
-            self.root, text="Rescan Steam", command=self._rescan_steam,
+            self.root, text=self._rescan_label, command=self._rescan_steam,
             fg_color="transparent", hover_color=SURFACE_HOVER, text_color=MUTED,
             bg_color=self._bg_at(WIDTH - 150, cy), border_width=1, border_color=EDGE,
             corner_radius=dv.RADIUS_CONTROL, font=ctk.CTkFont(size=12),
@@ -1010,7 +1090,7 @@ class AppWindow:
         photo = to_photo(tile)
         self._images.append(photo)
         self.bg.create_image(cx - w / 2, cy - h / 2, anchor="nw", image=photo)
-        self.bg.create_text(cx, cy, text=label, fill=MUTED, font=("Segoe UI Semibold", 9))
+        self.bg.create_text(cx, cy, text=label, fill=MUTED, font=dv.font(9.5, 500))
 
     def _start_move(self, event):
         # event.y is in real (scaled) canvas pixels; TITLEBAR_HEIGHT is a base
@@ -1222,8 +1302,8 @@ class AppWindow:
             tile = self._glass(x, y, w, 26, tint=ACCENT, radius=8, tint_alpha=70,
                                border_hex=ACCENT, border_alpha=90)
             label = self.bg.create_text(
-                x + 12, y + 13, anchor="w", text=f"⣿  {BLOCK_LABELS[name]}",
-                fill=NAV_ACTIVE_TEXT, font=("Segoe UI Semibold", 11))
+                x + 12, y + 13, anchor="w", text=f"{ICON_GLYPHS[dv.ICONS['scene']]}  {BLOCK_LABELS[name]}",
+                fill=NAV_ACTIVE_TEXT, font=dv.font(11, 500))
             for item in (tile, label):
                 self.bg.tag_bind(item, "<ButtonPress-1>",
                                  lambda e, n=name: self._grip_press(e, n))
@@ -1238,7 +1318,7 @@ class AppWindow:
                 ctext = self.bg.create_text(
                     cx + chip_w / 2, y + 13,
                     text="Full" if it["span"] == 2 else "Half",
-                    fill=ACCENT_LIGHT, font=("Segoe UI", 9, "bold"))
+                    fill=ACCENT_LIGHT, font=dv.font(10, 500))
                 for item in (chip, ctext):
                     self.bg.tag_bind(item, "<Button-1>",
                                      lambda e, n=name: self._toggle_block_span(n))
@@ -1256,7 +1336,7 @@ class AppWindow:
                 self.bg.itemconfigure(item, state="normal" if on else "hidden")
         if hasattr(self, "customise_btn"):
             self.customise_btn.configure(
-                text="✓  Done" if on else "⣿  Customise",
+                text="Done" if on else "Customise",
                 text_color=ACCENT_LIGHT if on else MUTED)
 
     def _toggle_customise(self):
@@ -1315,9 +1395,9 @@ class AppWindow:
         w, h = WIDTH - MARGIN - x0, HEIGHT - MARGIN - y
         self._glass(x0, y, w, h, tint=LOG_TINT, radius=16, tint_alpha=170)
         self.bg.create_text(x0 + 20, y + 26, anchor="w", text=title,
-                            fill=TEXT, font=("Segoe UI Semibold", 15))
+                            fill=TEXT, font=dv.type_font("pane_title"))
         sub = self.bg.create_text(x0 + 20, y + 48, anchor="w", text=subtitle,
-                                  fill=FAINT, font=("Segoe UI", 11), width=w - 300)
+                                  fill=FAINT, font=dv.type_font("meta"), width=w - 300)
         return (x0, y, w, h), sub
 
     def _view_button(self, x, y, w, text, command, accent=False):
@@ -1871,7 +1951,7 @@ class AppWindow:
     # github_token or nas_offload_root would be worse than one that departs
     # from the frame's five section names.
     #
-    # ⚠️ A text field costs one full window composite per keystroke on this
+    # WARNING: a text field costs one full window composite per keystroke on this
     # window. That is unavoidable for a text field, so the design spends exactly
     # that and no more: no live validation, no status updates while typing.
     # tests/test_settings_typing.py measures it - and note p50 frame time is
@@ -2156,6 +2236,7 @@ class AppWindow:
         # _set_hero_state - that is what "one state enum" means here.
         bt_y = y + h - bezel - pad - 40
         self._hero_primary_cmd = self._toggle_record
+        self._hero_primary_text = ACCENT_LIGHT
         self._hero_secondary_cmd = self._toggle_pause
         self.record_toggle_btn = ctk.CTkButton(
             self.root, text="Record now", command=lambda: self._hero_primary_cmd(),
@@ -2165,8 +2246,9 @@ class AppWindow:
             border_color=ACCENT, corner_radius=dv.RADIUS_CONTROL,
             font=ctk.CTkFont(size=13, weight="bold"),
         )
+        self._focus_ring(self.record_toggle_btn, resting_border=ACCENT)
         self._record_btn_win = self.bg.create_window(
-            left_x, bt_y, anchor="nw", window=self.record_toggle_btn, width=164, height=40)
+            left_x, bt_y, anchor="nw", window=self.record_toggle_btn, width=180, height=dv.CONTROL_PILL_H)
         self._dashboard_widgets.append(self.record_toggle_btn)
         self.pause_btn = ctk.CTkButton(
             self.root, text="Pause", command=lambda: self._hero_secondary_cmd(),
@@ -2175,8 +2257,10 @@ class AppWindow:
             border_color=EDGE, corner_radius=dv.RADIUS_CONTROL,
             font=ctk.CTkFont(size=13),
         )
+        self._focus_ring(self.pause_btn)
         self._pause_btn_win = self.bg.create_window(
-            left_x + 174, bt_y, anchor="nw", window=self.pause_btn, width=150, height=40)
+            left_x + 190, bt_y, anchor="nw", window=self.pause_btn, width=150,
+            height=dv.CONTROL_PILL_H)
         self._dashboard_widgets.append(self.pause_btn)
 
         # --- scene preview + info row (right column) ---
@@ -2207,10 +2291,10 @@ class AppWindow:
         # Source label chip, top-left.
         self._glass(x + 12, y + 12, 168, 24, tint=BASE_BG, radius=8,
                     tint_alpha=150, border_alpha=0)
-        self._preview_dot_id = self.bg.create_text(x + 22, y + 24, anchor="w", text="●",
-                                                   fill=FAINT, font=("Segoe UI", 9))
+        self._preview_dot_id = self.bg.create_text(x + 22, y + 24, anchor="w", text=ICON_GLYPHS["record"],
+                                                   fill=FAINT, font=(ICON_FONT, -8))
         self.bg.create_text(x + 34, y + 24, anchor="w", text="Game Capture (Auto)",
-                            fill=NAV_ACTIVE_TEXT, font=("Segoe UI", 10, "bold"))
+                            fill=NAV_ACTIVE_TEXT, font=dv.font(10, 500))
 
         # Equaliser bars along the bottom. Drawn once, in a fixed waveform - they
         # used to animate, but every canvas mutation costs a full window
@@ -2348,12 +2432,28 @@ class AppWindow:
 
         text, command, is_ember = primary
         self._hero_primary_cmd = command
+        pill_tint = EMBER if is_ember else ACCENT
+        pill_text = EMBER if is_ember else ACCENT_LIGHT
+        self._hero_primary_text = pill_text
+        # "Trailing icons on primary pills live in their own 26-28px circle,
+        # flush to the right padding." Rendered as the button's own image so it
+        # sits inside the pill; a canvas circle would be painted over by the
+        # embedded widget.
+        role = {"recording": "square", "paused": "resume",
+                "watching": "start", "disconnected": "rescan"}[state]
+        glyph = ICON_GLYPHS.get(role) or ICON_GLYPHS[dv.ICONS[role]]
+        circle = pill_trailing_icon(glyph, pill_tint, dv.CARD_CORE,
+                                    dv.PILL_TRAILING_CIRCLE[0], self.scale)
+        self._hero_pill_image = ctk.CTkImage(
+            light_image=circle, dark_image=circle,
+            size=(dv.PILL_TRAILING_CIRCLE[0], dv.PILL_TRAILING_CIRCLE[0]))
         self.record_toggle_btn.configure(
             text=text,
+            image=self._hero_pill_image, compound="right", anchor="w",
             fg_color=RED_TINT if is_ember else GREEN_TINT,
             hover_color=RED_TINT_HOVER if is_ember else GREEN_TINT_HOVER,
-            text_color=EMBER if is_ember else ACCENT_LIGHT,
-            border_color=EMBER if is_ember else ACCENT,
+            text_color=pill_text,
+            border_color=pill_tint,
         )
         text, command, _ = secondary
         self._hero_secondary_cmd = command
@@ -2763,8 +2863,9 @@ class AppWindow:
         # Only enablement here - the label, binding and emphasis belong to
         # _set_hero_state, which is the one place the state enum is expressed.
         # "Retry now" has to stay clickable precisely when OBS is unreachable.
-        self.record_toggle_btn.configure(
-            state="normal" if (self.obs.connected or state == "disconnected") else "disabled")
+        self._set_enabled(self.record_toggle_btn,
+                          self.obs.connected or state == "disconnected",
+                          text_color=self._hero_primary_text)
 
         # A second is right when you're watching the timer tick; while hidden in
         # the tray nothing renders it, so back off. The monitor thread drives the
@@ -3614,7 +3715,7 @@ class AppWindow:
                 self.root.after(0, lambda: self._log(f"[Steam] Rescan failed: {error}"))
             finally:
                 self._scanning = False
-                self.root.after(0, lambda: self.rescan_btn.configure(state="normal", text="↻  Rescan"))
+                self.root.after(0, lambda: self.rescan_btn.configure(state="normal", text=self._rescan_label))
 
         threading.Thread(target=worker, daemon=True).start()
 
@@ -3672,7 +3773,7 @@ class AppWindow:
 
         canvas.create_text(
             width / 2, 36, anchor="center", text=title, fill=TEXT,
-            font=("Segoe UI Semibold", 15), width=380, justify="center",
+            font=dv.type_font("pane_title"), width=380, justify="center",
         )
         detail = (
             f"This app ({exe_count} executables) isn't in the game list yet.\n"
@@ -3683,7 +3784,7 @@ class AppWindow:
         )
         canvas.create_text(
             width / 2, 94, anchor="center", text=detail, fill=MUTED,
-            font=("Segoe UI", 12), width=380, justify="center",
+            font=dv.type_font("row_small"), width=380, justify="center",
         )
 
         def choose(value):
@@ -3742,7 +3843,7 @@ class AppWindow:
 
         canvas.create_text(
             24, 34, anchor="w", text="Folder / display name for this game:",
-            fill=TEXT, font=("Segoe UI", 13),
+            fill=TEXT, font=dv.type_font("body"),
         )
         def dialog_bg_at(dx, dy):
             return self._bg_at(dx / width * WIDTH, dy / height * HEIGHT, CARD_TINT, 225)
