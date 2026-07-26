@@ -265,12 +265,19 @@ TYPE = {
 
 HERO_PAD = 22
 
+# Recording uses ember: BUILD-SPEC says ember is "live + errors ONLY", and
+# frame 2a's Recording badge / Stop pill are drawn in ember. Frame 2h's note
+# that disconnected is "the only place the ember hue leads" means among the
+# idle/paused/disconnected comparison cards (2f-2h) - recording lives in 2a.
 HERO_STATES = {
-    "recording":   {"eyebrow": "Recording",      "tint": ACCENT, "actions": ("Stop recording", "Pause", "Mark clip")},
+    "recording":   {"eyebrow": "Recording",      "tint": EMBER,  "actions": ("Stop recording", "Pause", "Mark clip")},
     "watching":    {"eyebrow": "Idle - watching", "tint": None,   "actions": ("Record anyway", "Pause monitoring")},
     "paused":      {"eyebrow": "Paused",          "tint": ACCENT, "actions": ("Resume", "Stop & save")},
     "disconnected": {"eyebrow": "OBS disconnected", "tint": EMBER, "actions": ("Retry now", "Connection settings")},
 }
+
+# Frame 2a right column: 16/9 preview tile width.
+PREVIEW_W = 404
 
 # "Paused - accent tint, timer frozen at 60% opacity."
 PAUSED_TIMER_OPACITY = 0.60

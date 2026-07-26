@@ -213,9 +213,24 @@ class Monitor:
         self._last_reconnect_attempt = 0.0
         self._was_disconnected = False
         self._auto_paused = False
+        # Session stats for the dashboard tiles (frame 2a). Real counters —
+        # never shown as a fabricated zero that means "not implemented".
+        self.auto_culled = 0
+        self.idle_pauses = 0
+        self.recorded_seconds_today = 0
+        self._stats_day = time.strftime("%Y-%m-%d")
         self._audio_keep_alive = AudioKeepAlive(
             config.get("keep_alive_audio_processes", ["discord.exe"]), on_log=self.log,
         )
+
+    def _roll_stats_day(self):
+        """Reset the 'today' counters when the calendar day flips."""
+        today = time.strftime("%Y-%m-%d")
+        if today != self._stats_day:
+            self._stats_day = today
+            self.recorded_seconds_today = 0
+            self.auto_culled = 0
+            self.idle_pauses = 0
 
     def log(self, msg):
         self.on_log(msg)
@@ -277,6 +292,7 @@ class Monitor:
                     break
                 time.sleep(0.2)
         self.on_notify("stop", prev_name, {"duration": elapsed, "size": file_size})
+        self._roll_stats_day()
 
         min_seconds = self.config.get("min_clip_seconds", 0)
         too_short = elapsed is not None and output_path and elapsed < min_seconds
@@ -295,15 +311,19 @@ class Monitor:
                     last_error = e
                     time.sleep(0.5)
             if deleted:
+                self.auto_culled += 1
                 self.log(f"[Monitor] Discarded clip under {min_seconds}s: {output_path}")
             else:
                 self.log(f"[Monitor] Failed to discard tiny clip {output_path}: {last_error}")
-        elif output_path and self.offloader is not None:
-            # A real clip that we're keeping: hand it to the NAS offloader (a
-            # no-op unless nas_offload_root is configured). This only queues -
-            # the copy/verify/delete happens on the offloader's own thread, so
-            # it never delays the monitor loop.
-            self.offloader.queue(output_path, prev_name)
+        else:
+            if elapsed:
+                self.recorded_seconds_today += int(elapsed)
+            if output_path and self.offloader is not None:
+                # A real clip that we're keeping: hand it to the NAS offloader
+                # (a no-op unless nas_offload_root is configured). This only
+                # queues - the copy/verify/delete happens on the offloader's
+                # own thread, so it never delays the monitor loop.
+                self.offloader.queue(output_path, prev_name)
 
         self._recording_started_at = None
         self._auto_paused = False  # a stop finalizes the file; any pause state is moot
@@ -374,6 +394,9 @@ class Monitor:
                 self.obs.pause_record()
                 name = self._recording_target[2] if self._recording_target else "unknown"
                 detail = "idle" if reason == "idle" else "session ended"
+                if reason == "idle":
+                    self._roll_stats_day()
+                    self.idle_pauses += 1
                 self.log(f"[OBS] Paused recording ({name}) - {detail}.")
                 self.on_notify("pause", name)
         except OBSError as e:
@@ -422,7 +445,7 @@ class Monitor:
             return  # still out of sync with OBS - don't touch _recording_target, retry next tick
 
         if target is not None:
-            _, _, display_name, folder = target
+            _, basename, display_name, folder = target
             os.makedirs(folder, exist_ok=True)
             started = False
             last_error = None
@@ -440,13 +463,13 @@ class Monitor:
             if started:
                 self._recording_started_at = time.time()
                 self.log(f"[OBS] Recording started: {display_name} -> {folder}")
-                self.on_state(game=display_name, folder=folder)
+                self.on_state(game=display_name, folder=folder, exe=basename)
                 self.on_notify("start", display_name)
             else:
                 self.log(f"[OBS] Giving up on start after retries: {last_error}")
                 target = None
         else:
-            self.on_state(game=None, folder=None)
+            self.on_state(game=None, folder=None, exe=None)
 
         self._recording_target = target
 

@@ -1,8 +1,8 @@
 """Regression tests for nav-rail view switching.
 
 Every workspace tab must open without raising, restore the dashboard's
-state-dependent visibility correctly, and keep the activity log mirrored into
-both the dashboard panel and the full Activity view.
+state-dependent visibility correctly, and keep the activity log on the
+dashboard block (v3 has no standalone Activity view).
 
     python tests/test_views.py
 """
@@ -50,9 +50,9 @@ def settle(ms=250):
         time.sleep(0.005)
 
 
-VIEWS = ["dashboard", "clips", "games", "activity", "macropad", "settings"]
+VIEWS = ["dashboard", "clips", "games", "macropad", "settings"]
 
-# Log something before the Activity view is ever shown, to prove replay works.
+# Log before the dashboard Activity block is rebuilt, to prove replay works.
 app._log("[Monitor] test line before activity view was opened")
 
 for view in VIEWS:
@@ -63,12 +63,8 @@ for view in VIEWS:
           callback_errors[0].strip().splitlines()[-1] if callback_errors else "clean")
     check(f"'{view}' title", gui.VIEW_TITLES[view] == app.bg.itemcget(app._topbar_title, "text"),
           app.bg.itemcget(app._topbar_title, "text"))
-    # v3's rail carries five destinations; Activity is a dashboard block, not a
-    # rail entry, so it has no nav item to highlight (gui.RAIL_VIEWS).
-    if view in gui.RAIL_VIEWS:
-        check(f"'{view}' nav highlighted", app._nav[view].get("active") is True)
-    else:
-        check(f"'{view}' is not a rail destination", view not in app._nav)
+    check(f"'{view}' nav highlighted", app._nav[view].get("active") is True)
+check("no standalone Activity view", "activity" not in app._views)
 
 # Only the active view's items may be visible.
 app._show_view("games")
@@ -107,14 +103,12 @@ check("timer shown again while recording",
       app.bg.itemcget(app.timer_label_id, "state") == "normal",
       app.bg.itemcget(app.timer_label_id, "state"))
 
-# Log mirroring
+# Log reaches the dashboard Activity block (the only console).
 app._log("[OBS] mirrored line")
 settle(120)
 dash_text = app.console.get("1.0", "end")
-full_text = app.console_full.get("1.0", "end")
 check("log reaches dashboard panel", "mirrored line" in dash_text)
-check("log reaches Activity view", "mirrored line" in full_text)
-check("Activity replayed earlier lines", "before activity view was opened" in full_text)
+check("Activity replayed earlier lines", "before activity view was opened" in dash_text)
 
 # Visibility gating: hidden window must skip animation work.
 check("animations gated while hidden", app._visible is False, app._visible)
@@ -220,13 +214,26 @@ for state, (primary, secondary, readouts) in HERO_EXPECT.items():
     shown = app.bg.itemcget(app.timer_label_id, "state") == "normal"
     check(f"hero '{state}' readouts {'shown' if readouts else 'hidden'}", shown == readouts)
 
-# Ember leads on exactly one state - the spec is explicit about it.
+# Ember = live + errors (BUILD-SPEC + frame 2a Recording badge / Stop pill).
 app._set_hero_state("disconnected")
-check("ember leads only on disconnected",
+check("disconnected leads with ember",
       app.record_toggle_btn.cget("border_color") == gui.EMBER
       or gui.dv.HERO_STATES["disconnected"]["tint"] == gui.EMBER)
-check("recording is accent-tinted, not ember",
-      gui.dv.HERO_STATES["recording"]["tint"] == gui.ACCENT)
+check("recording leads with ember (live)",
+      gui.dv.HERO_STATES["recording"]["tint"] == gui.EMBER)
+check("paused stays accent-tinted",
+      gui.dv.HERO_STATES["paused"]["tint"] == gui.ACCENT)
+# Preview column hidden while idle (frame 2f)
+app._set_hero_state("watching")
+settle(40)
+hidden_preview = all(
+    app.bg.itemcget(i, "state") == "hidden" for i in app._preview_items[:1])
+check("preview hidden while watching", hidden_preview)
+app._set_hero_state("recording")
+settle(40)
+shown_preview = all(
+    app.bg.itemcget(i, "state") == "normal" for i in app._preview_items[:1])
+check("preview shown while recording", shown_preview)
 
 # Bitrate is derived from two real samples, never invented.
 app._bitrate_sample = None

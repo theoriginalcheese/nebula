@@ -115,9 +115,12 @@ performance lesson), `nebula-dpi-scaling`, `nebula-roadmap-ideas`, `obs-auto-fol
 
 <!-- STATE:BEGIN — keep this block current; it is the whole point of the file -->
 
-**Updated:** 2026-07-26 — **all seven build-order steps are done and verified.**
+**Updated:** 2026-07-26 — **mockup fidelity pass on `cursor/implement-mockup-v3-2b0d`.**
 
-Committed on local branch **`ui-v3`** (not pushed; `main` untouched).
+Build-order steps 1–7 were already on `main`. This branch implements the remaining
+gaps against `Nebula UI Mockups v3.dc.html` (hero layout, ember-for-live, preview
+hide-when-idle, mockup stat tiles with Monitor counters, Activity Copy/filter,
+OBS GetVersion/GetVideoSettings, clips Play + titles, mini pause/stop, rail badges).
 
 **Done — the import and the contract**
 - v3 design files imported to `design/ui-v3/` from Claude Design project

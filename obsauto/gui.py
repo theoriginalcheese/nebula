@@ -153,6 +153,10 @@ _ICON_CODEPOINTS = {
     "minus": 0xE738,                # hide to tray
     "x": 0xE711,                    # hide to tray
     "square": 0xE73B,               # stop - one of the two sanctioned Fill glyphs
+    "hourglass-medium": 0xE823,     # Recorded tile (History / hourglass stand-in)
+    "funnel-simple": 0xE71C,        # Activity tag filter
+    "copy-simple": 0xE8C8,          # Copy log
+    "microphone": 0xE720,           # Mic label on the hero info row
 }
 ICON_GLYPHS = {name: chr(cp) for name, cp in _ICON_CODEPOINTS.items()}
 
@@ -206,23 +210,19 @@ CONTENT_Y0 = TITLEBAR_HEIGHT                 # where the rail and content column
 ICON_TICK_MS = 400
 IDLE_TICK_MS = 500
 
-# The rail's five destinations (frame 2a). Note this is a SUBSET of the views:
-# v3 has no standalone Activity page - the activity log is a dashboard block -
-# but the view is still registered and still mirrors the log, because _log()
-# writes to both consoles. Folding it away entirely belongs with the step-2
-# dashboard rewrite; until then it is simply not reachable from the rail.
+# The rail's five destinations (frame 2a). Activity is a dashboard block only —
+# no standalone Activity pane (mockup has none).
 RAIL_VIEWS = list(dv.PANES)
 
 VIEW_TITLES = {
     "dashboard": "Dashboard",
     "clips": "Clips",
     "games": "Games",
-    "activity": "Activity",
     "macropad": "Macropad",
     "settings": "Settings",
 }
 VIDEO_EXTS = (".mkv", ".mp4", ".mov", ".flv", ".ts", ".m4v")
-LOG_HISTORY = 500  # lines kept for replay into the Activity view
+LOG_HISTORY = 500  # lines kept for the dashboard Activity block
 
 # Rearrangeable dashboard blocks. Heights are fixed so reordering is a pure
 # translation of each block - no rebuilding, nothing to resize.
@@ -230,7 +230,8 @@ DEFAULT_BLOCKS = ("hero", "stats", "activity")
 BLOCK_LABELS = {"hero": "Now recording", "stats": "Stats", "activity": "Activity"}
 BLOCK_GAP = 18
 GRID_COL_GAP = 18
-HERO_H = 300
+# Frame 2a: 404-wide 16:9 preview + pads/bezel → ~330px hero footprint.
+HERO_H = 330
 # Fixed footprint heights per (block, span). span 2 = full width; span 1 = half
 # width (stats reflows to 2x2, so it's taller). Heights are fixed so laying the
 # grid out is pure arithmetic - no measuring, nothing to resize. Activity's 246
@@ -447,13 +448,19 @@ class AppWindow:
         self._hero_state = "disconnected"  # disconnected | watching | recording | paused
         self._bitrate_sample = None   # (duration_ms, bytes) from the previous poll
         self._current_game = None
-        self._eq_bars = []            # scene-preview equaliser bar canvas ids
-        self._log_lines = []          # replayed into the Activity view when shown
+        self._current_exe = None      # basename for the hero source line (frame 2a)
+        self._obs_version = None      # e.g. "30.2" from GetVersion
+        self._video_label = None      # e.g. "2560×1440 · 60 fps" from GetVideoSettings
+        self._scene_name = None       # current program scene
+        self._eq_bars = []            # legacy; preview no longer animates bars
+        self._preview_items = []      # canvas ids hidden while idle / disconnected
+        self._log_lines = []          # history for the dashboard Activity block
         self._log_pending = []        # buffered lines awaiting a coalesced flush
         self._log_flush_scheduled = False
         self._log_lock = threading.Lock()
+        self._log_filter_tag = None   # None = All tags
         self.console = None           # set by _build_activity
-        self.console_full = None      # set by _build_activity_view
+        self._clips_total = None      # rail badge; filled after a clips/disk scan
 
         ctk.set_appearance_mode("dark")
         ctk.set_default_color_theme("dark-blue")
@@ -736,10 +743,12 @@ class AppWindow:
                             text=self._track("Session"), fill=FAINT,
                             font=dv.type_font("eyebrow"))
 
+        # Frame 2a: Clips badge = total clips (filled once a scan lands);
+        # Games badge = pending reviews, not the classified total.
         nav = [
             ("dashboard", "Dashboard", None),
-            ("clips", "Clips", None),
-            ("games", "Games", self._game_count()),
+            ("clips", "Clips", self._clips_badge()),
+            ("games", "Games", self._games_pending_badge()),
             ("macropad", "Macropad", None),
             ("settings", "Settings", None),
         ]
@@ -792,9 +801,11 @@ class AppWindow:
         return self.bg.create_image(a, b, anchor="nw", image=photo)
 
     def _game_count(self):
-        """How many distinct games the classifier knows about - shown as the
-        Games nav badge. Counts display names, not executables, since one game
-        can register several exes."""
+        """How many distinct games the classifier knows about.
+
+        Kept for Settings / Games pane copy; the rail badge uses
+        ``_games_pending_badge`` (frame 2a's pending pill), not this total.
+        """
         try:
             games = self.classifier._data.get("games", {})
             names = {
@@ -804,6 +815,19 @@ class AppWindow:
             return str(len(names)) if names else None
         except Exception:
             return None
+
+    def _games_pending_badge(self):
+        """Frame 2a Games rail pill — count awaiting classification, or None."""
+        try:
+            pending = self.classifier.peek_pending_reviews()
+            return str(len(pending)) if pending else None
+        except Exception:
+            return None
+
+    def _clips_badge(self):
+        """Frame 2a Clips rail count — real total once a scan has landed."""
+        total = self._clips_total
+        return str(total) if total is not None else None
 
     def _nav_item(self, x, y, w, h, glyph, label, view, badge):
         """One nav-rail destination. The active highlight is drawn up front and
@@ -1023,16 +1047,16 @@ class AppWindow:
             font=(ICON_FONT, -9))
 
         ox = WIDTH - pad_r - 106   # clears the three circle buttons
-        self._obs_card_sub = self.bg.create_text(
-            ox, cy, anchor="e",
-            text=f"{self.config.get('obs_host', 'localhost')}:{self.config.get('obs_port', 4455)}",
-            fill=FAINT, font=dv.font(10.5, mono=True))
+        # One-line readout (frame 2a): fill-dot + "OBS 30.2 · host:port".
+        # _obs_card_sub kept as a no-op slot for older call sites.
         self._obs_card_title = self.bg.create_text(
-            ox - 116, cy, anchor="e", text="OBS disconnected",
+            ox, cy, anchor="e", text="OBS disconnected",
             fill=MUTED, font=dv.type_font("meta"))
+        self._obs_card_sub = self.bg.create_text(
+            ox, cy, anchor="e", text="", fill=FAINT, font=dv.font(10.5, mono=True))
         self._obs_card_dot = self.bg.create_text(
-            ox - 232, cy, anchor="e", text=ICON_GLYPHS["plugs"],
-            fill=EMBER, font=(ICON_FONT, -13))
+            ox - 210, cy, anchor="e", text=ICON_GLYPHS["record"],
+            fill=FAINT, font=(ICON_FONT, -7))
 
         # The rule under the titlebar, fading at both ends like every other.
         self._fading_rule(0, TITLEBAR_HEIGHT, WIDTH)
@@ -1070,6 +1094,10 @@ class AppWindow:
         )
         self.bg.create_window(WIDTH - dv.PANE_HEADER_PAD_X - 244, cy - 15, anchor="nw",
                               window=self.gamedata_btn, width=114, height=30)
+        # Frame 2a header actions are only Open folder + Rescan Steam.
+        # Customise (dashboard rearrange) stays available via double-click on
+        # the pane title so the layout system isn't deleted — just off the
+        # chrome the mockup draws.
         self.customise_btn = ctk.CTkButton(
             self.root, text="Customise", command=self._toggle_customise,
             fg_color="transparent", hover_color=SURFACE_HOVER, text_color=MUTED,
@@ -1079,6 +1107,9 @@ class AppWindow:
         self._customise_win = self.bg.create_window(
             WIDTH - dv.PANE_HEADER_PAD_X - 352, cy - 15, anchor="nw",
             window=self.customise_btn, width=100, height=30)
+        self.bg.itemconfigure(self._customise_win, state="hidden")
+        self.bg.tag_bind(self._topbar_title, "<Double-Button-1>",
+                         lambda _e: self._toggle_customise())
 
     def _draw_keycap(self, cx, cy, label):
         """A small rounded keycap chip on the canvas - the sampled-corner
@@ -1125,7 +1156,6 @@ class AppWindow:
             ("dashboard", self._build_dashboard),
             ("clips", self._build_clips),
             ("games", self._build_games),
-            ("activity", self._build_activity_view),
             ("macropad", self._build_macropad),
             ("settings", self._build_settings),
         ]
@@ -1148,10 +1178,11 @@ class AppWindow:
                                   state="normal" if view == name else "hidden")
         self._current_view = name
         self.bg.itemconfigure(self._topbar_title, text=VIEW_TITLES[name])
-        # Customise only means anything on the dashboard; leaving it on while
-        # navigating away would strand the grips over another view.
+        # Frame 2a has no Customise chrome. Double-click the pane title to
+        # enter rearrange mode; the button only appears while that mode is on.
+        show_customise = (name == "dashboard" and getattr(self, "_customising", False))
         self.bg.itemconfigure(self._customise_win,
-                              state="normal" if name == "dashboard" else "hidden")
+                              state="normal" if show_customise else "hidden")
         if name != "dashboard" and getattr(self, "_customising", False):
             self._set_customise(False)
         for nav_name, parts in self._nav.items():
@@ -1338,6 +1369,10 @@ class AppWindow:
             self.customise_btn.configure(
                 text="Done" if on else "Customise",
                 text_color=ACCENT_LIGHT if on else MUTED)
+        if hasattr(self, "_customise_win"):
+            show = on and self._current_view == "dashboard"
+            self.bg.itemconfigure(self._customise_win,
+                                  state="normal" if show else "hidden")
 
     def _toggle_customise(self):
         self._set_customise(not self._customising)
@@ -1570,10 +1605,11 @@ class AppWindow:
                 self._game_button(game, game, n)
 
         total = sum(c["size"] for c in clips)
+        self._clips_total = len(clips)
         self.bg.itemconfigure(
             self._rec_sub,
             text=f"{len(clips)} clip{'' if len(clips) == 1 else 's'}  ·  "
-                 f"{_format_bytes(total)}  ·  {root_dir}")
+                 f"{_format_bytes(total)}")
         self._render_clips_rows()
 
     def _game_button(self, game, label, count):
@@ -1654,13 +1690,15 @@ class AppWindow:
                      font=ctk.CTkFont(size=11, weight="bold")).pack(
             side="left", padx=(8, 10), pady=6)
 
-        # Actions pack right-first so they keep their place as the title flexes.
-        for role, command, tip in (
-            ("delete_clip", lambda: self._delete_clip(clip), "Delete"),
-            ("reveal", lambda: self._open_path(os.path.dirname(clip["path"])), "Reveal"),
+        # Actions: Play · Reveal · Delete (Length/thumbs need ffmpeg — omitted)
+        for glyph, command in (
+            (ICON_GLYPHS[dv.ICONS["trash"]], lambda c=clip: self._delete_clip(c)),
+            (ICON_GLYPHS[dv.ICONS["reveal"]],
+             lambda c=clip: self._open_path(os.path.dirname(c["path"]))),
+            (ICON_GLYPHS["play"], lambda c=clip: self._open_path(c["path"])),
         ):
             btn = ctk.CTkButton(
-                row, text=ICON_GLYPHS[dv.ICONS[role]], width=28, height=28,
+                row, text=glyph, width=28, height=28,
                 fg_color="transparent", hover_color=SURFACE_HOVER, text_color=MUTED,
                 corner_radius=8, font=ctk.CTkFont(family=ICON_FONT, size=13),
                 command=command)
@@ -1671,9 +1709,12 @@ class AppWindow:
         ctk.CTkLabel(row, text=_format_bytes(clip["size"]), width=80, anchor="e",
                      text_color=TEXT_SOFT, font=ctk.CTkFont(size=11)).pack(side="right")
 
+        # Title: "Game — YYYY-MM-DD HH:MM" per frame 2b
+        when = time.strftime("%Y-%m-%d %H:%M", time.localtime(clip["mtime"]))
+        title = f"{clip['game']} — {when}"
         text = ctk.CTkFrame(row, fg_color="transparent")
         text.pack(side="left", fill="x", expand=True)
-        ctk.CTkLabel(text, text=os.path.splitext(clip["name"])[0], anchor="w",
+        ctk.CTkLabel(text, text=title, anchor="w",
                      text_color=TEXT, font=ctk.CTkFont(size=12)).pack(anchor="w")
         ctk.CTkLabel(text, text=clip["rel"], anchor="w", text_color=FAINT,
                      font=ctk.CTkFont(family="Consolas", size=10)).pack(anchor="w")
@@ -1744,11 +1785,11 @@ class AppWindow:
     def _build_games(self):
         (x, y, w, h), sub = self._view_panel("Games", "What the classifier has learned.")
         self._games_sub = sub
+        # Frame 2d header action is Rescan library only (Game data → Settings/sync).
         self._view_button(x + w - 150, y + 20, 130, "Rescan library", self._rescan_steam)
-        self._view_button(x + w - 276, y + 20, 116, "Game data", self._open_game_data)
 
         col_w = (w - 48) / 2
-        top_h = 96
+        top_h = 110
         self.bg.create_text(x + 16, y + 82, anchor="w", text=self._track("Unclassified"),
                             fill=FAINT, font=dv.type_font("eyebrow"))
         self._games_pending = self._scroll_list(x + 16, y + 96, w - 32, top_h)
@@ -1787,9 +1828,19 @@ class AppWindow:
         except Exception:
             pass
         if pending:
-            for name in pending:
-                self._list_row(self._games_pending, name,
-                               "Nebula will ask about this one", "awaiting")
+            # Frame 2d shows one candidate card; decisions still go through the
+            # modal (_poll_manual_review) so peeking never drains the queue.
+            head = pending[0]
+            more = len(pending) - 1
+            sub = ("Nebula will ask about this one"
+                   + (f"  ·  +{more} more waiting" if more else ""))
+            self._list_row(self._games_pending, head, sub, "awaiting")
+            note = ctk.CTkLabel(
+                self._games_pending,
+                text="Decide in the prompt when it appears — this list never swallows the queue.",
+                text_color=FAINT, font=ctk.CTkFont(size=11), anchor="w",
+                justify="left", wraplength=420)
+            note.pack(fill="x", padx=10, pady=(2, 6))
         else:
             self._empty_note(self._games_pending, "Nothing awaiting a decision.")
 
@@ -1879,30 +1930,6 @@ class AppWindow:
             return
         threading.Thread(target=lambda: self.gamesync.push(snapshot), daemon=True).start()
 
-    # ---- Activity (full height) ----
-    def _build_activity_view(self):
-        (x, y, w, h), _ = self._view_panel(
-            "Activity", "Everything Nebula has done this session.")
-        box_x, box_y = x + 16, y + 74
-        box_w, box_h = w - 32, h - 90
-        plate = make_solid_tile(self._S(box_w), self._S(box_h), LOG_BG, radius=self._S(10))
-        photo = to_photo(plate)
-        self._images.append(photo)
-        self.bg.create_image(box_x, box_y, anchor="nw", image=photo)
-        self._composite.paste(plate, (self._S(box_x), self._S(box_y)), plate)
-        self.console_full = ctk.CTkTextbox(
-            self.root, state="disabled", wrap="word", fg_color=LOG_BG,
-            corner_radius=0, bg_color=LOG_BG,
-            font=ctk.CTkFont(family="Consolas", size=12), text_color=MUTED,
-        )
-        self.bg.create_window(box_x + 10, box_y + 10, anchor="nw",
-                              window=self.console_full,
-                              width=box_w - 20, height=box_h - 20)
-        self._prepare_log_tags(self.console_full)
-        # Replay anything logged before this view existed.
-        self._append_log_batch(self.console_full, list(self._log_lines))
-
-    # ---- Macropad ----
     # ---- Macropad (frame 2e) ----
     # The frame draws a CONNECTED 3x3 pad: "HID 0x1209:0xA1B2", a live key map,
     # drag-to-bind, a last-keypress readout. None of that layer exists - there
@@ -2144,16 +2171,12 @@ class AppWindow:
     # the primary action." So this builds one card and _set_hero_state swaps
     # four states through it; nothing here is rebuilt on a state change.
     def _build_hero(self, x, y, w):
-        # The hero always spans the full content width (its internal layout -
-        # readouts on the left, scene preview pinned right - is tuned for it), so
-        # the grid only ever varies its y. h is fixed.
         h = HERO_H
         pad = dv.HERO_PAD
         bezel = 5
 
-        # The double bezel: "tray 5 · r22 / r17", and "Every card is two layers:
-        # tinted outer shell, darker inner core. A flat card is a bug."
-        self._status_card_geom = (x, y, w, h)   # reused by _flash_status_card
+        # Double bezel: "tray 5 · r22 / r17". A flat card is a bug.
+        self._status_card_geom = (x, y, w, h)
         self._status_card_item = self._glass(x, y, w, h, radius=dv.RADIUS_CORE,
                                              tint=CARD_TINT, tint_alpha=110)
         self._hero_core_geom = (x + bezel, y + bezel, w - bezel * 2, h - bezel * 2)
@@ -2161,79 +2184,72 @@ class AppWindow:
                     tint_alpha=196, border_alpha=0)
 
         left_x = x + bezel + pad
-        preview_w = 340
-        preview_h = int(preview_w * 9 / 16)          # the spec's 16/9 tile
+        preview_w = dv.PREVIEW_W
+        preview_h = int(preview_w * 9 / 16)
         preview_x = x + w - bezel - pad - preview_w
         preview_y = y + bezel + pad
         left_w = preview_x - 22 - left_x
+        self._hero_left = (left_x, y + bezel, left_w)
 
-        # --- eyebrow badge (the state pill) ---
-        self._hero_badge_geom = (left_x, y + pad + 2, 128, 22)
-        self._hero_badge_item = self._glass(left_x, y + pad + 2, 128, 22, tint=ACCENT,
-                                            radius=7, tint_alpha=40, border_alpha=0)
+        # Eyebrow badge (state pill)
+        self._hero_badge_geom = (left_x, y + bezel + pad, 128, 22)
+        self._hero_badge_item = self._glass(left_x, y + bezel + pad, 128, 22,
+                                            tint=ACCENT, radius=11, tint_alpha=40,
+                                            border_alpha=0)
         self.rec_dot_id = self.bg.create_text(
-            left_x + 13, y + pad + 13, text=ICON_GLYPHS["record"],
+            left_x + 13, y + bezel + pad + 11, text=ICON_GLYPHS["record"],
             fill=ACCENT, font=(ICON_FONT, -7))
         self._hero_badge_text = self.bg.create_text(
-            left_x + 26, y + pad + 13, anchor="w", text=self._track("Watching"),
-            fill=ACCENT_LIGHT, font=dv.type_font("eyebrow"))
+            left_x + 26, y + bezel + pad + 11, anchor="w",
+            text=self._track("Watching"), fill=ACCENT_LIGHT,
+            font=dv.type_font("eyebrow"))
         self._hero_sub_id = self.bg.create_text(
-            left_x + 142, y + pad + 13, anchor="w", text="", fill=MUTED,
+            left_x + 142, y + bezel + pad + 11, anchor="w", text="", fill=MUTED,
             font=dv.type_font("meta"))
 
-        # --- game title + its source line ---
+        # Controller chip + game title + source line (frame 2a — no folder chip)
+        title_y = y + bezel + pad + 38
+        chip = 44
+        self._glass(left_x, title_y, chip, chip, tint=SURFACE, radius=12,
+                    tint_alpha=220, border_hex=CARD_BORDER, border_alpha=40)
+        self.bg.create_text(
+            left_x + chip / 2, title_y + chip / 2,
+            text=ICON_GLYPHS[dv.ICONS["games"]], fill=ACCENT_LIGHT,
+            font=(ICON_FONT, -18))
         self.game_label_id = self.bg.create_text(
-            left_x, y + 74, anchor="w", text="No game detected",
-            fill=MUTED, font=dv.type_font("game_title"))
+            left_x + chip + 13, title_y + 8, anchor="w", text="No game in focus",
+            fill=MUTED, font=dv.type_font("game_title"), width=left_w - chip - 16)
         self._hero_source_id = self.bg.create_text(
-            left_x, y + 98, anchor="w", text="", fill=FAINT,
-            font=dv.font(11, mono=True), width=left_w)
+            left_x + chip + 13, title_y + 34, anchor="w", text="", fill=FAINT,
+            font=dv.font(11.5, mono=True), width=left_w - chip - 16)
+        # Legacy alias — folder chip removed; keep an id so old call sites no-op.
+        self.folder_label_id = self._hero_source_id
 
-        # --- folder chip ---
-        self._glass(left_x, y + 116, left_w, 28, tint=dv.GROUND, radius=dv.RADIUS_CONTROL,
-                    tint_alpha=170, border_hex=CARD_BORDER, border_alpha=24)
-        self.bg.create_text(left_x + 11, y + 130, anchor="w",
-                            text=ICON_GLYPHS[dv.ICONS["reveal"]],
-                            fill=ACCENT, font=(ICON_FONT, -11))
-        self.folder_label_id = self.bg.create_text(
-            left_x + 30, y + 130, anchor="w", text=self.config["recording_root"],
-            fill=MUTED, font=dv.font(11, mono=True), width=left_w - 42,
-        )
-
-        # --- the three readouts: Elapsed / File size / Bitrate ---
-        # Every one is real. Elapsed and File size come straight from OBS's
-        # GetRecordStatus; Bitrate is computed from successive polls of it
-        # (see _poll_obs_status) rather than being drawn in as a number.
+        # Elapsed / File size / Bitrate — real values only
+        readout_y = title_y + chip + 22
         self._readouts = {}
         col_w = left_w / 3.0
         for i, (key, label) in enumerate((("elapsed", "Elapsed"),
                                           ("size", "File size"),
                                           ("bitrate", "Bitrate"))):
             rx = left_x + i * col_w
-            cap = self.bg.create_text(rx, y + 168, anchor="w", text=self._track(label),
+            cap = self.bg.create_text(rx, readout_y, anchor="w", text=self._track(label),
                                       fill=FAINT, font=dv.type_font("eyebrow"))
             val = self.bg.create_text(
-                rx, y + 192, anchor="w", text="--",
+                rx, readout_y + 24, anchor="w", text="--",
                 fill=TEXT, font=dv.font(dv.TYPE["timer"]["size"] if key == "elapsed" else 19,
                                         mono=True))
             self._readouts[key] = (cap, val)
-        # Kept under the old names - _poll_obs_status and the tests use them.
         self.timer_label_id = self._readouts["elapsed"][1]
         self.storage_label_id = self._readouts["size"][1]
         self._elapsed_label_id = self._readouts["elapsed"][0]
         self._size_label_id = self._readouts["size"][0]
 
-        # Shown instead of the readouts while nothing is being recorded, so the
-        # card reads as calm-and-ready rather than simply empty.
         self._hero_hint_id = self.bg.create_text(
-            left_x, y + 180, anchor="w", text="", fill=FAINT,
+            left_x, readout_y + 12, anchor="w", text="", fill=FAINT,
             font=dv.type_font("body"), width=left_w)
 
-        # --- transport buttons ---
-        # Two, not the frame's three: "Mark clip" has no backend, and a button
-        # that silently does nothing is worse than an absent one. Same reason v2
-        # dropped it. Both buttons are relabelled and rebound per state by
-        # _set_hero_state - that is what "one state enum" means here.
+        # Transport — Mark clip omitted (no backend). Relabelled per state.
         bt_y = y + h - bezel - pad - 40
         self._hero_primary_cmd = self._toggle_record
         self._hero_primary_text = ACCENT_LIGHT
@@ -2243,18 +2259,19 @@ class AppWindow:
             state="disabled",
             fg_color=GREEN_TINT, hover_color=GREEN_TINT_HOVER, text_color=ACCENT_LIGHT,
             bg_color=self._bg_at(left_x + 78, bt_y + 20), border_width=1,
-            border_color=ACCENT, corner_radius=dv.RADIUS_CONTROL,
+            border_color=ACCENT, corner_radius=999,
             font=ctk.CTkFont(size=13, weight="bold"),
         )
         self._focus_ring(self.record_toggle_btn, resting_border=ACCENT)
         self._record_btn_win = self.bg.create_window(
-            left_x, bt_y, anchor="nw", window=self.record_toggle_btn, width=180, height=dv.CONTROL_PILL_H)
+            left_x, bt_y, anchor="nw", window=self.record_toggle_btn,
+            width=180, height=dv.CONTROL_PILL_H)
         self._dashboard_widgets.append(self.record_toggle_btn)
         self.pause_btn = ctk.CTkButton(
             self.root, text="Pause", command=lambda: self._hero_secondary_cmd(),
             fg_color="transparent", hover_color=SURFACE_HOVER, text_color=MUTED,
             bg_color=self._bg_at(left_x + 174 + 60, bt_y + 20), border_width=1,
-            border_color=EDGE, corner_radius=dv.RADIUS_CONTROL,
+            border_color=EDGE, corner_radius=999,
             font=ctk.CTkFont(size=13),
         )
         self._focus_ring(self.pause_btn)
@@ -2263,162 +2280,182 @@ class AppWindow:
             height=dv.CONTROL_PILL_H)
         self._dashboard_widgets.append(self.pause_btn)
 
-        # --- scene preview + info row (right column) ---
+        # Right column: 16:9 preview + scene/mic row (hidden while idle)
+        self._preview_items = []
         self._build_preview(preview_x, preview_y, preview_w, preview_h)
         self._preview_geom = (preview_x, preview_y, preview_w, preview_h)
-        info_y = preview_y + preview_h + 10
-        self._glass(preview_x, info_y, preview_w, 36, tint=CARD_TINT,
-                    radius=dv.RADIUS_TILE, tint_alpha=120,
-                    border_hex=CARD_BORDER, border_alpha=26)
-        self.bg.create_text(preview_x + 14, info_y + 18, anchor="w",
-                            text=ICON_GLYPHS[dv.ICONS["scene"]],
-                            fill=ACCENT, font=(ICON_FONT, -12))
+        info_y = preview_y + preview_h + 11
+        info = self._glass(preview_x, info_y, preview_w, 40, tint=CARD_TINT,
+                           radius=dv.RADIUS_TILE, tint_alpha=120,
+                           border_hex=CARD_BORDER, border_alpha=26)
+        self._preview_items.append(info)
+        scene_icon = self.bg.create_text(
+            preview_x + 14, info_y + 20, anchor="w",
+            text=ICON_GLYPHS[dv.ICONS["scene"]], fill=MUTED, font=(ICON_FONT, -14))
         self._preview_info_id = self.bg.create_text(
-            preview_x + 34, info_y + 18, anchor="w",
-            text="Scene capture idle", fill=TEXT_SOFT, font=dv.type_font("meta"))
+            preview_x + 34, info_y + 20, anchor="w",
+            text="Scene — —", fill=TEXT_SOFT, font=dv.type_font("row"))
+        mic_x = preview_x + preview_w - 72
+        mic_icon = self.bg.create_text(
+            mic_x, info_y + 20, anchor="e",
+            text=ICON_GLYPHS["microphone"], fill=FAINT, font=(ICON_FONT, -12))
+        mic_lbl = self.bg.create_text(
+            mic_x + 4, info_y + 20, anchor="w", text="Mic", fill=FAINT,
+            font=dv.type_font("meta"))
+        # Static mic track (no live meter — that would be a per-poll canvas mutate)
+        bar_bg = self.bg.create_rectangle(
+            preview_x + preview_w - 48, info_y + 18,
+            preview_x + preview_w - 12, info_y + 21,
+            fill=dv.over(dv.TEXT, 0.10, dv.CARD_CORE), outline="")
+        bar_fg = self.bg.create_rectangle(
+            preview_x + preview_w - 48, info_y + 18,
+            preview_x + preview_w - 28, info_y + 21,
+            fill=ACCENT, outline="")
+        self._preview_items.extend([
+            scene_icon, self._preview_info_id, mic_icon, mic_lbl, bar_bg, bar_fg,
+        ])
 
         self._set_hero_state("disconnected")
 
     def _build_preview(self, x, y, w, h):
-        """A stylised 16:9 'scene preview' tile - a violet gradient stand-in for
-        the live capture (rendering real OBS frames is out of scope), with the
-        source label and a little equaliser that comes alive while recording."""
+        """16:9 stand-in for the OBS scene (frame 2a). Live screenshots are
+        omitted — each canvas image swap is a full-window composite."""
         tile = self._make_preview_tile(w, h)
         photo = to_photo(tile)
         self._images.append(photo)
-        self.bg.create_image(x, y, anchor="nw", image=photo)
+        img = self.bg.create_image(x, y, anchor="nw", image=photo)
+        self._preview_items.append(img)
 
-        # Source label chip, top-left.
-        self._glass(x + 12, y + 12, 168, 24, tint=BASE_BG, radius=8,
-                    tint_alpha=150, border_alpha=0)
-        self._preview_dot_id = self.bg.create_text(x + 22, y + 24, anchor="w", text=ICON_GLYPHS["record"],
-                                                   fill=FAINT, font=(ICON_FONT, -8))
-        self.bg.create_text(x + 34, y + 24, anchor="w", text="Game Capture (Auto)",
-                            fill=NAV_ACTIVE_TEXT, font=dv.font(10, 500))
+        # Live chip (top-left) — ember, per the mockup
+        live_chip = self._glass(x + 12, y + 12, 58, 22, tint=BASE_BG, radius=7,
+                                tint_alpha=180, border_alpha=0)
+        self._preview_dot_id = self.bg.create_text(
+            x + 22, y + 23, anchor="w", text=ICON_GLYPHS["record"],
+            fill=EMBER, font=(ICON_FONT, -7))
+        live_txt = self.bg.create_text(
+            x + 34, y + 23, anchor="w", text=self._track("Live"),
+            fill="#FFA3B4", font=dv.type_font("eyebrow"))
 
-        # Equaliser bars along the bottom. Drawn once, in a fixed waveform - they
-        # used to animate, but every canvas mutation costs a full window
-        # composite (see the note above _glass), so a 12fps equaliser cost about
-        # as much as the entire rest of the UI put together.
-        self._eq_bars = []
-        n = 11
-        bar_w = 5
-        span = w - 28
-        gap = (span - n * bar_w) / (n - 1)
-        base_x = x + 14
-        floor_y = y + h - 14
-        for i in range(n):
-            bx = base_x + i * (bar_w + gap)
-            height = 6 + (math.sin(i * 0.8) + 1) * 9
-            bar = self.bg.create_rectangle(bx, floor_y - height, bx + bar_w, floor_y,
-                                           fill="#EDEAFF", outline="")
-            self._eq_bars.append((bar, bx, floor_y, bar_w))
+        # Resolution / fps chip (bottom-right) — filled from GetVideoSettings
+        self._preview_res_id = self.bg.create_text(
+            x + w - 12, y + h - 14, anchor="e", text="",
+            fill=ACCENT_LIGHT, font=dv.font(10, mono=True))
+        # Caption
+        cap = self.bg.create_text(
+            x + w / 2, y + h / 2, text=self._track("OBS scene preview"),
+            fill=dv.over(dv.TEXT, 0.45, "#2E2358"), font=dv.type_font("eyebrow"))
+        self._preview_items.extend([
+            live_chip, self._preview_dot_id, live_txt, self._preview_res_id, cap,
+        ])
 
     def _make_preview_tile(self, w, h):
         sw, sh = self._S(w), self._S(h)
         img = Image.new("RGBA", (sw, sh), (0, 0, 0, 0))
         draw = ImageDraw.Draw(img)
         for i in range(sh):
-            col = _blend_hex("#2A1C4D", "#7C3AED", i / max(1, sh - 1))
+            # Mockup gradient: #241E44 → #2E2358 → #5340A8
+            t = i / max(1, sh - 1)
+            if t < 0.42:
+                col = _blend_hex("#241E44", "#2E2358", t / 0.42)
+            else:
+                col = _blend_hex("#2E2358", "#5340A8", (t - 0.42) / 0.58)
             r, g, b = int(col[1:3], 16), int(col[3:5], 16), int(col[5:7], 16)
             draw.line([(0, i), (sw, i)], fill=(r, g, b, 255))
-        # Soft top-left light bloom for a touch of depth.
         bloom = Image.new("RGBA", (sw, sh), (0, 0, 0, 0))
         ImageDraw.Draw(bloom).ellipse(
             [-sw * 0.2, -sh * 0.4, sw * 0.7, sh * 0.6], fill=(255, 255, 255, 26))
         img = Image.alpha_composite(img, bloom.filter(ImageFilter.GaussianBlur(self._S(30))))
         mask = Image.new("L", (sw, sh), 0)
         ImageDraw.Draw(mask).rounded_rectangle(
-            [0, 0, sw - 1, sh - 1], radius=self._S(13), fill=255)
+            [0, 0, sw - 1, sh - 1], radius=self._S(14), fill=255)
         img.putalpha(mask)
         return img
 
     def _set_hero_state(self, state):
         """Swap the hero card between the four v3 states from one enum.
 
-        Frames 2a (recording), 2f (idle - watching), 2g (paused) and 2h (OBS
-        disconnected). Per the spec only the eyebrow, the tint and the primary
-        action change - the padding and the button row stay put, so nothing
-        else on the dashboard moves. Elapsed / size / bitrate are filled in by
-        _poll_obs_status; this owns everything else.
-
-        Note the tints: v3 is a two-hue system and "Disconnected - the only
-        place the ember hue leads". Recording is therefore accent, not red.
+        Frames 2a (recording), 2f (watching), 2g (paused), 2h (disconnected).
+        Recording and disconnected lead with ember (live + errors); paused uses
+        accent; watching is neutral.
         """
         self._hero_state = state
         tint = dv.HERO_STATES[state]["tint"] or CARD_BORDER
-        light = EMBER if tint is EMBER else ACCENT_LIGHT
+        light = "#FFA3B4" if tint is EMBER else ACCENT_LIGHT
         eyebrow = {
             "disconnected": "OBS disconnected",
             "watching": "Idle - watching",
             "recording": "Recording",
             "paused": f"Paused - idle {self.config.get('idle_timeout_seconds', 4)} s",
         }[state]
-        sub = {
-            "disconnected": "Can't reach OBS",
-            "watching": "",
-            "recording": "",
-            "paused": "",
-        }[state]
 
-        # The badge sizes itself to the eyebrow. The four labels differ a lot in
-        # length ("Recording" vs "Paused - idle 4 s"), and tracking them out
-        # widens them further - a fixed pill overflowed on two of the states and
-        # collided with the subtitle.
         badge_label = self._track(eyebrow)
         bx, by, _, bh = self._hero_badge_geom
         bw = 26 + self._text_w(badge_label, dv.type_font("eyebrow")) + 12
         self._hero_badge_geom = (bx, by, bw, bh)
         self._regen_glass(self._hero_badge_item, bx, by, bw, bh, tint=tint,
-                          radius=7, tint_alpha=40, border_alpha=0)
+                          radius=11, tint_alpha=40, border_alpha=0)
         self.bg.itemconfigure(self._hero_badge_text, text=badge_label, fill=light)
-        self.bg.itemconfigure(self.rec_dot_id, fill=tint)
-        self.bg.itemconfigure(self._hero_sub_id, text=sub, fill=light if sub else MUTED)
-        self.bg.coords(self._hero_sub_id, bx + bw + 12, by + bh / 2)
+        self.bg.itemconfigure(self.rec_dot_id, fill=tint if tint != CARD_BORDER else FAINT)
+
+        # Title / source / hint copy per frame 2f / 2h
+        if state == "watching":
+            title = "No game in focus"
+            source = (f"Foreground: {self._current_exe} — classified as not a game."
+                      if self._current_exe else "")
+            hint = "Recording starts by itself the moment a game launches."
+        elif state == "disconnected":
+            title = "Can't reach OBS"
+            source = ""
+            interval = self.config.get("reconnect_interval_seconds", 10)
+            hint = (f"Retrying every {interval}s — launching from obs_path if set.")
+        elif state in ("recording", "paused"):
+            title = self._current_game or "Recording"
+            source = self._hero_source_text()
+            hint = ""
+        else:
+            title, source, hint = self._current_game or "", "", ""
+
+        self.bg.itemconfigure(
+            self.game_label_id, text=title,
+            fill=TEXT if state in ("recording", "paused") else MUTED)
+        self.bg.itemconfigure(self._hero_source_id, text=source)
+        # Badge subtitle slot unused for watching (copy lives under the title)
+        self.bg.itemconfigure(self._hero_sub_id, text="")
 
         hx, hy, hw, hh = self._status_card_geom
         self._regen_glass(self._status_card_item, hx, hy, hw, hh, radius=dv.RADIUS_CORE,
                           tint=CARD_TINT, tint_alpha=110,
                           border_hex=tint, border_alpha=70)
 
-        # Readouts only carry meaning while a recording exists. 2f is explicit:
-        # "Idle - neutral tint, no timer, no scene preview."
         show_readout = state in ("recording", "paused")
         for cap, val in self._readouts.values():
             self.bg.itemconfigure(cap, state="normal" if show_readout else "hidden")
             self.bg.itemconfigure(val, state="normal" if show_readout else "hidden")
-        # "Paused - accent tint, timer frozen at 60% opacity." No alpha on a
-        # canvas item, so the 60% is composited against the card core.
         self.bg.itemconfigure(
             self.timer_label_id,
             fill=dv.over(dv.TEXT, dv.PAUSED_TIMER_OPACITY, dv.CARD_CORE)
             if state == "paused" else TEXT)
-
         self.bg.itemconfigure(
             self._hero_hint_id,
             state="hidden" if show_readout else "normal",
-            text="" if show_readout else {
-                "disconnected": (
-                    f"Retrying every {self.config.get('reconnect_interval_seconds', 10)}s. "
-                    "Launching from obs_path if it's set."),
-                "watching": "Standing by — recording starts by itself the moment a game launches.",
-            }.get(state, ""),
-        )
+            text=hint)
 
-        # Scene-preview caption follows the capture, so the right column isn't
-        # claiming "idle" while a recording is plainly running.
-        info = {
-            "recording": (f"Game Capture → {self._current_game}"
-                          if self._current_game else "Capturing"),
-            "paused": "Capture held — paused",
-            "watching": "Scene capture idle",
-            "disconnected": "No scene — OBS offline",
-        }[state]
-        self.bg.itemconfigure(self._preview_info_id, text=info)
-        self.bg.itemconfigure(self._preview_dot_id, fill=tint if show_readout else FAINT)
+        # Preview column: 2f — no scene preview while idle / disconnected
+        preview_on = state in ("recording", "paused")
+        for item in self._preview_items:
+            try:
+                self.bg.itemconfigure(item, state="normal" if preview_on else "hidden")
+            except Exception:
+                pass
+        if preview_on:
+            scene = self._scene_name or "Game Capture"
+            self.bg.itemconfigure(
+                self._preview_info_id,
+                text=f"Scene — {scene}")
+            self.bg.itemconfigure(
+                self._preview_res_id,
+                text=self._video_label or "")
 
-        # The button row: same position always, different label / binding /
-        # emphasis per state (2f-2h). Ember only leads on a real disconnection.
         primary, secondary = {
             "recording":    (("Stop recording", self._toggle_record, True),
                              ("Pause", self._toggle_pause, False)),
@@ -2426,8 +2463,9 @@ class AppWindow:
                              ("Stop & save", self._toggle_record, False)),
             "watching":     (("Record anyway", self._toggle_record, False),
                              ("Pause monitoring", self._toggle_monitoring, False)),
-            "disconnected": (("Retry now", self._start, False),
-                             ("Connection settings", lambda: self._show_view("settings"), False)),
+            "disconnected": (("Retry now", self._start, True),
+                             ("Connection settings",
+                              lambda: self._show_view("settings"), False)),
         }[state]
 
         text, command, is_ember = primary
@@ -2435,10 +2473,6 @@ class AppWindow:
         pill_tint = EMBER if is_ember else ACCENT
         pill_text = EMBER if is_ember else ACCENT_LIGHT
         self._hero_primary_text = pill_text
-        # "Trailing icons on primary pills live in their own 26-28px circle,
-        # flush to the right padding." Rendered as the button's own image so it
-        # sits inside the pill; a canvas circle would be painted over by the
-        # embedded widget.
         role = {"recording": "square", "paused": "resume",
                 "watching": "start", "disconnected": "rescan"}[state]
         glyph = ICON_GLYPHS.get(role) or ICON_GLYPHS[dv.ICONS[role]]
@@ -2458,16 +2492,17 @@ class AppWindow:
         text, command, _ = secondary
         self._hero_secondary_cmd = command
         self.pause_btn.configure(text=text)
-        # Both buttons are meaningful in every v3 state, so unlike v2 the
-        # secondary is never hidden - only relabelled.
         self.bg.itemconfigure(self._pause_btn_win, state="normal")
 
-    # ---- stat tiles ----
+    def _hero_source_text(self):
+        """Mono source line under the game title — real exe only; no fake AppID."""
+        if self._current_exe:
+            return self._current_exe
+        return ""
+
+    # ---- stat tiles (frame 2a: Clips today · Recorded · Auto-culled · Idle pauses) ----
     def _build_stats(self, x0, y, w):
-        # 4 tiles across when there's room (full-width), 2x2 when the panel is in
-        # a half-width grid slot. Every tile's contents are laid out relative to
-        # its own (tx, ty), so both arrangements just work.
-        gap = 14
+        gap = 12
         cols = 4 if w >= 480 else 2
         tw = (w - gap * (cols - 1)) / cols
         h = 92
@@ -2476,73 +2511,60 @@ class AppWindow:
             col, row = i % cols, i // cols
             return x0 + col * (tw + gap), y + row * (h + gap)
 
-        # 1) Today's clips (filled in by _poll_disk_stats)
+        # 1) Clips today — disk scan
         tx, ty = cell(0)
         self._stat_tile(tx, ty, tw, h, "film-strip", ACCENT, "Clips today")
         self._stat_today_val = self.bg.create_text(
             tx + 15, ty + 48, anchor="w", text="–", fill=TEXT,
-            font=dv.font(21, 500))
+            font=dv.font(24, mono=True))
         self._stat_today_sub = self.bg.create_text(
             tx + 15, ty + 71, anchor="w", text="scanning…", fill=MUTED,
             font=dv.type_font("meta"))
 
-        # 2) Disk free
+        # 2) Recorded — Monitor.recorded_seconds_today
         tx, ty = cell(1)
-        self._stat_tile(tx, ty, tw, h, "hard-drives", ACCENT, "Disk free")
-        self._stat_disk_val = self.bg.create_text(
+        self._stat_tile(tx, ty, tw, h, "hourglass-medium", ACCENT, "Recorded")
+        self._stat_recorded_val = self.bg.create_text(
             tx + 15, ty + 48, anchor="w", text="–", fill=TEXT,
-            font=dv.font(21, 500))
+            font=dv.font(24, mono=True))
+        self._stat_disk_val = self._stat_recorded_val   # legacy alias
         self._stat_disk_sub = self.bg.create_text(
+            tx + 15, ty + 71, anchor="w", text="this session's kept clips",
+            fill=MUTED, font=dv.type_font("meta"))
+
+        # 3) Auto-culled — Monitor.auto_culled
+        tx, ty = cell(2)
+        self._stat_tile(tx, ty, tw, h, "trash", ACCENT, "Auto-culled")
+        self._stat_culled_val = self.bg.create_text(
+            tx + 15, ty + 48, anchor="w", text="0", fill=TEXT,
+            font=dv.font(24, mono=True))
+        # Idle timeout slider lives in Settings now (mockup 2a has no slider here).
+        self.timeout_value_id = self._stat_culled_val
+
+        # 4) Idle pauses — Monitor.idle_pauses
+        tx, ty = cell(3)
+        self._stat_tile(tx, ty, tw, h, "moon", ACCENT, "Idle pauses")
+        self._stat_pauses_val = self.bg.create_text(
+            tx + 15, ty + 48, anchor="w", text="0", fill=TEXT,
+            font=dv.font(24, mono=True))
+        self._stat_sync_sub = self.bg.create_text(
             tx + 15, ty + 71, anchor="w", text="", fill=MUTED,
             font=dv.type_font("meta"))
 
-        # 3) Idle timeout - value + live slider (keeps the old control alive)
-        tx, ty = cell(2)
-        self._stat_tile(tx, ty, tw, h, "timer", ACCENT, "Idle timeout")
-        self.timeout_value_id = self.bg.create_text(
-            tx + 15, ty + 48, anchor="w",
-            text=f"{self.config['idle_timeout_seconds']}s", fill=TEXT,
-            font=dv.font(21, 500))
-        slider_bg = self._bg_at(tx + tw / 2, ty + 74)
-        slider = ctk.CTkSlider(
-            self.root, from_=1, to=60, number_of_steps=59, command=self._on_timeout_change,
-            fg_color=SURFACE, progress_color=ACCENT, button_color=ACCENT,
-            button_hover_color=ACCENT_LIGHT, bg_color=slider_bg, height=14,
-        )
-        slider.set(self.config["idle_timeout_seconds"])
-        self.bg.create_window(tx + 15, ty + 70, anchor="w", window=slider,
-                              width=int(tw - 30), height=14)
-        self._dashboard_widgets.append(slider)
-
-        # 4) Sync + offload status. Top line: game-list sync (GitHub). Sub line:
-        # NAS offload state, updated live by on_offload_state().
-        tx, ty = cell(3)
-        self._stat_tile(tx, ty, tw, h, "steam-logo", ACCENT, "Sync")
-        gh_on = bool(self.gamesync and self.gamesync.enabled)
-        offload_on = bool(self.offloader and self.offloader.enabled)
-        self.bg.create_text(tx + 15, ty + 48, anchor="w",
-                            text="GitHub" if gh_on else "Local",
-                            fill=TEXT if gh_on else MUTED,
-                            font=dv.font(21, 500))
-        self._stat_sync_sub = self.bg.create_text(
-            tx + 15, ty + 71, anchor="w",
-            text=("NAS offload on" if offload_on else "game list") if gh_on
-                 else "local only",
-            fill=MUTED, font=dv.type_font("meta"))
-
     def on_offload_state(self, pending):
-        """Called (from the offloader's thread) as the NAS queue drains."""
-        def apply():
-            if not hasattr(self, "_stat_sync_sub"):
-                return
-            if pending > 0:
-                text = f"NAS: {pending} queued"
-            elif self.offloader and self.offloader.enabled:
-                text = "NAS: up to date"
-            else:
-                text = "game list"
-            self.bg.itemconfigure(self._stat_sync_sub, text=text)
-        self._ui(apply)
+        """NAS queue status — kept for the offloader callback; no Sync tile now."""
+        pass
+
+    @staticmethod
+    def _format_recorded(seconds):
+        seconds = max(0, int(seconds or 0))
+        if seconds < 60:
+            return f"{seconds}s"
+        hours, rem = divmod(seconds, 3600)
+        mins = rem // 60
+        if hours:
+            return f"{hours}h {mins}m"
+        return f"{mins}m"
 
     def _stat_tile(self, x, y, w, h, role, color, label):
         """One stat tile - two layers, per "a flat card is a bug"."""
@@ -2555,40 +2577,77 @@ class AppWindow:
         self.bg.create_text(x + 34, y + 20, anchor="w", text=self._track(label),
                             fill=FAINT, font=dv.type_font("eyebrow"))
 
-    # ---- activity log ----
+    # ---- activity log (frame 2a dashboard block) ----
     def _build_activity(self, x0, y, w, h):
-        # h is the whole footprint (header + panel). Header sits on top; the log
-        # panel fills the rest, so the block works at any grid height/width.
-        self.bg.create_text(x0, y, anchor="nw", text=self._track("Activity"),
-                            fill=FAINT, font=dv.type_font("eyebrow"))
-        py = y + 22
-        panel_h = h - 22
-        self._glass(x0, py, w, panel_h, tint=CARD_TINT, radius=dv.RADIUS_TILE, tint_alpha=120,
+        # Outer shell + header row with All tags / Copy log (mockup 2a).
+        self._glass(x0, y, w, h, tint=CARD_TINT, radius=18, tint_alpha=100,
                     border_hex=CARD_BORDER, border_alpha=26)
+        inner = self._glass(x0 + 4, y + 4, w - 8, h - 8, tint=dv.GROUND,
+                            radius=14, tint_alpha=184, border_alpha=0)
+        del inner
+        self.bg.create_text(x0 + 20, y + 20, anchor="w", text=self._track("Activity"),
+                            fill=FAINT, font=dv.type_font("eyebrow"))
 
-        # Rounded plate + a flat square textbox inset inside it (see the note in
-        # the old build - a tall widget can't match a sheen gradient's corners).
-        box_x, box_y = x0 + 10, py + 10
-        box_w, box_h = w - 20, panel_h - 20
-        box_r = 10
-        backing = make_solid_tile(self._S(box_w), self._S(box_h), LOG_BG, radius=self._S(box_r))
-        backing_photo = to_photo(backing)
-        self._images.append(backing_photo)
-        self.bg.create_image(box_x, box_y, anchor="nw", image=backing_photo)
-        self._composite.paste(backing, (self._S(box_x), self._S(box_y)), backing)
+        copy_btn = ctk.CTkButton(
+            self.root, text=f"{ICON_GLYPHS['copy-simple']}  Copy log",
+            command=self._copy_log,
+            fg_color="transparent", hover_color=SURFACE_HOVER, text_color=FAINT,
+            bg_color=self._bg_at(x0 + w - 80, y + 22), border_width=0,
+            corner_radius=dv.RADIUS_CONTROL, font=ctk.CTkFont(size=11),
+            height=24)
+        self.bg.create_window(x0 + w - 110, y + 10, anchor="nw",
+                              window=copy_btn, width=96, height=24)
+        self._dashboard_widgets.append(copy_btn)
 
+        tags = ["All tags"] + sorted(LOG_TAG_COLORS)
+        self._log_filter = ctk.CTkOptionMenu(
+            self.root, values=tags, command=self._on_log_filter,
+            fg_color="transparent", button_color="transparent",
+            button_hover_color=SURFACE_HOVER, text_color=FAINT,
+            corner_radius=dv.RADIUS_CONTROL, font=ctk.CTkFont(size=11),
+            width=100, height=24)
+        self._log_filter.set("All tags")
+        self.bg.create_window(x0 + w - 220, y + 10, anchor="nw",
+                              window=self._log_filter, width=100, height=24)
+        self._dashboard_widgets.append(self._log_filter)
+
+        box_x, box_y = x0 + 16, y + 42
+        box_w, box_h = w - 32, h - 54
         self.console = ctk.CTkTextbox(
             self.root, state="disabled", wrap="word", fg_color=LOG_BG, corner_radius=0,
             bg_color=LOG_BG,
             font=ctk.CTkFont(family="Consolas", size=11), text_color=MUTED,
         )
-        self.bg.create_window(box_x + box_r, box_y + box_r, anchor="nw", window=self.console,
-                              width=box_w - box_r * 2, height=box_h - box_r * 2)
+        self.bg.create_window(box_x, box_y, anchor="nw", window=self.console,
+                              width=box_w, height=box_h)
         self._prepare_log_tags(self.console)
         self._dashboard_widgets.append(self.console)
-        # Replay history so switching layouts (which rebuilds this) doesn't wipe
-        # the visible log.
-        self._append_log_batch(self.console, list(self._log_lines[-LOG_HISTORY:]))
+        self._replay_filtered_log()
+
+    def _on_log_filter(self, value):
+        self._log_filter_tag = None if value == "All tags" else value
+        self._replay_filtered_log()
+
+    def _copy_log(self):
+        text = "\n".join(self._log_lines[-LOG_HISTORY:])
+        try:
+            self.root.clipboard_clear()
+            self.root.clipboard_append(text)
+            self._log("[Manual] Activity log copied to clipboard.")
+        except Exception as exc:
+            self._log(f"[Manual] Couldn't copy log: {exc}")
+
+    def _replay_filtered_log(self):
+        if self.console is None:
+            return
+        lines = list(self._log_lines[-LOG_HISTORY:])
+        tag = self._log_filter_tag
+        if tag:
+            lines = [ln for ln in lines if ln.startswith(f"[{tag}]")]
+        self.console.configure(state="normal")
+        self.console.delete("1.0", "end")
+        self.console.configure(state="disabled")
+        self._append_log_batch(self.console, lines)
 
     # ---- disk / clip stats ----
     def _poll_disk_stats(self):
@@ -2650,16 +2709,13 @@ class AppWindow:
         self.root.after(300000, self._poll_disk_stats)  # 5 min; it's a slow-moving stat
 
     def _apply_disk_stats(self, clips, total, free_txt, drive, usage_pair=None):
-        self.bg.itemconfigure(self._stat_today_val,
-                              text=f"{clips} clip" + ("" if clips == 1 else "s"))
+        # Frame 2a "Clips today" is a bare count; size stays on the sub-line.
+        self.bg.itemconfigure(self._stat_today_val, text=str(clips))
         self.bg.itemconfigure(self._stat_today_sub,
-                              text=f"{_format_bytes(total)} recorded" if clips else "nothing yet")
-        if free_txt:
-            self.bg.itemconfigure(self._stat_disk_val, text=free_txt)
-            self.bg.itemconfigure(self._stat_disk_sub, text=f"on {drive}" if drive else "free")
+                              text=f"{_format_bytes(total)} on disk" if clips else "nothing yet")
+        self._refresh_monitor_stats()
 
-        # The rail storage card. Left blank until a real reading arrives - an
-        # empty bar beats a bar sitting at zero, which would read as "disk full".
+        # The rail storage card. Left blank until a real reading arrives.
         if usage_pair:
             free, capacity = usage_pair
             used_frac = 0.0 if not capacity else max(0.0, min(1.0, (capacity - free) / capacity))
@@ -2671,21 +2727,47 @@ class AppWindow:
                 self._store_free,
                 text=f"{_format_bytes(free)} free of {_format_bytes(capacity)}")
 
+    def _refresh_monitor_stats(self):
+        """Push Monitor counters into the Recorded / Auto-culled / Idle pauses tiles."""
+        m = self.monitor
+        if hasattr(self, "_stat_recorded_val"):
+            self.bg.itemconfigure(
+                self._stat_recorded_val,
+                text=self._format_recorded(m.recorded_seconds_today))
+        if hasattr(self, "_stat_culled_val"):
+            self.bg.itemconfigure(self._stat_culled_val, text=str(m.auto_culled))
+        if hasattr(self, "_stat_pauses_val"):
+            self.bg.itemconfigure(self._stat_pauses_val, text=str(m.idle_pauses))
+
     # ---- titlebar status updaters ----
     def _set_obs_status(self, text, color):
-        """Update the OBS readout in the titlebar.
+        """Update the OBS readout in the titlebar (frame 2a one-liner).
 
-        v3 has only two hues, so this reads accent for anything healthy or
-        in-flight and ember only for a real disconnection - "the only place the
-        ember hue leads" (frame 2h).
+        Connected form: ``OBS 30.2 · localhost:4455`` — version only when
+        GetVersion has returned; never invent a build number.
         """
         disconnected = color in (EMBER, RED)
-        role = "plugs" if disconnected else "plugs-connected"
-        self.bg.itemconfigure(self._obs_card_dot,
-                              text=ICON_GLYPHS[role],
-                              fill=EMBER if disconnected else ACCENT_LIGHT)
-        self.bg.itemconfigure(self._obs_card_title, text=f"OBS {text.lower()}",
-                              fill=EMBER if disconnected else MUTED)
+        host = (f"{self.config.get('obs_host', 'localhost')}:"
+                f"{self.config.get('obs_port', 4455)}")
+        if disconnected:
+            label = f"OBS {text.lower()}"
+            fill = EMBER
+            self.bg.itemconfigure(self._obs_card_dot, text=ICON_GLYPHS["record"],
+                                  fill=FAINT)
+        else:
+            # Frame 2a: "OBS 30.2 · localhost:4455" — omit the version until
+            # GetVersion lands so we never invent a build number.
+            ver = f" {self._obs_version}" if self._obs_version else ""
+            if text.lower() in ("connected", "ok"):
+                label = f"OBS{ver} · {host}"
+            else:
+                label = f"OBS {text.lower()} · {host}"
+            fill = MUTED
+            self.bg.itemconfigure(self._obs_card_dot, text=ICON_GLYPHS["record"],
+                                  fill=ACCENT)
+        self.bg.itemconfigure(self._obs_card_title, text=label, fill=fill)
+        # Host is folded into the title line now.
+        self.bg.itemconfigure(self._obs_card_sub, text="")
 
     def _set_monitoring(self, on):
         self._monitoring_on = on
@@ -2740,9 +2822,11 @@ class AppWindow:
         # scrolled out of the bounded history, so there's no point rendering it.
         if len(pending) > LOG_HISTORY:
             pending = pending[-LOG_HISTORY:]
-        for box in (self.console, getattr(self, "console_full", None)):
-            if box is not None:
-                self._append_log_batch(box, pending)
+        if self._log_filter_tag:
+            pending = [ln for ln in pending
+                       if ln.startswith(f"[{self._log_filter_tag}]")]
+        if self.console is not None and pending:
+            self._append_log_batch(self.console, pending)
 
     def _prepare_log_tags(self, box):
         """Colour-code the [Subsystem] prefix and give lines breathing room.
@@ -2846,6 +2930,7 @@ class AppWindow:
             self._tray_elapsed = ""
         if self._mini:
             self._mini_update()
+        self._refresh_monitor_stats()
 
         # The hero card owns the badge/border/readout visibility; pick the state
         # that matches what OBS and the monitor are actually doing right now.
@@ -3286,18 +3371,31 @@ class AppWindow:
                                    fill=TEXT, font=dv.font(19, mono=True))
         game = canvas.create_text(30, h / 2 + 12, anchor="w", text="",
                                   fill=MUTED, font=dv.type_font("meta"))
+        # Frame 2k: pause + stop + collapse (three 28px buttons)
         collapse = canvas.create_text(
             w - 18, h / 2, text=ICON_GLYPHS[dv.ICONS["collapse_mini"]],
             fill=FAINT, font=(ICON_FONT, -13))
+        stop = canvas.create_text(
+            w - 48, h / 2, text=ICON_GLYPHS["square"],
+            fill=MUTED, font=(ICON_FONT, -11))
+        pause = canvas.create_text(
+            w - 78, h / 2, text=ICON_GLYPHS["pause"],
+            fill=MUTED, font=(ICON_FONT, -12))
 
         mini = {"popup": popup, "canvas": canvas, "dot": dot, "timer": timer,
-                "game": game, "faded": False, "fade_job": None, "drag": None}
+                "game": game, "pause": pause, "stop": stop,
+                "faded": False, "fade_job": None, "drag": None}
 
         canvas.tag_bind(collapse, "<Button-1>", lambda _e: self.hide_mini(restore=True))
+        canvas.tag_bind(stop, "<Button-1>",
+                        lambda _e: self.root.after(0, self._toggle_record))
+        canvas.tag_bind(pause, "<Button-1>",
+                        lambda _e: self.root.after(0, self._toggle_pause))
 
         def press(event):
-            # Ignore a press on the collapse glyph so dragging can't eat the click.
-            if collapse in canvas.find_withtag("current"):
+            # Ignore presses on the action glyphs so dragging can't eat the click.
+            cur = canvas.find_withtag("current")
+            if cur and cur[0] in (collapse, stop, pause):
                 return
             mini["drag"] = (event.x_root - popup.winfo_x(), event.y_root - popup.winfo_y())
 
@@ -3429,33 +3527,25 @@ class AppWindow:
                                      text=self._tray_elapsed or "00:00:00")
         mini["canvas"].itemconfigure(mini["game"], text=self._current_game or "Recording")
         mini["canvas"].itemconfigure(mini["dot"], fill=ACCENT if paused else EMBER)
+        if "pause" in mini:
+            mini["canvas"].itemconfigure(
+                mini["pause"],
+                text=ICON_GLYPHS["play"] if paused else ICON_GLYPHS["pause"])
 
     def _on_state(self, **kwargs):
         def apply():
             if "game" in kwargs:
                 game = kwargs["game"]
-                self.bg.itemconfigure(
-                    self.game_label_id,
-                    text=game or "No game detected",
-                    fill=TEXT if game else MUTED,  # empty state whispers, active state speaks
-                )
                 self._tray_game = game
                 self._current_game = game
-                # Refresh the hero in place so the scene caption picks up the
-                # new title (the state itself is unchanged, so this is a no-op
-                # visually apart from that caption).
                 self._set_hero_state(self._hero_state)
                 self._flash_status_card()
-                # The timer/storage/pulsing dot are driven by _poll_obs_status
-                # from OBS's own GetRecordStatus, not from this event - that
-                # way they reflect whether OBS is *actually* recording, not
-                # just whether the monitor decided a game should be recorded.
-            if "folder" in kwargs:
-                self.bg.itemconfigure(self.folder_label_id, text=kwargs["folder"] or self.config["recording_root"])
+            if "exe" in kwargs:
+                self._current_exe = kwargs["exe"]
+                self._set_hero_state(self._hero_state)
             if "idle" in kwargs:
-                # Idle no longer has its own pill - it reads as the hero card's
-                # "PAUSED" state, which _poll_obs_status derives from OBS itself.
                 self._tray_idle = kwargs["idle"]
+                self._refresh_monitor_stats()
             self._update_tray_tooltip()
         self.root.after(0, apply)
 
@@ -3526,8 +3616,8 @@ class AppWindow:
             pass
 
     def _on_timeout_change(self, value):
+        """Legacy hook — idle timeout is edited in Settings now (frame 2c)."""
         self.config["idle_timeout_seconds"] = int(value)
-        self.bg.itemconfigure(self.timeout_value_id, text=f"{int(value)}s")
         from .config import save_config
         save_config(self.config)
 
@@ -3543,9 +3633,56 @@ class AppWindow:
         self.autostart()
 
     def _on_connected(self):
+        self._refresh_obs_meta()
         self._set_obs_status("Connected", GREEN)
         self._set_monitoring(True)
         self.monitor.start()
+
+    def _refresh_obs_meta(self):
+        """Pull version, video settings and scene name once after connect.
+
+        Runs on a worker — these calls are cheap but must not block Tk.
+        """
+        def worker():
+            version = video = scene = None
+            try:
+                if self.obs.connected:
+                    ver = self.obs.get_version()
+                    raw = ver.get("obsVersion") or ver.get("obsStudioVersion") or ""
+                    # "30.2.3" → "30.2" for the titlebar chip
+                    parts = str(raw).split(".")
+                    version = ".".join(parts[:2]) if parts and parts[0] else str(raw) or None
+            except OBSError:
+                pass
+            try:
+                if self.obs.connected:
+                    vs = self.obs.get_video_settings()
+                    w = vs.get("baseWidth") or vs.get("outputWidth")
+                    h = vs.get("baseHeight") or vs.get("outputHeight")
+                    num = vs.get("fpsNumerator") or vs.get("fpsNum")
+                    den = vs.get("fpsDenominator") or vs.get("fpsDen") or 1
+                    if w and h and num:
+                        fps = int(round(float(num) / float(den)))
+                        video = f"{w}×{h} · {fps} fps"
+            except OBSError:
+                pass
+            try:
+                if self.obs.connected:
+                    scene = self.obs.get_current_program_scene()
+            except OBSError:
+                pass
+
+            def apply():
+                self._obs_version = version
+                self._video_label = video
+                self._scene_name = scene
+                if self.obs.connected:
+                    self._set_obs_status("Connected", GREEN)
+                if self._hero_state in ("recording", "paused"):
+                    self._set_hero_state(self._hero_state)
+            self._ui(apply)
+
+        threading.Thread(target=worker, daemon=True).start()
 
     def autostart(self):
         """Called once at launch, and again on retry, so the app starts

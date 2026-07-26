@@ -224,3 +224,15 @@ class OBSClient:
 
     def get_record_directory(self):
         return self.call("GetRecordDirectory").get("recordDirectory")
+
+    def get_version(self):
+        """OBS build info - used for the titlebar ``OBS 30.2`` readout."""
+        return self.call("GetVersion")
+
+    def get_video_settings(self):
+        """Canvas size + fps - the hero preview's ``2560×1440 · 60 fps`` chip."""
+        return self.call("GetVideoSettings")
+
+    def get_current_program_scene(self):
+        data = self.call("GetCurrentProgramScene")
+        return data.get("currentProgramSceneName") or data.get("sceneName")
