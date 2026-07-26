@@ -110,6 +110,14 @@ and the page grows a row. `parse()`/`render()` are pure inverses (a test asserts
   no way around that — so spend exactly that and no more. Nothing here validates, restyles
   or updates the status line as you type. What made the old animation fatal was repainting
   *without* input; a form only costs while it's being used. Don't add live validation.
+  `tests/test_settings_typing.py` measures the real per-keystroke cost on whatever display
+  it's run on. **It was only ever run on a Linux X session (0.0ms — no DWM compositing), so
+  the Windows number is still unknown.** If it comes back near the ~100ms the animation
+  post-mortem measured, the in-view form is the wrong shape and the fallback is a separate
+  Toplevel: a smaller composite surface, and known cheap (the notification popup animates).
+  ⚠️ p50 frame time is *blind* to this — keystrokes are sparse relative to a 16ms heartbeat,
+  so the median stays clean while every keystroke stalls. Hence the direct measure plus an
+  event-loop rate. Don't "simplify" that test back to a p50.
 
 ## Config (`config.json`)
 - OBS: `obs_host` localhost, `obs_port` 4455, `obs_password` empty (obs-websocket v5)
@@ -198,6 +206,7 @@ this window. `tests/test_frame_pacing.py` fails if a per-frame timer comes back.
   python tests/test_list_views.py      # Recordings/Games actually populate (real mainloop)
   python tests/test_frame_pacing.py    # visible-window frame budget (briefly shows the window)
   python tests/test_settings.py        # Settings round-trips, validates, and applies live
+  python tests/test_settings_typing.py # what a keystroke in the form costs HERE (read the numbers)
   ```
   ⚠️ Anything async **must** be tested under a real `mainloop()`. Tk refuses a cross-thread
   `root.after()` when driven by `update()`-pumping, and `_ui()` swallows that — so an

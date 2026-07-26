@@ -161,6 +161,7 @@ python tests/test_views.py           # nav views + tile-grid dashboard
 python tests/test_list_views.py      # Recordings/Games populate
 python tests/test_frame_pacing.py    # visible-window frame budget
 python tests/test_settings.py        # Settings round-trips, validates, applies live
+python tests/test_settings_typing.py # per-keystroke repaint cost of the Settings form
 python tests/test_gamesync.py        # game-list sync (mocked GitHub API)
 python tests/test_offload.py         # NAS offload safety invariants
 python tests/stress_test.py          # integrated stress under adverse load
