@@ -284,6 +284,19 @@ class Classifier:
             self._pending_manual[key] = (list(basenames), suggested_name)
             return True
 
+    def peek_pending_reviews(self):
+        """Read the manual-review queue WITHOUT draining it.
+
+        The Games pane shows what's awaiting a decision; the dialog flow in
+        _poll_manual_review is what actually resolves it. Displaying must not
+        pop, or the pane would silently swallow the prompt the user is waiting
+        for. Includes items currently on screen (`_in_review`) so a queue of one
+        doesn't read as empty while its dialog is open.
+        """
+        with self._lock:
+            names = [name or key for key, (_basenames, name) in self._pending_manual.items()]
+            return names + sorted(self._in_review - set(self._pending_manual))
+
     def pop_pending_reviews(self):
         """Returns [(key, basenames, suggested_name), ...]."""
         with self._lock:

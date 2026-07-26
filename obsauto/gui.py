@@ -404,6 +404,7 @@ class AppWindow:
         # The v3 toast is a SINGLE SLOT: at most one window, ever, reused in
         # place. See _show_notification / _toast_replace.
         self._toast = None
+        self._mini = None    # the 2k overlay; never exists while idle
         self.tray_icon = None  # set by main.py after the tray icon is built
         self._tray_game = None
         self._tray_idle = False
@@ -937,8 +938,15 @@ class AppWindow:
                                  ICON_GLYPHS["x"], self._hide, font=(ICON_FONT, -9))
         self._make_circle_button(WIDTH - pad_r - 47, cy, 13, SURFACE, SURFACE_HOVER,
                                  ICON_GLYPHS["minus"], self._hide, font=(ICON_FONT, -9))
+        # Collapse to the mini overlay (2k). It refuses while idle, which is why
+        # this is a normal button rather than one that gets hidden - the refusal
+        # says why, where a vanishing control would just be confusing.
+        self._make_circle_button(
+            WIDTH - pad_r - 79, cy, 13, SURFACE, SURFACE_HOVER,
+            ICON_GLYPHS[dv.ICONS["collapse_mini"]], self.show_mini,
+            font=(ICON_FONT, -9))
 
-        ox = WIDTH - pad_r - 74
+        ox = WIDTH - pad_r - 106   # clears the three circle buttons
         self._obs_card_sub = self.bg.create_text(
             ox, cy, anchor="e",
             text=f"{self.config.get('obs_host', 'localhost')}:{self.config.get('obs_port', 4455)}",
@@ -1642,25 +1650,68 @@ class AppWindow:
             self._log(f"[Manual] Could not open {path}: {exc}")
 
     # ---- Games ----
+    # ---- Games (frame 2d) ----
+    # Three blocks: what's awaiting a decision, the games, the ignored apps.
+    #
+    # Two things the frame draws are absent for want of a source: the Steam
+    # AppID beside each game (the classifier stores {display_name, source}, no
+    # id) and "seen 4x" on an unclassified row (nothing counts sightings).
+    #
+    # The unclassified block is read-only on purpose. Deciding still happens in
+    # the existing modal flow (_poll_manual_review), which owns the queue's
+    # _in_review bookkeeping; this block PEEKS so that showing an item can never
+    # swallow the prompt the user is waiting on.
     def _build_games(self):
-        (x, y, w, h), sub = self._view_panel(
-            "Known games", "What the classifier has learned to record.")
+        (x, y, w, h), sub = self._view_panel("Games", "What the classifier has learned.")
         self._games_sub = sub
-        self._view_button(x + w - 136, y + 20, 116, "Game data",
-                          self._open_game_data)
-        self._view_button(x + w - 262, y + 20, 116, "↻  Rescan",
-                          self._rescan_steam)
-        self._games_list = self._scroll_list(x + 16, y + 74, w - 32, h - 90)
+        self._view_button(x + w - 150, y + 20, 130, "Rescan library", self._rescan_steam)
+        self._view_button(x + w - 276, y + 20, 116, "Game data", self._open_game_data)
+
+        col_w = (w - 48) / 2
+        top_h = 96
+        self.bg.create_text(x + 16, y + 82, anchor="w", text=self._track("Unclassified"),
+                            fill=FAINT, font=dv.type_font("eyebrow"))
+        self._games_pending = self._scroll_list(x + 16, y + 96, w - 32, top_h)
+
+        list_y = y + 96 + top_h + 26
+        list_h = h - (list_y - y) - 34
+        self.bg.create_text(x + 16, list_y - 14, anchor="w", text=self._track("Games"),
+                            fill=FAINT, font=dv.type_font("eyebrow"))
+        self.bg.create_text(x + 32 + col_w, list_y - 14, anchor="w",
+                            text=self._track("Not games"), fill=FAINT,
+                            font=dv.type_font("eyebrow"))
+        self._games_list = self._scroll_list(x + 16, list_y, col_w, list_h)
+        self._nongames_list = self._scroll_list(x + 32 + col_w, list_y, col_w, list_h)
+
+        self._games_foot = self.bg.create_text(
+            x + 16, y + h - 14, anchor="w", text="", fill=FAINT,
+            font=dv.type_font("meta"))
+        self.bg.create_text(x + 32 + col_w, y + h - 14, anchor="w",
+                            text="Right-click a row to move it back to Games.",
+                            fill=FAINT, font=dv.type_font("meta"))
 
     def _refresh_games(self):
-        for child in self._games_list.winfo_children():
-            child.destroy()
+        for parent in (self._games_list, self._nongames_list, self._games_pending):
+            for child in parent.winfo_children():
+                child.destroy()
         try:
             data = self.classifier._data
             games, non_games = data.get("games", {}), data.get("non_games", {})
         except Exception as exc:
             self._empty_note(self._games_list, f"Couldn't read the game list: {exc}")
             return
+
+        pending = []
+        try:
+            pending = self.classifier.peek_pending_reviews()
+        except Exception:
+            pass
+        if pending:
+            for name in pending:
+                self._list_row(self._games_pending, name,
+                               "Nebula will ask about this one", "awaiting")
+        else:
+            self._empty_note(self._games_pending, "Nothing awaiting a decision.")
 
         # Collapse the exe->entry map down to one row per actual game.
         by_name = {}
@@ -1673,24 +1724,78 @@ class AppWindow:
             entry = by_name.setdefault(name, {"exes": [], "source": source})
             entry["exes"].append(key)
 
+        awaiting = (f"{len(pending)} awaiting your call   ·   " if pending else "")
         self.bg.itemconfigure(
             self._games_sub,
-            text=f"{len(by_name)} game{'' if len(by_name) == 1 else 's'} recorded automatically"
-                 f"   ·   {len(non_games)} app{'' if len(non_games) == 1 else 's'} ignored")
+            text=f"{awaiting}{len(by_name)} game{'' if len(by_name) == 1 else 's'} recorded "
+                 f"automatically   ·   {len(non_games)} app"
+                 f"{'' if len(non_games) == 1 else 's'} ignored")
+
+        synced = bool(self.gamesync and self.gamesync.enabled)
+        self.bg.itemconfigure(
+            self._games_foot,
+            text="Stored in games.json  ·  shared via GitHub" if synced
+                 else "Stored in games.json  ·  this machine only")
+
         if not by_name:
             self._empty_note(
                 self._games_list,
                 "Nothing classified yet.\n\nHit Rescan to pull in your installed "
                 "Steam library, or just launch a game — Nebula asks once and "
                 "remembers the answer.")
+        else:
+            for name in sorted(by_name, key=str.lower):
+                entry = by_name[name]
+                exes = ", ".join(sorted(entry["exes"])[:3])
+                if len(entry["exes"]) > 3:
+                    exes += f"  +{len(entry['exes']) - 3} more"
+                self._list_row(self._games_list, name, exes, entry["source"] or "manual")
+
+        if not non_games:
+            self._empty_note(self._nongames_list, "Nothing ignored yet.")
             return
-        for name in sorted(by_name, key=str.lower):
-            entry = by_name[name]
-            exes = ", ".join(sorted(entry["exes"])[:3])
-            if len(entry["exes"]) > 3:
-                exes += f"  +{len(entry['exes']) - 3} more"
-            self._list_row(self._games_list, name, exes,
-                           entry["source"] or "manual")
+        keep_alive = {p.lower() for p in self.config.get("keep_alive_audio_processes", [])}
+        for basename in sorted(non_games, key=str.lower):
+            row = self._list_row(
+                self._nongames_list, basename,
+                "keep-alive" if basename.lower() in keep_alive else "", "ignored")
+            self._bind_promote(row, basename)
+
+    def _bind_promote(self, row, basename):
+        """Right-click an ignored app to move it back to Games (frame 2d).
+
+        The action lives in _promote_non_game so it can be exercised directly:
+        CustomTkinter proxies bind() onto an inner widget, so event_generate()
+        against the row never reaches this handler even though a real click
+        does.
+        """
+        if row is None:
+            return
+        for widget in (row, *row.winfo_children()):
+            widget.bind("<Button-3>", lambda _e, b=basename: self._promote_non_game(b))
+
+    def _promote_non_game(self, basename):
+        if not tkinter.messagebox.askyesno(
+                "Move back to Games",
+                f"Treat {basename} as a game again?\n\n"
+                "Nebula will start recording when it's in the foreground.",
+                parent=self.root):
+            return False
+        self.classifier.mark_game(basename, suggest_display_name(basename))
+        self._log(f"[Manual] {basename} -> game")
+        self._refresh_games()
+        self._push_game_data()
+        return True
+
+    def _push_game_data(self):
+        """Mirror a manual reclassification to the shared game list."""
+        if not (self.gamesync and self.gamesync.enabled):
+            return
+        try:
+            snapshot = self.classifier.snapshot()
+        except Exception:
+            return
+        threading.Thread(target=lambda: self.gamesync.push(snapshot), daemon=True).start()
 
     # ---- Activity (full height) ----
     def _build_activity_view(self):
@@ -1716,26 +1821,37 @@ class AppWindow:
         self._append_log_batch(self.console_full, list(self._log_lines))
 
     # ---- Macropad ----
+    # ---- Macropad (frame 2e) ----
+    # The frame draws a CONNECTED 3x3 pad: "HID 0x1209:0xA1B2", a live key map,
+    # drag-to-bind, a last-keypress readout. None of that layer exists - there
+    # is no HID code anywhere in obsauto/ - so this page says so rather than
+    # miming a keypad that does nothing. Same call v2 made, and the spec's own
+    # build order puts Macropad last for this reason.
+    #
+    # Whoever builds it needs three things, in order: an HID input layer, a
+    # persisted binding map in config.json, then this pane. Bindings must be by
+    # SCAN CODE, not character - see toggle_hotkey_scancode and the vault's
+    # asus-m4-fan-key note.
     def _build_macropad(self):
         (x, y, w, h), _ = self._view_panel(
             "Macropad", "Bind physical keys to Nebula actions.")
         self.bg.create_text(
-            x + 20, y + 110, anchor="nw", width=w - 40,
-            text="Not wired up yet.\n\n"
-                 "The design pairs this with a custom HID macropad: bind keys to "
+            x + 24, y + 96, anchor="nw", width=w - 48,
+            text="No device layer yet.\n\n"
+                 "The design pairs Nebula with a 3x3 HID macropad: keys bound to "
                  "start/stop, pause, mark clip and scene switches, with per-game "
                  "profiles that follow whatever you launch.\n\n"
-                 "Nothing here is connected to hardware, so rather than show a "
-                 "mock keypad that does nothing, this page is deliberately empty "
-                 "until the binding layer exists.",
-            fill=MUTED, font=("Segoe UI", 13))
+                 "Nothing here talks to hardware, so rather than show a mock keypad "
+                 "that does nothing, this page stays empty until the binding layer "
+                 "exists.",
+            fill=MUTED, font=dv.type_font("body"))
+        binding = self.config.get("toggle_hotkey") or "—"
         self.bg.create_text(
-            x + 20, y + h - 60, anchor="nw",
-            text=f"Meanwhile the global hotkey  {self.config.get('toggle_hotkey') or '—'}  "
-                 "toggles monitoring from anywhere.",
-            fill=FAINT, font=("Segoe UI", 12))
+            x + 24, y + h - 56, anchor="nw", width=w - 48,
+            text=f"Meanwhile the global hotkey  {binding}  toggles monitoring from "
+                 "anywhere, bound by scan code so it can't swallow a neighbouring key.",
+            fill=FAINT, font=dv.type_font("meta"))
 
-    # ---- Settings ----
     # ---- Settings (frame 2c) ----
     # v2 was read-only. This writes config.json, following the frame's rules:
     # write on blur (not per keystroke), the saved timestamp in the pane header,
@@ -2626,6 +2742,8 @@ class AppWindow:
         if not is_recording:
             self._bitrate_sample = None
             self._tray_elapsed = ""
+        if self._mini:
+            self._mini_update()
 
         # The hero card owns the badge/border/readout visibility; pick the state
         # that matches what OBS and the monitor are actually doing right now.
@@ -2993,6 +3111,221 @@ class AppWindow:
             toast["popup"].after(16, lambda: step(i + 1))
 
         step()
+
+    # ---- mini overlay (frame 2k) ----
+    # "296x54, frameless, always-on-top, drag anywhere on the body. Snaps to the
+    #  nearest screen corner within 32px; remembers position per monitor. Drops
+    #  to 55% opacity after 3s without the pointer; full opacity on hover.
+    #  Collapse restores the main window; it never appears while idle."
+    #
+    # Like the toast, this is its own Toplevel, so moving and fading it never
+    # composites the dashboard.
+    def _mini_state_allows(self):
+        """The overlay exists to watch a running recording. "Never while idle"
+        means exactly that: no recording, no overlay."""
+        return self._hero_state in ("recording", "paused")
+
+    def show_mini(self):
+        if not self._mini_state_allows():
+            self._log("[Manual] Mini overlay only appears while recording.")
+            return
+        if self._mini is None or not self._mini["popup"].winfo_exists():
+            self._mini = self._mini_build()
+        self._hide()                       # collapse the main window behind it
+        self._mini_update()
+        try:
+            self._mini["popup"].deiconify()
+        except Exception:
+            pass
+
+    def hide_mini(self, restore=False):
+        mini = self._mini
+        self._mini = None
+        if mini and mini["popup"].winfo_exists():
+            try:
+                mini["popup"].destroy()
+            except Exception:
+                pass
+        if restore:
+            self.show()
+
+    def _mini_build(self):
+        w, h = dv.MINI_W, dv.MINI_H
+        sw, sh = self._S(w), self._S(h)
+        popup = ctk.CTkToplevel(self.root)
+        popup.overrideredirect(True)
+        popup.attributes("-topmost", True)
+
+        x, y = self._mini_saved_position(sw, sh)
+        popup.geometry(f"{sw}x{sh}+{x}+{y}")
+        apply_rounded_corners(popup)
+
+        canvas = ScaledCanvas(
+            tk.Canvas(popup, width=sw, height=sh, highlightthickness=0, bd=0),
+            self.scale)
+        canvas.pack(fill="both", expand=True)
+        crop = (self.nebula.crop((0, 0, sw, sh))
+                if self.nebula.size[0] >= sw and self.nebula.size[1] >= sh
+                else self.nebula.resize((sw, sh)))
+        photo = to_photo(crop)
+        self._images.append(photo)
+        canvas.create_image(0, 0, anchor="nw", image=photo)
+        tile = make_glass_tile(sw, sh, CARD_TINT, tint_alpha=225,
+                               radius=self._S(dv.RADIUS_TILE),
+                               border_hex=CARD_BORDER, border_alpha=80)
+        tile_photo = to_photo(tile)
+        self._images.append(tile_photo)
+        canvas.create_image(0, 0, anchor="nw", image=tile_photo)
+
+        dot = canvas.create_text(16, h / 2, text=ICON_GLYPHS["record"],
+                                 fill=EMBER, font=(ICON_FONT, -9))
+        timer = canvas.create_text(30, h / 2 - 8, anchor="w", text="00:00:00",
+                                   fill=TEXT, font=dv.font(19, mono=True))
+        game = canvas.create_text(30, h / 2 + 12, anchor="w", text="",
+                                  fill=MUTED, font=dv.type_font("meta"))
+        collapse = canvas.create_text(
+            w - 18, h / 2, text=ICON_GLYPHS[dv.ICONS["collapse_mini"]],
+            fill=FAINT, font=(ICON_FONT, -13))
+
+        mini = {"popup": popup, "canvas": canvas, "dot": dot, "timer": timer,
+                "game": game, "faded": False, "fade_job": None, "drag": None}
+
+        canvas.tag_bind(collapse, "<Button-1>", lambda _e: self.hide_mini(restore=True))
+
+        def press(event):
+            # Ignore a press on the collapse glyph so dragging can't eat the click.
+            if collapse in canvas.find_withtag("current"):
+                return
+            mini["drag"] = (event.x_root - popup.winfo_x(), event.y_root - popup.winfo_y())
+
+        def drag(event):
+            if not mini["drag"]:
+                return
+            dx, dy = mini["drag"]
+            popup.geometry(f"+{event.x_root - dx}+{event.y_root - dy}")
+
+        def release(_event):
+            if not mini["drag"]:
+                return
+            mini["drag"] = None
+            self._mini_snap(mini)
+
+        canvas.bind("<ButtonPress-1>", press)
+        canvas.bind("<B1-Motion>", drag)
+        canvas.bind("<ButtonRelease-1>", release)
+        canvas.bind("<Enter>", lambda _e: self._mini_fade(mini, False))
+        canvas.bind("<Leave>", lambda _e: self._mini_schedule_fade(mini))
+
+        self._mini_schedule_fade(mini)
+        return mini
+
+    def _mini_monitor_key(self, x, y):
+        """Which monitor a point is on - the key positions are remembered under.
+
+        "Remembers position per monitor": storing one x/y would put the overlay
+        off-screen the next time the laptop is docked to a different display.
+        """
+        try:
+            from ctypes import windll, byref, sizeof, Structure, c_long, c_ulong, c_wchar
+
+            class POINT(Structure):
+                _fields_ = [("x", c_long), ("y", c_long)]
+
+            class RECT(Structure):
+                _fields_ = [("left", c_long), ("top", c_long),
+                            ("right", c_long), ("bottom", c_long)]
+
+            class MONITORINFOEXW(Structure):
+                _fields_ = [("cbSize", c_ulong), ("rcMonitor", RECT), ("rcWork", RECT),
+                            ("dwFlags", c_ulong), ("szDevice", c_wchar * 32)]
+
+            monitor = windll.user32.MonitorFromPoint(POINT(int(x), int(y)), 2)
+            info = MONITORINFOEXW()
+            info.cbSize = sizeof(MONITORINFOEXW)
+            if windll.user32.GetMonitorInfoW(monitor, byref(info)):
+                r = info.rcWork
+                return f"{r.left},{r.top},{r.right},{r.bottom}", (r.left, r.top, r.right, r.bottom)
+        except Exception:
+            pass
+        return "primary", (0, 0, self.root.winfo_screenwidth(),
+                           self.root.winfo_screenheight())
+
+    def _mini_saved_position(self, sw, sh):
+        left, top, right, bottom = self._toast_workarea()
+        key, _rect = self._mini_monitor_key((left + right) / 2, (top + bottom) / 2)
+        saved = (self.config.get("mini_overlay_positions") or {}).get(key)
+        if saved and len(saved) == 2:
+            x, y = int(saved[0]), int(saved[1])
+            # Clamp back inside, in case the resolution changed since.
+            x = max(left, min(x, right - sw))
+            y = max(top, min(y, bottom - sh))
+            return x, y
+        margin = self._S(dv.TOAST_MARGIN)
+        return right - sw - margin, bottom - sh - margin
+
+    def _mini_snap(self, mini):
+        """Snap to the nearest corner within 32px, then remember the position."""
+        popup = mini["popup"]
+        sw, sh = self._S(dv.MINI_W), self._S(dv.MINI_H)
+        x, y = popup.winfo_x(), popup.winfo_y()
+        key, (left, top, right, bottom) = self._mini_monitor_key(x + sw / 2, y + sh / 2)
+        snap = self._S(dv.MINI_SNAP_PX)
+        if abs(x - left) <= snap:
+            x = left
+        elif abs((x + sw) - right) <= snap:
+            x = right - sw
+        if abs(y - top) <= snap:
+            y = top
+        elif abs((y + sh) - bottom) <= snap:
+            y = bottom - sh
+        popup.geometry(f"+{x}+{y}")
+
+        positions = dict(self.config.get("mini_overlay_positions") or {})
+        positions[key] = [x, y]
+        self.config["mini_overlay_positions"] = positions
+        self._save_settings()
+
+    def _mini_schedule_fade(self, mini):
+        if mini["fade_job"]:
+            try:
+                mini["popup"].after_cancel(mini["fade_job"])
+            except Exception:
+                pass
+        mini["fade_job"] = mini["popup"].after(
+            dv.MINI_FADE_AFTER_MS, lambda: self._mini_fade(mini, True))
+
+    def _mini_fade(self, mini, faded):
+        if not mini["popup"].winfo_exists():
+            return
+        if faded and mini["fade_job"]:
+            mini["fade_job"] = None
+        if not faded:
+            self._mini_schedule_fade(mini)
+        if mini["faded"] == faded:
+            return
+        mini["faded"] = faded
+        try:
+            mini["popup"].attributes("-alpha", dv.MINI_FADED_OPACITY if faded else 1.0)
+        except Exception:
+            pass
+
+    def _mini_update(self):
+        """Mirror the hero's timer and game onto the overlay, once a second.
+
+        Driven from _poll_obs_status rather than its own timer, so there is one
+        clock in the app and the overlay can never disagree with the dashboard.
+        """
+        mini = self._mini
+        if not mini or not mini["popup"].winfo_exists():
+            return
+        if not self._mini_state_allows():
+            self.hide_mini()               # recording ended - "never while idle"
+            return
+        paused = self._hero_state == "paused"
+        mini["canvas"].itemconfigure(mini["timer"],
+                                     text=self._tray_elapsed or "00:00:00")
+        mini["canvas"].itemconfigure(mini["game"], text=self._current_game or "Recording")
+        mini["canvas"].itemconfigure(mini["dot"], fill=ACCENT if paused else EMBER)
 
     def _on_state(self, **kwargs):
         def apply():

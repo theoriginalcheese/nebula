@@ -86,10 +86,11 @@ and a mock keypad that does nothing would be a lie.
 
 ## UI v3 — dashboard + tray built, other panes still v2 (2026-07-26)
 
-Work lives on branch **`ui-v3`**. **Steps 1–6 of the v3 build order are done**: palette,
+Work lives on branch **`ui-v3`**. **All seven steps of the v3 build order are done**: palette,
 geometry, backdrop, titlebar, rail, pane header (frame 2a); the hero card with its four states
-(2a, 2f–2h) plus stat tiles and activity header; the tray icon + menu (2j); the toast (2i); the Clips pane (2b); and the editable Settings pane (2c).
-Games / Macropad are **still v2's**, and the mini overlay doesn't exist.
+(2a, 2f–2h) plus stat tiles and activity header; the tray icon + menu (2j); the toast (2i); the Clips pane (2b); the editable Settings pane (2c); Games (2d); and the mini overlay (2k).
+**Macropad (2e) is deliberately empty** — there is still no HID layer, and the frame draws a
+connected device.
 Full state and next actions: `CURSOR-PROMPT.md`.
 
 **The toast is a single slot.** One `Toplevel` for the whole process life — the first event
@@ -264,6 +265,7 @@ three static icons swapped on state change.
   python tests/test_clips.py           # Clips pane + the delete rule (2b)
   python tests/test_settings.py        # editable Settings + config rules (2c)
   python tests/test_settings_typing.py # what a keystroke in a form really costs
+  python tests/test_step7.py           # Games, Macropad honesty, mini overlay (2d/2e/2k)
   ```
   ⚠️ Anything async **must** be tested under a real `mainloop()`. Tk refuses a cross-thread
   `root.after()` when driven by `update()`-pumping, and `_ui()` swallows that — so an

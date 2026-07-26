@@ -115,7 +115,7 @@ performance lesson), `nebula-dpi-scaling`, `nebula-roadmap-ideas`, `obs-auto-fol
 
 <!-- STATE:BEGIN — keep this block current; it is the whole point of the file -->
 
-**Updated:** 2026-07-26 — **steps 1–6 are done and verified. Step 7 (Games, Macropad, mini overlay) is next.**
+**Updated:** 2026-07-26 — **all seven build-order steps are done and verified.**
 
 Committed on local branch **`ui-v3`** (not pushed; `main` untouched).
 
@@ -291,12 +291,47 @@ rather than inline — that keeps typing at one composite per keystroke.
 
 `tests/test_settings.py` — 27 checks, saves intercepted.
 
-**Not started — step 7**
-- Games (2d), Macropad (2e), mini overlay (2k). Mini overlay **never shows while idle**.
-- Macropad still has **no HID layer at all** — see `CURSOR-HANDOFF.md` §2.3. Frame 2e draws a
-  connected device with a live key map; that pane stays honest until (a) an HID input layer and
-  (b) a persisted binding map exist. Bindings must be by **scan code** (`toggle_hotkey_scancode`).
-- **Transitional wart**: the `activity` view is still registered but unreachable from the rail
-  (`gui.RAIL_VIEWS`); it mirrors the log because `_log()` writes to both consoles.
+**Done — step 7: Games (2d), Macropad (2e), mini overlay (2k)**
+
+- **Games**: three blocks — unclassified, games, ignored apps — with a real pending count in the
+  header and a footer that says whether the list is GitHub-synced or local only.
+  Right-click an ignored app to move it back to Games (confirms first, then re-marks and pushes
+  to the shared list).
+  **Read-only unclassified block on purpose**: deciding still happens in the existing modal
+  flow, which owns the queue's `_in_review` bookkeeping. `Classifier.peek_pending_reviews()`
+  was added so displaying an item can never swallow the prompt the user is waiting on —
+  `pop_pending_reviews()` remains the only thing that drains.
+  **Omitted for want of a source**: the Steam AppID beside each game (the classifier stores
+  `{display_name, source}`, no id) and "seen 4×" (nothing counts sightings).
+- **Macropad stays empty.** Frame 2e draws a *connected* pad with `HID 0x1209:0xA1B2`, a live
+  3×3 key map and a last-keypress readout. There is still no HID code anywhere in `obsauto/`.
+  The page says so. To build it properly you need, in order: an HID input layer, a persisted
+  binding map in config.json, then the pane — and bindings must be by **scan code**, not
+  character (`toggle_hotkey_scancode`; see the vault's `asus-m4-fan-key`).
+- **Mini overlay**: 296×54, frameless, always-on-top, drag anywhere, snaps to the nearest
+  corner within 32px, remembers its position **per monitor** (keyed by the monitor's work-area
+  rect, so docking to a different display can't strand it off-screen), drops to 55% opacity
+  after 3s and back to full on hover. Collapse restores the main window. **Never opens while
+  idle** — it refuses out loud rather than vanishing the button, and closes itself the moment
+  a recording ends. Entered from the new titlebar button (`arrows-in-simple`, per the icon
+  legend). It mirrors the hero's clock rather than running its own, so the two can't disagree.
+- `tests/test_step7.py` — 33 checks.
+  ⚠️ **Two traps worth knowing.** CustomTkinter proxies `bind()` onto an inner widget, so
+  `event_generate()` against a row never reaches the handler even though a real click does —
+  hence `_promote_non_game()` exists as a directly callable action. And this test **redirects
+  `classifier.DATA_FILE` to a temp dir**: it marks and promotes apps, and `Classifier._save()`
+  *merges with what is on disk* (so a synced file never loses entries), which means popping a
+  key in memory and saving quietly puts it back. Don't run classification tests against the
+  real `games.json`.
+
+**The v3 build order is complete.** Sensible next moves, none of them started:
+- Fold away the transitional `activity` view — v3 has no standalone Activity page (it's a
+  dashboard block), but the view is still registered and mirrors the log because `_log()`
+  writes to both consoles. Unreachable from the rail; see `gui.RAIL_VIEWS`.
+- The remaining fabricated-data gaps, if you want the frames matched exactly: clip Length and
+  thumbnails (need ffmpeg), the `Auto-culled` / `Idle pauses` tiles (need counters in
+  `Monitor`), scene resolution/fps (obtainable from OBS `GetVideoSettings`).
+- Merge `ui-v3` into `main` when you're happy with it, and rebuild `dist/Nebula.exe`
+  (`pyinstaller nebula.spec`) — the exe does not track source.
 
 <!-- STATE:END -->
