@@ -400,7 +400,9 @@ class AppWindow:
             on_notify=self._show_notification, on_connection_change=self._on_connection_change,
             offloader=offloader,
         )
-        self._notification = None
+        # The v3 toast is a SINGLE SLOT: at most one window, ever, reused in
+        # place. See _show_notification / _toast_replace.
+        self._toast = None
         self.tray_icon = None  # set by main.py after the tray icon is built
         self._tray_game = None
         self._tray_idle = False
@@ -2351,162 +2353,290 @@ class AppWindow:
         step()
 
     # ---- notifications ----
+    # ---- the toast (frame 2i) ----
+    # The spec calls this one of "the three surfaces the last build got wrong"
+    # and its first rule is the architecture, not the look:
+    #
+    #   "One toast, ever. A new event replaces the current one in place -
+    #    never a stack, never a queue."
+    #
+    # So there is exactly one Toplevel for the whole process life. The first
+    # event builds it; every later event *mutates* it and resets the drain.
+    # The build order in the spec is explicit that this path comes first:
+    # "Build the replace path before the visuals."
+    #
+    # v2 destroyed and rebuilt the window per event, which is a queue of one
+    # with extra steps - and it flickered, because a fresh Toplevel maps at the
+    # new position rather than updating the one already on screen.
+    #
+    # Unlike the main window, animating here is free: a Toplevel is its own
+    # surface, so a fade or a 16px rise never composites the dashboard.
+
+    TOAST_W, TOAST_H = 336, 88          # base design units
+
+    def _toast_workarea(self):
+        """The work area of the screen the pointer is on.
+
+        "Bottom-right of the active screen, 24px from both edges, above the
+        taskbar." The work area already excludes the taskbar, so "above the
+        taskbar" falls out of using it. v2 used winfo_screenwidth(), which is
+        the *primary* monitor - on this multi-monitor setup the toast could
+        appear on a screen the user wasn't looking at.
+        """
+        try:
+            from ctypes import windll, byref, sizeof, Structure, c_long, c_ulong, c_wchar
+
+            class POINT(Structure):
+                _fields_ = [("x", c_long), ("y", c_long)]
+
+            class RECT(Structure):
+                _fields_ = [("left", c_long), ("top", c_long),
+                            ("right", c_long), ("bottom", c_long)]
+
+            class MONITORINFOEXW(Structure):
+                _fields_ = [("cbSize", c_ulong), ("rcMonitor", RECT),
+                            ("rcWork", RECT), ("dwFlags", c_ulong),
+                            ("szDevice", c_wchar * 32)]
+
+            pt = POINT()
+            windll.user32.GetCursorPos(byref(pt))
+            monitor = windll.user32.MonitorFromPoint(pt, 2)  # NEAREST
+            info = MONITORINFOEXW()
+            info.cbSize = sizeof(MONITORINFOEXW)
+            if windll.user32.GetMonitorInfoW(monitor, byref(info)):
+                r = info.rcWork
+                return r.left, r.top, r.right, r.bottom
+        except Exception:
+            pass
+        # Fall back to the primary screen minus a guess at the taskbar.
+        return (0, 0, self.root.winfo_screenwidth(), self.root.winfo_screenheight() - 48)
+
+    def _toast_content(self, event, display_name, details):
+        """Everything the toast renders, resolved from an event name."""
+        tint = dv.TOAST_TINTS.get(event, ACCENT)
+        role = {"start": "start", "stop": "square", "pause": "pause",
+                "resume": "resume", "error": "disconnected"}.get(event, "start")
+        glyph = ICON_GLYPHS[dv.ICONS[role]] if role in dv.ICONS else ICON_GLYPHS[role]
+        title = {
+            "start": "Recording started", "stop": "Recording stopped",
+            "pause": "Recording paused", "resume": "Recording resumed",
+            "error": "Something went wrong",
+        }.get(event, str(event))
+
+        parts = []
+        if details:
+            duration = details.get("duration")
+            if duration is not None:
+                mm, ss = divmod(int(duration), 60)
+                parts.append(f"{mm:02d}:{ss:02d}")
+            size = details.get("size")
+            if size is not None:
+                parts.append(_format_bytes(size))
+        return {"tint": tint, "glyph": glyph, "title": title,
+                "sub": display_name, "detail": "  ·  ".join(parts)}
+
     def _show_notification(self, event, display_name, details=None):
-        """A small, silent, borderless popup that slides in from the bottom
-        right edge and slides back out - deliberately not the native Windows
-        toast, which the user wanted to avoid (system notification sound +
-        generic styling, plus a plain fade felt static compared to a modern
-        slide-in). A thin countdown line along the bottom shows how long it
-        will stay; hovering pauses the countdown and reveals final
-        duration/size (for "stop" events) so there's time to actually read
-        it. Called from the monitor's background thread, so everything
-        Tk-related is marshalled onto the main thread."""
-        def build():
-            if self._notification is not None:
+        """Entry point - called from the monitor's thread, so it marshals."""
+        self._ui(lambda: self._toast_replace(event, display_name, details))
+
+    def _toast_replace(self, event, display_name, details=None):
+        """The replace path. Builds the single toast on first use, then only
+        ever updates it."""
+        content = self._toast_content(event, display_name, details)
+        toast = self._toast
+        if toast is None or not toast["popup"].winfo_exists():
+            toast = self._toast = self._toast_build()
+        self._toast_apply(toast, content)
+
+        # Reset the life regardless of where it was - "Replacing an event
+        # resets the line to full."
+        toast["remaining"] = dv.TOAST_LIFE_MS
+        if toast["dismissing"]:
+            # It was already fading out; bring it straight back to full rather
+            # than letting the old fade finish and destroy the window.
+            toast["dismissing"] = False
+            self._toast_alpha(toast, 1.0)
+        if not toast["ticking"]:
+            toast["ticking"] = True
+            self._toast_tick(toast)
+
+    def _toast_build(self):
+        w, h = self.TOAST_W, self.TOAST_H
+        sw, sh = self._S(w), self._S(h)
+        popup = ctk.CTkToplevel(self.root)
+        popup.overrideredirect(True)
+        popup.attributes("-topmost", True)
+        popup.attributes("-alpha", 0.0)
+
+        left, top, right, bottom = self._toast_workarea()
+        margin = self._S(dv.TOAST_MARGIN)
+        x = right - sw - margin
+        y_end = bottom - sh - margin
+        popup.geometry(f"{sw}x{sh}+{x}+{y_end + self._S(dv.TOAST_IN_RISE)}")
+        apply_rounded_corners(popup)
+
+        canvas = ScaledCanvas(
+            tk.Canvas(popup, width=sw, height=sh, highlightthickness=0, bd=0),
+            self.scale)
+        canvas.pack(fill="both", expand=True)
+
+        # Same backdrop + glass language as the main window.
+        crop = (self.nebula.crop((0, 0, sw, sh))
+                if self.nebula.size[0] >= sw and self.nebula.size[1] >= sh
+                else self.nebula.resize((sw, sh)))
+        photo = to_photo(crop)
+        self._images.append(photo)
+        canvas.create_image(0, 0, anchor="nw", image=photo)
+        tile = make_glass_tile(sw, sh, CARD_TINT, tint_alpha=215,
+                               radius=self._S(dv.RADIUS_CARD),
+                               border_hex=CARD_BORDER, border_alpha=80)
+        tile_photo = to_photo(tile)
+        self._images.append(tile_photo)
+        canvas.create_image(0, 0, anchor="nw", image=tile_photo)
+
+        chip = canvas.create_oval(16, 20, 48, 52, fill=ACCENT_TINT, outline="")
+        icon = canvas.create_text(32, 36, text="", fill=ACCENT, font=(ICON_FONT, -13))
+        title = canvas.create_text(60, 28, anchor="w", text="", fill=TEXT,
+                                   font=dv.font(13, 500))
+        sub = canvas.create_text(60, 48, anchor="w", text="", fill=MUTED,
+                                 font=dv.type_font("meta"))
+        detail = canvas.create_text(60, 66, anchor="w", text="", fill=FAINT,
+                                    font=dv.font(11, mono=True), state="hidden")
+
+        # The 2px drain. The mockup animates it scaleX(1)->scaleX(0) with the
+        # document's one and only `transform-origin: left`, so the bar is
+        # anchored at the left and its right edge travels leftward.
+        track_x0, track_x1 = 16, w - 16
+        bar_y = h - 8
+        canvas.create_rectangle(track_x0, bar_y, track_x1, bar_y + dv.TOAST_DRAIN_H,
+                                fill=EDGE, outline="")
+        drain = canvas.create_rectangle(track_x0, bar_y, track_x1,
+                                        bar_y + dv.TOAST_DRAIN_H,
+                                        fill=ACCENT, outline="")
+
+        toast = {
+            "popup": popup, "canvas": canvas, "chip": chip, "icon": icon,
+            "title": title, "sub": sub, "detail": detail, "drain": drain,
+            "track": (track_x0, track_x1, bar_y), "geom": (sw, sh, x, y_end),
+            "remaining": dv.TOAST_LIFE_MS, "hovering": False,
+            "ticking": False, "dismissing": False, "has_detail": False,
+        }
+
+        def on_enter(_e):
+            toast["hovering"] = True          # "Hover freezes the drain"
+            if toast["has_detail"]:
+                canvas.itemconfigure(toast["detail"], state="normal")
+
+        def on_leave(_e):
+            toast["hovering"] = False
+            canvas.itemconfigure(toast["detail"], state="hidden")
+
+        def on_click(_e):
+            self.show()                        # "Click anywhere focuses the window"
+
+        canvas.bind("<Enter>", on_enter)
+        canvas.bind("<Leave>", on_leave)
+        canvas.bind("<Button-1>", on_click)
+
+        self._toast_rise_in(toast)
+        return toast
+
+    def _toast_apply(self, toast, content):
+        canvas = toast["canvas"]
+        canvas.itemconfigure(toast["chip"], fill=_tint_for(content["tint"]))
+        canvas.itemconfigure(toast["icon"], text=content["glyph"], fill=content["tint"])
+        canvas.itemconfigure(toast["title"], text=content["title"])
+        canvas.itemconfigure(toast["sub"], text=content["sub"])
+        canvas.itemconfigure(toast["detail"], text=content["detail"], state="hidden")
+        canvas.itemconfigure(toast["drain"], fill=content["tint"])
+        toast["has_detail"] = bool(content["detail"])
+        self._toast_set_drain(toast, 1.0)
+        # Re-assert topmost: another window may have been raised over it while
+        # the toast sat idle between events.
+        try:
+            toast["popup"].attributes("-topmost", True)
+        except Exception:
+            pass
+
+    def _toast_set_drain(self, toast, fraction):
+        x0, x1, bar_y = toast["track"]
+        try:
+            toast["canvas"].coords(toast["drain"], x0, bar_y,
+                                   x0 + (x1 - x0) * max(0.0, min(1.0, fraction)),
+                                   bar_y + dv.TOAST_DRAIN_H)
+        except Exception:
+            pass
+
+    def _toast_alpha(self, toast, value):
+        try:
+            toast["popup"].attributes("-alpha", max(0.0, min(1.0, value)))
+        except Exception:
+            pass
+
+    def _toast_rise_in(self, toast):
+        """"Toast in: rise 16px 320ms" - and fade alongside it."""
+        sw, sh, x, y_end = toast["geom"]
+        rise = self._S(dv.TOAST_IN_RISE)
+        steps = max(1, dv.TOAST_IN_MS // 16)
+
+        def step(i=0):
+            if not toast["popup"].winfo_exists():
+                return
+            t = min(1.0, i / steps)
+            eased = 1 - (1 - t) ** 3          # matches the spec's ease-out curve
+            try:
+                toast["popup"].geometry(
+                    f"{sw}x{sh}+{x}+{int(y_end + rise * (1 - eased))}")
+            except Exception:
+                return
+            self._toast_alpha(toast, eased)
+            if t < 1.0:
+                toast["popup"].after(16, lambda: step(i + 1))
+
+        step()
+
+    def _toast_tick(self, toast):
+        if not toast["popup"].winfo_exists():
+            toast["ticking"] = False
+            self._toast = None
+            return
+        if not toast["hovering"] and not toast["dismissing"]:
+            toast["remaining"] -= 50
+        if toast["remaining"] <= 0 and not toast["dismissing"]:
+            toast["dismissing"] = True
+            self._toast_fade_out(toast)
+            return
+        self._toast_set_drain(toast, toast["remaining"] / float(dv.TOAST_LIFE_MS))
+        toast["popup"].after(50, lambda: self._toast_tick(toast))
+
+    def _toast_fade_out(self, toast):
+        """"Toast out: fade 200ms." No slide - the spec only fades on the way
+        out, and a replacement arriving mid-fade cancels it (see
+        _toast_replace) rather than racing it."""
+        steps = max(1, dv.TOAST_OUT_MS // 16)
+
+        def step(i=0):
+            if not toast["popup"].winfo_exists():
+                toast["ticking"] = False
+                return
+            if not toast["dismissing"]:
+                # A new event arrived and took the slot back; resume ticking.
+                self._toast_tick(toast)
+                return
+            t = min(1.0, i / steps)
+            self._toast_alpha(toast, 1.0 - t)
+            if t >= 1.0:
+                toast["ticking"] = False
+                if self._toast is toast:
+                    self._toast = None
                 try:
-                    self._notification.destroy()
+                    toast["popup"].destroy()
                 except Exception:
                     pass
-                self._notification = None
+                return
+            toast["popup"].after(16, lambda: step(i + 1))
 
-            width, height = 336, 88          # base design units (drawing coords)
-            sw, sh = self._S(width), self._S(height)  # physical popup size in px
-            popup = ctk.CTkToplevel(self.root)
-            popup.overrideredirect(True)
-            popup.attributes("-topmost", True)
-            popup.attributes("-alpha", 0.0)  # fade in alongside the slide
-
-            end_x = popup.winfo_screenwidth() - sw - 20
-            start_x = popup.winfo_screenwidth() + 10
-            y = popup.winfo_screenheight() - sh - 60
-            popup.geometry(f"{sw}x{sh}+{start_x}+{y}")
-            apply_rounded_corners(popup)
-
-            canvas = ScaledCanvas(
-                tk.Canvas(popup, width=sw, height=sh, highlightthickness=0, bd=0),
-                self.scale,
-            )
-            canvas.pack(fill="both", expand=True)
-            crop = self.nebula.crop((0, 0, sw, sh)) if self.nebula.size[0] >= sw and self.nebula.size[1] >= sh else self.nebula.resize((sw, sh))
-            photo = to_photo(crop)
-            self._images.append(photo)
-            canvas.create_image(0, 0, anchor="nw", image=photo)
-            tile = make_glass_tile(sw, sh, CARD_TINT, tint_alpha=215, radius=self._S(16), border_hex=CARD_BORDER, border_alpha=80)
-            tile_photo = to_photo(tile)
-            self._images.append(tile_photo)
-            canvas.create_image(0, 0, anchor="nw", image=tile_photo)
-
-            accent_colors = {"start": GREEN, "stop": ACCENT, "pause": AMBER, "resume": GREEN}
-            glyphs = {"start": "▶", "stop": "■", "pause": "●", "resume": "▶"}
-            titles = {
-                "start": "Recording started", "stop": "Recording stopped",
-                "pause": "Recording paused", "resume": "Recording resumed",
-            }
-            accent = accent_colors.get(event, ACCENT)
-
-            # Leading icon chip: the event glyph inside a tinted circle, the
-            # same badge language as the status pills.
-            canvas.create_oval(16, 20, 48, 52, fill=_tint_for(accent), outline="")
-            canvas.create_text(32, 36, text=glyphs.get(event, "●"), fill=accent, font=("Segoe UI", 11))
-
-            canvas.create_text(60, 28, anchor="w", text=titles.get(event, event), fill=TEXT, font=("Segoe UI Semibold", 12))
-            canvas.create_text(60, 48, anchor="w", text=display_name, fill=MUTED, font=("Segoe UI", 12))
-
-            detail_parts = []
-            if details:
-                duration = details.get("duration")
-                if duration is not None:
-                    mm, ss = divmod(int(duration), 60)
-                    detail_parts.append(f"{mm:02d}:{ss:02d}")
-                size = details.get("size")
-                if size is not None:
-                    detail_parts.append(_format_bytes(size))
-            detail_id = None
-            if detail_parts:
-                detail_id = canvas.create_text(
-                    60, 67, anchor="w", text="  ·  ".join(detail_parts), fill=FAINT, font=("Segoe UI", 11),
-                )
-                canvas.itemconfigure(detail_id, state="hidden")
-
-            # Inset countdown line along the bottom - a faint full track with
-            # the accent fill draining left as time runs out; freezes while
-            # hovered so there's no rush to read.
-            lifetime_ms = 4000
-            track_x0, track_x1 = 16, width - 16
-            canvas.create_rectangle(track_x0, height - 8, track_x1, height - 6, fill=EDGE, outline="")
-            countdown_id = canvas.create_rectangle(track_x0, height - 8, track_x1, height - 6, fill=accent, outline="")
-
-            self._notification = popup
-            hovering = {"value": False}
-            remaining = {"ms": lifetime_ms}
-
-            def set_alpha(a):
-                try:
-                    popup.attributes("-alpha", max(0.0, min(a, 1.0)))
-                except Exception:
-                    pass
-
-            def slide(x, target, on_done=None, fade_from=None, fade_to=None):
-                total = abs(target - x) or 1
-
-                def step(cx):
-                    remaining_px = target - cx
-                    if fade_from is not None:
-                        progress = 1 - abs(remaining_px) / total
-                        set_alpha(fade_from + (fade_to - fade_from) * progress)
-                    if abs(remaining_px) <= 4:
-                        popup.geometry(f"{sw}x{sh}+{target}+{y}")
-                        if fade_to is not None:
-                            set_alpha(fade_to)
-                        if on_done:
-                            on_done()
-                        return
-                    cx = cx + int(remaining_px * 0.3)
-                    try:
-                        popup.geometry(f"{sw}x{sh}+{cx}+{y}")
-                    except Exception:
-                        return
-                    popup.after(12, lambda: step(cx))
-
-                step(x)
-
-            def dismiss():
-                def finish():
-                    popup.destroy()
-                    if self._notification is popup:
-                        self._notification = None
-                slide(end_x, start_x, finish, fade_from=1.0, fade_to=0.0)
-
-            def tick():
-                if not hovering["value"]:
-                    remaining["ms"] -= 50
-                if remaining["ms"] <= 0:
-                    dismiss()
-                    return
-                try:
-                    fill_x1 = track_x0 + (track_x1 - track_x0) * remaining["ms"] / lifetime_ms
-                    canvas.coords(countdown_id, track_x0, height - 8, fill_x1, height - 6)
-                except Exception:
-                    return
-                popup.after(50, tick)
-
-            def on_enter(_event):
-                hovering["value"] = True
-                if detail_id is not None:
-                    canvas.itemconfigure(detail_id, state="normal")
-
-            def on_leave(_event):
-                hovering["value"] = False
-                if detail_id is not None:
-                    canvas.itemconfigure(detail_id, state="hidden")
-
-            canvas.bind("<Enter>", on_enter)
-            canvas.bind("<Leave>", on_leave)
-
-            slide(start_x, end_x, fade_from=0.0, fade_to=1.0)
-            popup.after(50, tick)
-
-        self.root.after(0, build)
+        step()
 
     def _on_state(self, **kwargs):
         def apply():

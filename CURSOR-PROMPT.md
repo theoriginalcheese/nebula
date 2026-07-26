@@ -115,7 +115,7 @@ performance lesson), `nebula-dpi-scaling`, `nebula-roadmap-ideas`, `obs-auto-fol
 
 <!-- STATE:BEGIN — keep this block current; it is the whole point of the file -->
 
-**Updated:** 2026-07-26 — **steps 1–3 are done and verified. Step 4 (the toast) is next.**
+**Updated:** 2026-07-26 — **steps 1–4 are done and verified. Step 5 (the Clips pane) is next.**
 
 Committed on local branch **`ui-v3`** (not pushed; `main` untouched).
 
@@ -207,14 +207,40 @@ Committed on local branch **`ui-v3`** (not pushed; `main` untouched).
   now kept in step in both `_on_connection_change` and `_poll_obs_status`.
 - `tests/test_tray.py` — 26 checks, no OBS and no real tray registration needed.
 
-**Not started — step 4 onward**
-- **Step 4 (next): the single-slot toast.** The spec is emphatic: one toast ever, a new event
-  **replaces the current one in place** — never a stack, never a queue — and
-  "build the replace path before the visuals". 4s life, 2px drain line left→right that resets
-  to full on replace, hover freezes the drain, click focuses the window. Bottom-right of the
-  **active** screen, 24px from both edges. There is an existing `_show_notification()` in
-  `gui.py` that slides a popup in; it needs reworking to the replace-in-place contract.
-- Steps 5–7: Clips, Settings, Games, Macropad, mini overlay.
+**Done — step 4, the single-slot toast (frame 2i)**
+- **One Toplevel for the whole process life.** The first event builds it; every later event
+  *mutates* it and resets the drain. v2 destroyed and rebuilt per event — a queue of one with
+  extra steps, and it flickered because a fresh Toplevel maps at the new position instead of
+  updating the one already on screen. `_toast_replace()` is the replace path and was built
+  first, as the spec instructs.
+- **4s life, 2px drain, reset to full on replace.** Hover freezes it, leaving resumes.
+  Click anywhere calls `show()`.
+- **Drain direction settled from the source, not guessed**: the mockup has exactly one
+  `transform-origin: left` in the whole document and it's on the drain, so `scaleX(1)→scaleX(0)`
+  anchors the bar left and its right edge travels leftward. That's what's implemented.
+- **Tints from `dv.TOAST_TINTS`** — start/stop/error ember, pause/resume accent — with a
+  matching Fluent glyph per event.
+- **Positioned on the *active* screen**, 24px from both edges of the **work area** (so "above
+  the taskbar" falls out for free). `_toast_workarea()` uses `MonitorFromPoint` on the cursor;
+  v2 used `winfo_screenwidth()`, which is the *primary* monitor — on a multi-monitor setup the
+  toast could appear on a screen you weren't looking at.
+- **Entrance is a 16px rise + fade over 320ms; exit is a 200ms fade** (no slide). A replacement
+  arriving mid-fade **cancels the dismissal** and takes the window back rather than racing the
+  destroy — there's a test for exactly that.
+- Animating here is free, unlike the main window: a Toplevel is its own surface, so the fade
+  never composites the dashboard.
+- `tests/test_toast.py` — 40 checks.
+  ⚠️ **If you extend those tests, never call `_toast_tick()` by hand.** The toast keeps exactly
+  one self-rescheduling tick chain; a manual call spawns a second and the life drains at double
+  rate, which looks like a product bug and isn't. Set `remaining` and let the real chain run.
+  There's a check that asserts the 1× drain rate.
+
+**Not started — step 5 onward**
+- **Step 5 (next): the Clips pane (frame 2b).** Table of Clip · Length · Size · Recorded ·
+  Actions, a per-game sidebar with counts, search and sort. Empty state is *only* the min-clip
+  note. The three row actions map to `folder-open` / `scissors` / `trash` — and a delete action
+  must respect the copy-verify-then-delete rule (`CURSOR-HANDOFF.md` §4.7).
+- Steps 6–7: Settings, Games, Macropad, mini overlay.
 - **Transitional wart**: v3 has no standalone Activity page (it's a dashboard block), but the
   `activity` view is still registered and still mirrors the log, because `_log()` writes to
   both consoles. Not reachable from the rail — see `gui.RAIL_VIEWS`. Fold it away when

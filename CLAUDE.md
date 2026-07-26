@@ -86,11 +86,17 @@ and a mock keypad that does nothing would be a lie.
 
 ## UI v3 — dashboard + tray built, other panes still v2 (2026-07-26)
 
-Work lives on branch **`ui-v3`**. **Steps 1–3 of the v3 build order are done**: palette,
+Work lives on branch **`ui-v3`**. **Steps 1–4 of the v3 build order are done**: palette,
 geometry, backdrop, titlebar, rail, pane header (frame 2a); the hero card with its four states
-(2a, 2f–2h) plus stat tiles and activity header; and the tray icon + menu (2j). Clips / Games /
-Macropad / Settings are **still v2's**, and the toast and mini overlay don't exist. Full state
-and next actions: `CURSOR-PROMPT.md`.
+(2a, 2f–2h) plus stat tiles and activity header; the tray icon + menu (2j); and the toast (2i).
+Clips / Games / Macropad / Settings are **still v2's**, and the mini overlay doesn't exist.
+Full state and next actions: `CURSOR-PROMPT.md`.
+
+**The toast is a single slot.** One `Toplevel` for the whole process life — the first event
+builds it, every later event mutates it in place and resets the drain (`_toast_replace`).
+Never a stack, never a queue. It keeps exactly **one** self-rescheduling tick chain, so don't
+call `_toast_tick()` from outside: a second chain drains the life at double rate.
+Animating a toast is free, unlike the main window — it's a separate surface.
 
 **The tray is state-driven** (`icon_art.render_state_icon`, `AppWindow.tray_status()`): three
 icons — idle accent outline, recording ember filled, disconnected neutral-with-a-slash — and a
@@ -236,6 +242,7 @@ three static icons swapped on state change.
   python tests/test_frame_pacing.py    # visible-window frame budget (briefly shows the window)
   python tests/test_design_v3.py       # v3 contract vs design/ui-v3/BUILD-SPEC.md (no GUI)
   python tests/test_tray.py            # tray icon states + menu contract (frame 2j)
+  python tests/test_toast.py           # single-slot toast: replace-in-place, drain (2i)
   ```
   ⚠️ Anything async **must** be tested under a real `mainloop()`. Tk refuses a cross-thread
   `root.after()` when driven by `update()`-pumping, and `_ui()` swallows that — so an
