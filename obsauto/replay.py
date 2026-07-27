@@ -105,6 +105,17 @@ class ReplayBuffer:
             return False
 
     # ---- arming ------------------------------------------------------------
+    # OBS answers "Replay buffer is not available" when the output doesn't
+    # exist at all - i.e. it isn't enabled in the profile. That is a different
+    # thing from a transient failure, and 7a gives it its own UI: "Replay
+    # buffer is off in OBS / Nebula can switch it on for you / [Enable]".
+    UNAVAILABLE = "not available"
+
+    @property
+    def unavailable(self):
+        """True when OBS has no replay-buffer output to arm."""
+        return bool(self._last_error and self.UNAVAILABLE in self._last_error.lower())
+
     def arm(self, game=None):
         """"StartReplayBuffer on game detected, or with monitoring"."""
         if not self.enabled or not self.obs.connected:
@@ -118,17 +129,54 @@ class ReplayBuffer:
                 if not self.obs.get_replay_buffer_status():
                     self.obs.start_replay_buffer()
                 self.armed = True
+                self._last_error = None
             except OBSError as exc:
                 # Bind before the closure/logging - `exc` is unbound once this
                 # block exits (CLAUDE.md).
                 error = str(exc)
                 self._last_error = error
-                self.log(f"[Replay] Couldn't arm the buffer: {error}")
                 self.armed = False
+        if not self.armed:
+            if self.unavailable:
+                self.log("[Replay] OBS has no replay buffer enabled. Turn it on "
+                         "from the dashboard, or in OBS: Settings -> Output -> "
+                         "Recording -> Enable Replay Buffer.")
+            else:
+                self.log(f"[Replay] Couldn't arm the buffer: {self._last_error}")
         self.on_state(self.armed)
         if self.armed:
             self.log(f"[Replay] Buffer armed - last {self.seconds}s held in RAM.")
         return self.armed
+
+    def enable_in_obs(self):
+        """Turn the replay buffer on in OBS's profile, then arm it.
+
+        7a's inline fix. SetProfileParameter alone isn't enough - OBS only
+        creates the output when the profile setting is applied, which is why
+        arming right after a fresh RecRB=true still reports "not available".
+        Both Simple and Advanced output modes are set, since which one is live
+        depends on the user's OBS configuration and neither costs anything.
+        """
+        if not self.obs.connected:
+            return False
+        try:
+            self.obs.set_profile_parameter("SimpleOutput", "RecRB", "true")
+            self.obs.set_profile_parameter("SimpleOutput", "RecRBTime", self.seconds)
+            self.obs.set_profile_parameter("AdvOut", "RecRB", "true")
+            self.obs.set_profile_parameter("AdvOut", "RecRBTime", self.seconds)
+        except OBSError as exc:
+            error = str(exc)
+            self.log(f"[Replay] Couldn't enable the buffer in OBS: {error}")
+            return False
+        self._last_error = None
+        if self.arm():
+            return True
+        # The profile is set but OBS hasn't instantiated the output yet; it
+        # picks it up on the next profile load. Say so rather than silently
+        # failing, because from the outside the button just wouldn't work.
+        self.log("[Replay] Enabled in OBS's profile. OBS needs a restart before "
+                 "the buffer actually exists.")
+        return False
 
     def disarm(self):
         """"StopReplayBuffer: monitoring off, or non-game focus"."""

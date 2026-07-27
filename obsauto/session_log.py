@@ -71,12 +71,23 @@ def append(event_type, game=None, appid=None, path=None, **fields):
     return row
 
 
+# The file is append-only and never rotated, so it grows for the life of the
+# install - and the ribbon re-reads it on every refresh. Reading only the tail
+# bounds that: nothing here looks further back than the forecast's 14 days, and
+# a year of heavy use is far below this many events.
+MAX_READ_BYTES = 4 * 1024 * 1024
+
+
 def read(since=None, limit=None):
     """Events oldest-first, optionally only those at or after `since` (epoch).
 
     Skips malformed lines rather than failing on them: an append interrupted by
     a power cut leaves a partial last line, and losing one event is much better
     than losing the reader.
+
+    Only the last MAX_READ_BYTES are parsed. Events are appended in time order,
+    so the tail is the recent history every caller actually wants, and the cost
+    of a refresh stops growing with the age of the install.
     """
     p = log_path()
     if not os.path.exists(p):
@@ -84,6 +95,12 @@ def read(since=None, limit=None):
     rows = []
     try:
         with open(p, "r", encoding="utf-8") as f:
+            try:
+                if os.path.getsize(p) > MAX_READ_BYTES:
+                    f.seek(os.path.getsize(p) - MAX_READ_BYTES)
+                    f.readline()      # drop the partial line the seek landed in
+            except OSError:
+                pass
             for line in f:
                 line = line.strip()
                 if not line:

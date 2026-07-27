@@ -708,6 +708,8 @@ class AppWindow:
         self._poll_manual_review()
         self._poll_obs_status()
         self._poll_disk_stats()
+        self._tick_ribbon()
+        self._tick_forecast()
         self._register_hotkey()
         self._animate_taskbar_icon()
 
@@ -2164,7 +2166,11 @@ class AppWindow:
         self._clip_search.bind("<KeyRelease>", lambda _e: self._render_clips_rows())
         self.bg.create_window(x + w - 330, y + 20, anchor="nw",
                               window=self._clip_search, width=190, height=30)
-        self._dashboard_widgets.append(self._clip_search)
+        # NOT in _dashboard_widgets. That list is the dashboard's own modules,
+        # and _relayout_grid destroys every widget in it - so rearranging the
+        # dashboard was destroying the Clips pane's search box, leaving it dead
+        # (TclError on the next keystroke) until a restart. Entering Customise
+        # mode also disabled it, for the same reason.
 
         self._clip_sort = ctk.CTkOptionMenu(
             self.root, values=["Newest", "Oldest", "Largest"],
@@ -2382,6 +2388,7 @@ class AppWindow:
     # 7f: the row thumbnail is 4 frames wide at heart - it shows frame 3 and
     # steps through all four as the pointer crosses it.
     CLIP_THUMB_W, CLIP_THUMB_H = 76, 43
+    CLIP_THUMB_CACHE = 60          # clips' worth of frames held at once
 
     def _clip_row(self, clip):
         row = ctk.CTkFrame(self._rec_list, fg_color=CARD_TINT, corner_radius=dv.RADIUS_CONTROL)
@@ -2494,6 +2501,11 @@ class AppWindow:
                 return None
             images.append(ctk.CTkImage(light_image=img, dark_image=img,
                                        size=(self.CLIP_THUMB_W, self.CLIP_THUMB_H)))
+        # Bounded: four images per clip against a 400-clip list is 1600 of them
+        # held forever, which is the same bitmap exhaustion the dashboard hit.
+        # Oldest-inserted goes first; the visible rows are the recent ones.
+        while len(self._clip_thumb_cache) >= self.CLIP_THUMB_CACHE:
+            self._clip_thumb_cache.pop(next(iter(self._clip_thumb_cache)))
         self._clip_thumb_cache[path] = images
         return images
 
@@ -3269,7 +3281,13 @@ class AppWindow:
         carry a `restart` reason and say so under the field.
         """
         try:
-            if key in ("toggle_hotkey", "toggle_hotkey_scancode"):
+            # Any of the three global keys - _register_hotkey rebinds all of
+            # them together. replay_* and palette_hotkey were missing here, so
+            # changing them did nothing at all while the field claimed (via
+            # restart=False) that it applied live.
+            if key in ("toggle_hotkey", "toggle_hotkey_scancode",
+                       "replay_hotkey", "replay_hotkey_scancode",
+                       "replay_enabled", "palette_hotkey"):
                 self._register_hotkey()
             elif key.startswith("nas_offload") and self.offloader:
                 self.offloader.refresh()
@@ -4104,6 +4122,29 @@ class AppWindow:
             fill=FAINT, font=dv.font(11, mono=True))
         self._refresh_ribbon()
 
+    def _tick_ribbon(self):
+        """7b: "Live update: last block width every 10s, no reflow".
+
+        Only while a recording is actually running and the Clips pane is on
+        screen - the live block is the only thing that moves, and redrawing an
+        unwatched pane is a full window composite for nothing.
+        """
+        try:
+            if self._is_recording and self._current_view == "clips":
+                self._refresh_ribbon()
+        except Exception:
+            pass
+        self.root.after(dv.RIBBON_LIVE_UPDATE_MS, self._tick_ribbon)
+
+    def _tick_forecast(self):
+        """7c: "Refresh: on launch, on rec_stop, every 15 min"."""
+        try:
+            self._refresh_forecast()
+            self._refresh_stat_tiles()
+        except Exception:
+            pass
+        self.root.after(dv.FORECAST_REFRESH_MS, self._tick_forecast)
+
     def _paint_ribbon_segments(self):
         active = getattr(self, "_ribbon_range", "Day")
         for name, (text, geom, tile) in self._ribbon_segments.items():
@@ -4314,7 +4355,33 @@ class AppWindow:
         self._replay_rows_y = y + 178
         self._replay_rows_w = w - pad * 2
         self._replay_rows = []
+
+        # The Enable button for 7a's inline fix. An embedded widget rather than
+        # canvas text because it is a real action; hidden unless OBS actually
+        # reports the buffer as unavailable.
+        self._replay_fix_btn = ctk.CTkButton(
+            self.root, text="Enable in OBS", command=self._enable_replay_buffer,
+            fg_color=ACCENT_TINT, hover_color=SURFACE_HOVER, text_color=ACCENT_LIGHT,
+            border_width=1, border_color=ACCENT, corner_radius=dv.RADIUS_CONTROL,
+            font=ctk.CTkFont(size=12))
+        self._replay_fix_win = self.bg.create_window(
+            x0 + w - pad - 128, y + 176, anchor="nw",
+            window=self._replay_fix_btn, width=128, height=30)
+        self.bg.itemconfigure(self._replay_fix_win, state="hidden")
+        self._dashboard_widgets.append(self._replay_fix_btn)
         self._refresh_replay_module()
+
+    def _enable_replay_buffer(self):
+        """Turn OBS's replay buffer on, off the Tk thread."""
+        def worker():
+            ok = self.replay.enable_in_obs()
+            self._ui(lambda: self._replay_enabled_result(ok))
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _replay_enabled_result(self, ok):
+        self._refresh_replay_module()
+        if not ok:
+            self._toast_replace("error", "OBS needs a restart to create the buffer")
 
     def _refresh_replay_module(self):
         if getattr(self, "_replay_badge", None) is None:
@@ -4347,6 +4414,24 @@ class AppWindow:
         for item in self._replay_rows:
             self.bg.delete(item)
         self._replay_rows = []
+
+        # 7a's inline fix: "Replay buffer is off in OBS / Nebula can switch it
+        # on for you / [Enable]". Only for the specific "not available" case -
+        # a transient failure isn't something a button can fix.
+        wants_fix = self.replay.unavailable and self.obs.connected
+        if getattr(self, "_replay_fix_btn", None) is not None:
+            self.bg.itemconfigure(self._replay_fix_win,
+                                  state="normal" if wants_fix else "hidden")
+        if wants_fix:
+            self._replay_rows.append(self.bg.create_text(
+                self._content_x0() + 16, self._replay_rows_y, anchor="nw",
+                text="Replay buffer is off in OBS.\nNebula can switch it on for you.",
+                fill=MUTED, font=dv.type_font("meta")))
+            for item in self._replay_rows:
+                self.bg.addtag_withtag("blk_replay", item)
+                self.bg.addtag_withtag("view_dashboard", item)
+            return
+
         recent = list(reversed(self.replay.saved_this_session))[:2]
         if not recent:
             self._replay_rows.append(self.bg.create_text(
@@ -4712,9 +4797,21 @@ class AppWindow:
         # scrolled out of the bounded history, so there's no point rendering it.
         if len(pending) > LOG_HISTORY:
             pending = pending[-LOG_HISTORY:]
-        for box in (self.console,):
-            if box is not None:
-                self._append_log_batch(box, pending)
+        # The console belongs to the Activity module, and 6.8's catalogue lets
+        # that module be removed - which destroys the widget while this timer
+        # carries on every ~80ms. Writing to it then is a TclError ("invalid
+        # command name") on every log line, into a stderr that doesn't exist
+        # under pythonw. The history is still kept, so putting the module back
+        # replays it.
+        box = getattr(self, "console", None)
+        if box is None:
+            return
+        try:
+            if not box.winfo_exists():
+                return
+        except Exception:
+            return
+        self._append_log_batch(box, pending)
 
     def _prepare_log_tags(self, box):
         """Colour-code the [Subsystem] prefix and set up 6.4's three columns.
@@ -5913,33 +6010,49 @@ class AppWindow:
         self._set_hero_state("disconnected")
 
     def _register_hotkey(self):
-        binding = self.config.get("toggle_hotkey")
+        """(Re)bind all three global keys, taking the old hooks down first.
+
+        Every handle is kept. Dropping them meant a rebind *added* a hook
+        rather than replacing one: editing the toggle key four times left
+        fifteen live hooks, the stale suppress=True ones still swallowing the
+        old key system-wide - which is precisely the failure hotkey.unregister
+        exists to prevent, and it was never being called.
+        """
+        for handle in getattr(self, "_hotkey_handles", ()):
+            hotkey.unregister(handle, on_log=self._log)
+        self._hotkey_handles = []
+
+        def keep(handle):
+            if handle:
+                self._hotkey_handles.append(handle)
 
         def on_press():
             # keyboard's callback fires on its own thread - bounce onto the
             # Tk thread before touching any widgets/monitor state.
             self.root.after(0, self._toggle_monitoring)
 
-        hotkey.register(binding, on_press, suppress=True, on_log=self._log,
-                        scancode=self.config.get("toggle_hotkey_scancode"))
+        keep(hotkey.register(
+            self.config.get("toggle_hotkey"), on_press, suppress=True,
+            on_log=self._log,
+            scancode=self.config.get("toggle_hotkey_scancode")))
 
         # 7a's save key. Bound by scan code for the same reason as the toggle:
         # a character can resolve to several scan codes, and pinning it is what
         # stops the hook swallowing the wrong key system-wide.
         if self.config.get("replay_enabled", True):
-            hotkey.register(
+            keep(hotkey.register(
                 self.config.get("replay_hotkey", "f9"),
                 lambda: self.root.after(0, self._save_replay),
                 suppress=False, on_log=self._log,
-                scancode=self.config.get("replay_hotkey_scancode"))
+                scancode=self.config.get("replay_hotkey_scancode")))
 
         # 7e: "Global hotkey: palette_hotkey, default ctrl+k" - and it has to
         # be global, because the palette's whole point is opening over a game.
         palette_key = self.config.get("palette_hotkey", "ctrl+k")
         if palette_key:
-            hotkey.register(palette_key,
-                            lambda: self.root.after(0, self.show_palette),
-                            suppress=False, on_log=self._log)
+            keep(hotkey.register(
+                palette_key, lambda: self.root.after(0, self.show_palette),
+                suppress=False, on_log=self._log))
 
     def _mark_clip(self):
         """Drop a mark on the running recording.
