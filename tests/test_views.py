@@ -19,6 +19,7 @@ hotkey.register = lambda *a, **k: None
 gui.ensure_obs_running = lambda *a, **k: None
 
 from obsauto import config as config_module
+from obsauto import design_v3 as dv
 from obsauto.classifier import Classifier
 from obsauto.config import load_config
 from obsauto.gui import AppWindow
@@ -139,24 +140,29 @@ def rects_ok(rects):
 
 
 check("customise off by default", app._customising is False)
-check("grips hidden when not customising",
-      app.bg.itemcget(app._grips["hero"]["tile"], "state") == "hidden")
+check("no edit chrome exists until you ask for it", not app._grips, list(app._grips))
 
 app._toggle_customise()
-settle(120)
-check("grips shown in customise mode",
-      app.bg.itemcget(app._grips["hero"]["tile"], "state") == "normal")
+settle(150)
+check("the handle strip appears in customise mode",
+      "hero" in app._grips and "strip" in app._grips["hero"], list(app._grips))
+# 6.8: "Handle strip 26px INSIDE the module, pushes content down." The strip
+# sits at the module's own top edge, and the module grew to make room.
+hx, hy, _hw, hh = app._grid_rects["hero"]
+check("the strip is inside the module, not over it",
+      hh == gui.HERO_H + dv.HANDLE_STRIP_H, (hh, gui.HERO_H))
+check("the grid overlay is drawn", len(app._grid_overlay) == dv.GRID_COLS * 2,
+      len(app._grid_overlay))
 
 # Default full-width layout: no overlaps, in bounds.
 ok, why = rects_ok(app._grid_rects)
 check("default grid has no overlaps", ok, why)
 
-# Put stats and activity SIDE BY SIDE (both half). This is the whole point of
-# the grid over the old vertical reorder.
+# Put stats and activity SIDE BY SIDE. This is the whole point of the grid.
 app._relayout_grid([
-    {"name": "hero", "span": 2},
-    {"name": "stats", "span": 1},
-    {"name": "activity", "span": 1},
+    {"id": "hero", "span": 12},
+    {"id": "stats", "span": 6},
+    {"id": "activity", "span": 6},
 ])
 settle(150)
 sr, ar = app._grid_rects["stats"], app._grid_rects["activity"]
@@ -165,28 +171,91 @@ check("stats left, activity right", sr[0] < ar[0], (sr[0], ar[0]))
 check("both are half width", sr[2] < (gui.WIDTH - gui.MARGIN - app._content_x0()) * 0.6)
 ok, why = rects_ok(app._grid_rects)
 check("side-by-side grid has no overlaps", ok, why)
-check("layout persisted as grid",
-      isinstance(app.config.get("dashboard_grid"), list)
-      and {"name": "stats", "span": 1} in app.config["dashboard_grid"],
-      app.config.get("dashboard_grid"))
-check("old dashboard_layout key retired", "dashboard_layout" not in app.config)
 
-# Width toggle flips a block back to full.
-app._toggle_block_span("stats")
+# "Three widths only: ½ (6 col), ⅔ (8 col), Full (12 col)."
+app._set_block_span("stats", 8)
 settle(150)
-check("toggle made stats full width again",
-      app._grid_rects["stats"][2] > (gui.WIDTH - gui.MARGIN - app._content_x0()) * 0.9)
+two_thirds = app._grid_rects["stats"][2]
+app._set_block_span("stats", 12)
+settle(150)
+full = app._grid_rects["stats"][2]
+app._set_block_span("stats", 6)
+settle(150)
+half = app._grid_rects["stats"][2]
+check("the three widths are distinct and ordered", half < two_thirds < full,
+      (half, two_thirds, full))
+check("no fourth width is reachable", dv.SPANS == (6, 8, 12), dv.SPANS)
+app._set_block_span("stats", 999)
+settle(80)
+check("an unknown span is refused", abs(app._grid_rects["stats"][2] - half) < 1)
+
+# An intermediate edit must NOT be written to disk - Esc has to be able to
+# put everything back. Only Done commits.
+saved_before_done = app.config.get("dashboard_layout")
+check("edits are not persisted mid-session",
+      saved_before_done is None
+      or {"id": "stats", "span": 6} not in saved_before_done,
+      saved_before_done)
+app._toggle_customise()           # Done
+settle(150)
+check("Done commits the layout",
+      isinstance(app.config.get("dashboard_layout"), list)
+      and {"id": "stats", "span": 6} in app.config["dashboard_layout"],
+      app.config.get("dashboard_layout"))
+check("the interim dashboard_grid key is retired", "dashboard_grid" not in app.config)
+
+# "Done commits · Esc reverts the session."
+before = [dict(it) for it in app._grid_layout]
+app._toggle_customise()
+settle(120)
+app._set_block_span("activity", 8)     # 6 already, so pick a different width
+settle(120)
+check("the edit took effect while editing",
+      app._grid_layout != before, app._grid_layout)
+app._cancel_customise()
+settle(150)
+check("Esc reverts to the layout on entry", app._grid_layout == before,
+      app._grid_layout)
+check("Esc leaves customise mode", app._customising is False)
+
+# "Removing one returns it to the Add module list - it is never destroyed."
+app._toggle_customise()
+settle(120)
+app._remove_module("activity")
+settle(150)
+check("a removed module leaves the grid",
+      "activity" not in {it["id"] for it in app._grid_layout},
+      [it["id"] for it in app._grid_layout])
+app._add_module("activity")
+settle(150)
+check("and can be added back",
+      "activity" in {it["id"] for it in app._grid_layout},
+      [it["id"] for it in app._grid_layout])
+app._cancel_customise()
+settle(120)
 
 # Every embedded widget survived the rebuilds (destroyed + recreated cleanly).
 check("record button rebuilt", str(app.record_toggle_btn.winfo_exists()) == "1")
 check("console rebuilt", str(app.console.winfo_exists()) == "1")
 
-# A corrupt/partial saved grid must never lose a panel.
-app.config["dashboard_grid"] = [{"name": "stats", "span": 1}, {"name": "nonsense"}]
+# A corrupt/partial saved layout must never lose a panel, and the two older
+# on-disk shapes must still load.
+app.config["dashboard_layout"] = [{"id": "stats", "span": 6}, {"id": "nonsense"}]
 recovered = app._saved_grid()
-names = [it["name"] for it in recovered]
-check("bad saved grid recovers all blocks",
+names = [it["id"] for it in recovered]
+check("bad saved layout recovers all blocks",
       sorted(names) == sorted(gui.DEFAULT_BLOCKS) and names[0] == "stats", names)
+app.config.pop("dashboard_layout", None)
+app.config["dashboard_grid"] = [{"name": "activity", "span": 1}]
+migrated = app._saved_grid()
+check("the old {name, span 1|2} shape migrates to columns",
+      migrated[0] == {"id": "activity", "span": 6}, migrated)
+app.config["dashboard_grid"] = ["stats", "hero"]
+migrated = app._saved_grid()
+check("a bare list of names migrates too",
+      [it["id"] for it in migrated][:2] == ["stats", "hero"]
+      and all(it["span"] == 12 for it in migrated), migrated)
+app.config.pop("dashboard_grid", None)
 
 # Leaving the dashboard must drop customise mode rather than strand the grips.
 app._set_customise(True)

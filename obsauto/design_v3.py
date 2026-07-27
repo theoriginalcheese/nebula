@@ -414,6 +414,27 @@ TOAST_TINTS = {
     "pause": ACCENT, "resume": ACCENT,
 }
 
+# ---------------------------------------------------------------------------
+# Customise mode (6.8)
+# ---------------------------------------------------------------------------
+# "This feature was never specified - it was invented during the build, and it
+# does not work." What follows is the spec for keeping it, which is what
+# Anthony chose over cutting it.
+
+GRID_COLS = 12
+GRID_GAP = 16
+# "Three widths only: 1/2 (6 col), 2/3 (8 col), Full (12 col)."
+SPANS = (6, 8, 12)
+SPAN_LABELS = {6: "½", 8: "⅔", 12: "Full"}
+HANDLE_STRIP_H = 26          # "26px INSIDE the module, pushes content down"
+EDIT_CONTENT_OPACITY = 0.55  # "Content while editing: pointer-events:none · opacity .55"
+GRID_OVERLAY_ALPHA = 0.10    # "12 col, 1px accent @ .10, gap 16"
+DRAG_ROTATE_DEG = -0.6       # "Dragged copy: rotate -0.6deg · shadow lg"
+# "Origin slot collapses; siblings reflow over 260ms." Recorded, deliberately
+# not animated: reflowing many canvas items over 260ms is a per-frame window
+# composite, which is the one thing this UI cannot do. Siblings snap on drop.
+REFLOW_MS_UNUSED = 260
+
 MINI_W, MINI_H = 296, 54
 MINI_SNAP_PX = 32                    # snap to nearest corner within this
 MINI_FADE_AFTER_MS = 3000

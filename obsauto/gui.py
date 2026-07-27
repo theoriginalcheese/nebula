@@ -258,15 +258,15 @@ HERO_H = 300
 # width (stats reflows to 2x2, so it's taller). Heights are fixed so laying the
 # grid out is pure arithmetic - no measuring, nothing to resize. Activity's 246
 # includes its 22px header.
+# Keyed by column span: 12 = full width, 6 = the narrow form (stats reflows to
+# 2x2, so it's taller). A 2/3 module uses the narrow height too.
 BLOCK_HEIGHTS = {
-    "hero": {2: HERO_H, 1: HERO_H},   # hero is full-width only; 1 is never used
-    "stats": {2: 92, 1: 198},
-    "activity": {2: 246, 1: 246},
+    "hero": {12: HERO_H, 6: HERO_H},   # hero is full-width only; 6 is never used
+    "stats": {12: 92, 6: 198},
+    "activity": {12: 246, 6: 246},
 }
-# The dashboard layout is an ordered list of {"name", "span"}. Consecutive
-# half-span blocks pair left-to-right into one row; anything else takes a full
-# row. Persisted to config as "dashboard_grid".
-DEFAULT_GRID = [{"name": b, "span": 2} for b in DEFAULT_BLOCKS]
+# 6.8: "Persisted as dashboard_layout[] - {id, span}", span in grid columns.
+DEFAULT_GRID = [{"id": b, "span": dv.GRID_COLS} for b in DEFAULT_BLOCKS]
 
 
 # ---- DPI / UI scaling ----------------------------------------------------
@@ -459,6 +459,8 @@ class AppWindow:
         self._tray_icon_state = None  # last icon pushed, so we only swap on change
         self._is_recording = False  # tracked from OBS's own GetRecordStatus, not a client-side timestamp
         self._is_paused = False
+        self._customising = False     # 6.8 edit mode; owns the handle strips and grid overlay
+        self._drag_block = None
         self._poll_job = None         # the single _poll_obs_status timer, so it can be pulled forward
         self._transport_busy = False  # a start/stop/pause round-trip is in flight
         self._images = []  # keeps PhotoImage refs alive - Tk GCs them otherwise
@@ -597,6 +599,13 @@ class AppWindow:
 
         self.bg.bind("<ButtonPress-1>", self._start_move)
         self.bg.bind("<B1-Motion>", self._on_move)
+
+        # 6.8's keyboard parity: Space picks a module up, arrows move it, Space
+        # drops it, Esc cancels. Bound on the root so the handles don't have to
+        # be real focusable widgets - they are canvas items.
+        self.root.bind("<Escape>", self._cancel_customise)
+        for key in ("<space>", "<Up>", "<Down>", "<Left>", "<Right>"):
+            self.root.bind(key, self._customise_key)
 
         self._build_titlebar()
         self._build_sidebar()
@@ -1218,6 +1227,20 @@ class AppWindow:
             WIDTH - dv.PANE_HEADER_PAD_X - 352, cy - 15, anchor="nw",
             window=self.customise_btn, width=100, height=30)
 
+        # "Header swap: Done + Reset layout replace it in place." Reset shares
+        # Customise's row and only appears while editing, so the header doesn't
+        # grow a permanent button nobody needs.
+        self.reset_btn = ctk.CTkButton(
+            self.root, text="Reset layout", command=self._reset_dashboard,
+            fg_color="transparent", hover_color=SURFACE_HOVER, text_color=MUTED,
+            bg_color=self._bg_at(WIDTH - 620, cy), border_width=1, border_color=EDGE,
+            corner_radius=dv.RADIUS_CONTROL, font=ctk.CTkFont(size=12),
+        )
+        self._reset_win = self.bg.create_window(
+            WIDTH - dv.PANE_HEADER_PAD_X - 578, cy - 15, anchor="nw",
+            window=self.reset_btn, width=108, height=30)
+        self.bg.itemconfigure(self._reset_win, state="hidden")
+
         # Collapse to the mini overlay (2k). This was a third circle in the
         # titlebar, which 6.5 forbids - the bar is exactly eight elements. It
         # is a pane-level action, so it lives in the 62px pane header with the
@@ -1304,6 +1327,8 @@ class AppWindow:
         # navigating away would strand the grips over another view.
         for win in (self._customise_win, self._mini_win):
             self.bg.itemconfigure(win, state="normal" if name == "dashboard" else "hidden")
+        if name != "dashboard":
+            self.bg.itemconfigure(self._reset_win, state="hidden")
         if name != "dashboard" and getattr(self, "_customising", False):
             self._set_customise(False)
         for nav_name, parts in self._nav.items():
@@ -1311,10 +1336,11 @@ class AppWindow:
         if name == "dashboard":
             # Showing the whole tag un-hides items the dashboard deliberately
             # keeps hidden (the timer/size readout and Pause button when nothing
-            # is recording, and the customise grips), so re-apply their own
-            # visibility rules on top.
+            # is recording), so re-apply their own visibility rules on top. The
+            # edit chrome no longer needs re-applying: it is built by
+            # _render_dashboard only when editing, rather than built always and
+            # hidden.
             self._set_hero_state(self._hero_state)
-            self._set_customise(self._customising)
         elif name == "clips":
             self._refresh_clips()
         elif name == "games":
@@ -1344,79 +1370,132 @@ class AppWindow:
         self._render_dashboard()
 
     def _saved_grid(self):
-        """The grid layout from config, defended against a hand-edited or
-        older-format file. Unknown blocks dropped, missing ones appended full-
-        width, so a bad file can never lose a panel."""
-        def normalise(items, span_of):
+        """The layout from config, defended against a hand-edited or older file.
+
+        6.8: "Persisted as dashboard_layout[] - {id, span}", where span is a
+        column count out of twelve. Two older shapes exist on disk here - a
+        bare list of names, and {name, span} where span was 1 or 2 - so both
+        are migrated rather than discarded. Unknown ids are dropped and any
+        module missing from the file is appended full width, so no file, however
+        mangled, can lose a panel.
+        """
+        legacy_span = {1: 6, 2: 12}
+
+        def normalise(items):
             cleaned, seen = [], set()
             for it in items:
-                name = it if isinstance(it, str) else (it or {}).get("name")
-                if name in BLOCK_HEIGHTS and name not in seen:
-                    span = 2 if name == "hero" else span_of(it)
-                    cleaned.append({"name": name, "span": span})
-                    seen.add(name)
+                if isinstance(it, str):
+                    key, span = it, dv.GRID_COLS
+                else:
+                    it = it or {}
+                    key = it.get("id") or it.get("name")
+                    span = it.get("span", dv.GRID_COLS)
+                    span = legacy_span.get(span, span)
+                if key not in BLOCK_HEIGHTS or key in seen:
+                    continue
+                if span not in dv.SPANS:
+                    span = dv.GRID_COLS
+                cleaned.append({"id": key, "span": dv.GRID_COLS if key == "hero" else span})
+                seen.add(key)
             for b in DEFAULT_BLOCKS:
                 if b not in seen:
-                    cleaned.append({"name": b, "span": 2})
+                    cleaned.append({"id": b, "span": dv.GRID_COLS})
             return cleaned
 
-        grid = self.config.get("dashboard_grid")
-        if isinstance(grid, list):
-            return normalise(grid, lambda it: 1 if isinstance(it, dict) and it.get("span") == 1 else 2)
-        # migrate the older name-only "dashboard_layout"
-        old = self.config.get("dashboard_layout")
-        if isinstance(old, list):
-            return normalise(old, lambda it: 2)
+        for key in ("dashboard_layout", "dashboard_grid"):
+            saved = self.config.get(key)
+            if isinstance(saved, list) and saved:
+                return normalise(saved)
         return [dict(it) for it in DEFAULT_GRID]
 
-    def _compute_grid(self, layout):
-        """Map an ordered layout to {name: (x, y, w, h)}. Full-span blocks take a
-        row; two consecutive half-span blocks share one."""
+    def _compute_grid(self, layout, editing=False):
+        """Map an ordered layout onto the twelve-column grid.
+
+        Modules are packed left to right until the next one won't fit, then the
+        row breaks. That is what makes overlap impossible (6.8: "Overlap:
+        impossible - grid reflows, never free position") - a position is never
+        stored, only an order and a width, so there is nowhere for a module to
+        land on top of another one.
+
+        While editing, every module grows by the handle strip's height: the
+        strip lives *inside* the module and "pushes content down" rather than
+        being an overlay across the top of it, which is why the old edit chrome
+        covered the content it was meant to be moving.
+        """
         x0 = self._content_x0()
         cw = WIDTH - MARGIN - x0
-        half_w = (cw - GRID_COL_GAP) / 2
+        col_w = (cw - dv.GRID_GAP * (dv.GRID_COLS - 1)) / dv.GRID_COLS
+        strip = dv.HANDLE_STRIP_H if editing else 0
+
+        def width_of(span):
+            return col_w * span + dv.GRID_GAP * (span - 1)
+
+        rows, row, used = [], [], 0
+        for item in layout:
+            key = item["id"]
+            span = dv.GRID_COLS if key == "hero" else item.get("span", dv.GRID_COLS)
+            if used + span > dv.GRID_COLS:
+                rows.append(row)
+                row, used = [], 0
+            row.append((key, span))
+            used += span
+        if row:
+            rows.append(row)
+
+        heights = [max(BLOCK_HEIGHTS[k][12 if s == 12 else 6] for k, s in r) + strip
+                   for r in rows]
+
+        # The default stack fills the content area exactly, so three handle
+        # strips would push the last module 78px off the bottom. Edit mode
+        # borrows that space from the last row rather than overflowing - it is
+        # the one that can give it up (the activity panel just shows fewer
+        # lines), and a module you cannot see is worse than a shorter one.
+        available = (HEIGHT - MARGIN) - self._content_y0()
+        overflow = sum(heights) + BLOCK_GAP * max(0, len(rows) - 1) - available
+        if overflow > 0 and heights:
+            heights[-1] = max(dv.HANDLE_STRIP_H + 40, heights[-1] - overflow)
+
         rects = {}
         y = self._content_y0()
-        i, n = 0, len(layout)
-        while i < n:
-            name = layout[i]["name"]
-            span = 2 if name == "hero" else layout[i].get("span", 2)
-            partner = None
-            if span == 1 and i + 1 < n:
-                pn = layout[i + 1]["name"]
-                if pn != "hero" and layout[i + 1].get("span", 2) == 1:
-                    partner = layout[i + 1]["name"]
-            if partner:
-                hl, hr = BLOCK_HEIGHTS[name][1], BLOCK_HEIGHTS[partner][1]
-                rects[name] = (x0, y, half_w, hl)
-                rects[partner] = (x0 + half_w + GRID_COL_GAP, y, half_w, hr)
-                y += max(hl, hr) + BLOCK_GAP
-                i += 2
-            else:
-                h = BLOCK_HEIGHTS[name][2]  # a lone half falls back to full width
-                rects[name] = (x0, y, cw, h)
-                y += h + BLOCK_GAP
-                i += 1
+        for r, height in zip(rows, heights):
+            x = x0
+            for key, span in r:
+                rects[key] = (x, y, width_of(span), height)
+                x += width_of(span) + dv.GRID_GAP
+            y += height + BLOCK_GAP
         return rects
 
     def _render_dashboard(self):
         self._dashboard_widgets = []
-        rects = self._compute_grid(self._grid_layout)
+        editing = getattr(self, "_customising", False)
+        rects = self._compute_grid(self._grid_layout, editing=editing)
         self._grid_rects = rects
-        builders = {"hero": lambda r: self._build_hero(r[0], r[1], r[2]),
-                    "stats": lambda r: self._build_stats(r[0], r[1], r[2]),
-                    "activity": lambda r: self._build_activity(r[0], r[1], r[2], r[3])}
-        for name in ("hero", "stats", "activity"):
+        strip = dv.HANDLE_STRIP_H if editing else 0
+        builders = {
+            "hero": lambda r: self._build_hero(r[0], r[1] + strip, r[2]),
+            "stats": lambda r: self._build_stats(r[0], r[1] + strip, r[2]),
+            "activity": lambda r: self._build_activity(r[0], r[1] + strip, r[2],
+                                                       r[3] - strip),
+        }
+        for item in self._grid_layout:
+            name = item["id"]
+            if name not in rects:
+                continue
             before = set(self.bg.find_all())
             builders[name](rects[name])
-            for item in set(self.bg.find_all()) - before:
-                self.bg.addtag_withtag(f"blk_{name}", item)
+            for canvas_item in set(self.bg.find_all()) - before:
+                self.bg.addtag_withtag(f"blk_{name}", canvas_item)
+                self.bg.addtag_withtag(f"content_{name}", canvas_item)
         self._build_customise_controls(rects)
 
-    def _relayout_grid(self, new_layout):
+    def _relayout_grid(self, new_layout, persist=False):
         """Apply a new layout by tearing the dashboard down and rebuilding it at
         the new rects. Only ever runs on a user action (drag / width toggle), so
-        the rebuild cost is irrelevant."""
+        the rebuild cost is irrelevant.
+
+        `persist` is off for the intermediate states during an edit session -
+        only Done writes config.json, so Esc really can put everything back.
+        """
         for wdg in getattr(self, "_dashboard_widgets", []):
             try:
                 wdg.destroy()
@@ -1433,113 +1512,429 @@ class AppWindow:
         for item in set(self.bg.find_all()) - before:
             self.bg.addtag_withtag("view_dashboard", item)
         self._composite = self._base_composite
-        self._persist_grid(self._grid_layout)
+        if persist:
+            self._persist_grid(self._grid_layout)
         self._set_hero_state(self._hero_state)
-        self._set_customise(self._customising)
+        # The hero's primary button is created disabled and enabled by the next
+        # status poll, so a rebuild used to leave it dead for up to five
+        # seconds. A relayout is a user action; don't make them wait for a
+        # heartbeat to get their buttons back.
+        if getattr(self, "_poll_job", None) is not None:
+            self._poll_now()
         # Deliberately silent. This runs on every reflow during a drag, and
         # logging it there wrote 19 identical lines in 40 seconds - the log is
         # meant to be readable. The commit path logs once instead.
 
     def _persist_grid(self, layout):
-        self.config["dashboard_grid"] = [dict(it) for it in layout]
-        self.config.pop("dashboard_layout", None)  # retire the old key
+        # 6.8: "Persisted as dashboard_layout[] - {id, span}".
+        self.config["dashboard_layout"] = [dict(it) for it in layout]
+        self.config.pop("dashboard_grid", None)   # retire the interim key
         from .config import save_config
         save_config(self.config)
 
-    def _build_customise_controls(self, rects):
-        """A drag grip on each block plus a Full/Half toggle, hidden until
-        Customise is on. Built into the dashboard so they tag/relayout with it."""
-        self._grips = {}
-        for it in self._grid_layout:
-            name = it["name"]
-            x, y, w, _h = rects[name]
-            tile = self._glass(x, y, w, 26, tint=ACCENT, radius=8, tint_alpha=70,
-                               border_hex=ACCENT, border_alpha=90)
-            label = self.bg.create_text(
-                x + 12, y + 13, anchor="w", text=f"{ICON_GLYPHS[dv.ICONS['scene']]}  {BLOCK_LABELS[name]}",
-                fill=NAV_ACTIVE_TEXT, font=dv.font(11, 500))
-            for item in (tile, label):
-                self.bg.tag_bind(item, "<ButtonPress-1>",
-                                 lambda e, n=name: self._grip_press(e, n))
-                self.bg.tag_bind(item, "<B1-Motion>", self._grip_drag)
-                self.bg.tag_bind(item, "<ButtonRelease-1>", self._grip_release)
-            parts = {"tile": tile, "label": label}
-            if name != "hero":  # hero is full-width only
-                chip_w = 52
-                cx = x + w - chip_w - 8
-                chip = self._glass(cx, y + 4, chip_w, 18, tint=BASE_BG, radius=6,
-                                   tint_alpha=140, border_alpha=0)
-                ctext = self.bg.create_text(
-                    cx + chip_w / 2, y + 13,
-                    text="Full" if it["span"] == 2 else "Half",
-                    fill=ACCENT_LIGHT, font=dv.font(10, 500))
-                for item in (chip, ctext):
-                    self.bg.tag_bind(item, "<Button-1>",
-                                     lambda e, n=name: self._toggle_block_span(n))
-                parts["chip"] = chip
-                parts["ctext"] = ctext
-            for item in parts.values():
-                self.bg.addtag_withtag(f"blk_{name}", item)
-            self._grips[name] = parts
-        self._set_customise(getattr(self, "_customising", False))
+    # ---- customise mode (6.8) ----
+    # The rebuild the spec asked for. What was here before had every defect it
+    # names: "Edit chrome is drawn as an overlay on top of each module instead
+    # of inside it, so handle bars cover content and modules land on top of each
+    # other. There is no grid, no placeholder, and no reflow."
+    #
+    # One deliberate deviation, for the reason that governs this whole UI:
+    # "Origin slot collapses; siblings reflow over 260ms" is a 260ms animation
+    # of many canvas items, and any canvas mutation costs a full window
+    # composite here. Siblings snap into place on drop instead. The dragged
+    # module itself does follow the cursor - that is one image moving, which is
+    # the same cost the old build already paid - and it is pre-rendered rotated
+    # at press time rather than re-rotated per frame.
 
-    def _set_customise(self, on):
+    def _build_customise_controls(self, rects):
+        """The handle strip inside each module, plus the grid overlay.
+
+        The strip is drawn *within* the module's rect and the module's content
+        was already laid out 26px lower (see _compute_grid), so it pushes
+        content down rather than covering it.
+        """
+        self._grips = {}
+        self._grid_overlay = []
+        if not getattr(self, "_customising", False):
+            return
+
+        # "Grid overlay: 12 col, 1px accent @ .10, gap 16."
+        x0 = self._content_x0()
+        cw = WIDTH - MARGIN - x0
+        col_w = (cw - dv.GRID_GAP * (dv.GRID_COLS - 1)) / dv.GRID_COLS
+        overlay_colour = dv.over(ACCENT, dv.GRID_OVERLAY_ALPHA, dv.GROUND)
+        for col in range(dv.GRID_COLS):
+            cx = x0 + col * (col_w + dv.GRID_GAP)
+            for edge in (cx, cx + col_w):
+                self._grid_overlay.append(self.bg.create_line(
+                    edge, self._content_y0(), edge, HEIGHT - MARGIN,
+                    fill=overlay_colour, width=1))
+
+        for item in self._grid_layout:
+            name = item["id"]
+            if name not in rects:
+                continue
+            x, y, w, _h = rects[name]
+            strip = self._glass(x, y, w, dv.HANDLE_STRIP_H, tint=ACCENT, radius=8,
+                                tint_alpha=70, border_hex=ACCENT, border_alpha=90)
+            label = self.bg.create_text(
+                x + 12, y + dv.HANDLE_STRIP_H / 2, anchor="w",
+                text=f"{ICON_GLYPHS[dv.ICONS['scene']]}  {BLOCK_LABELS[name]}",
+                fill=NAV_ACTIVE_TEXT, font=dv.font(11, 500))
+            parts = {"strip": strip, "label": label}
+
+            # "Grab target: the strip only - never the whole card."
+            for grab in (strip, label):
+                self.bg.tag_bind(grab, "<ButtonPress-1>",
+                                 lambda e, n=name: self._grip_press(e, n))
+                self.bg.tag_bind(grab, "<B1-Motion>", self._grip_drag)
+                self.bg.tag_bind(grab, "<ButtonRelease-1>", self._grip_release)
+                self.bg.tag_bind(grab, "<Enter>",
+                                 lambda _e: self.bg.configure(cursor="fleur"))
+                self.bg.tag_bind(grab, "<Leave>",
+                                 lambda _e: self.bg.configure(cursor=""))
+
+            # "The segmented control lives in the handle strip - never a
+            # floating chip over the header. Three widths only."
+            if name != "hero":       # the hero is full width, always
+                seg_w, seg_h = 34, 18
+                right = x + w - 8
+                for i, span in enumerate(reversed(dv.SPANS)):
+                    sx = right - (i + 1) * seg_w - i * 3
+                    active = item.get("span") == span
+                    seg = self._glass(sx, y + 4, seg_w, seg_h,
+                                      tint=ACCENT if active else BASE_BG, radius=6,
+                                      tint_alpha=150 if active else 120, border_alpha=0)
+                    text = self.bg.create_text(
+                        sx + seg_w / 2, y + dv.HANDLE_STRIP_H / 2,
+                        text=dv.SPAN_LABELS[span],
+                        fill=NAV_ACTIVE_TEXT if active else MUTED,
+                        font=dv.font(10, 500))
+                    for seg_item in (seg, text):
+                        self.bg.tag_bind(
+                            seg_item, "<Button-1>",
+                            lambda _e, n=name, s=span: self._set_block_span(n, s))
+                    parts[f"seg{span}"] = seg
+                    parts[f"segtext{span}"] = text
+
+            # Remove returns the module to the Add-module list; 6.8 is explicit
+            # that it "is never destroyed".
+            close = self.bg.create_text(
+                x + w - (8 if name == "hero" else 128), y + dv.HANDLE_STRIP_H / 2,
+                text=ICON_GLYPHS["x"], fill=MUTED, font=(ICON_FONT, -9), anchor="e")
+            self.bg.tag_bind(close, "<Button-1>",
+                             lambda _e, n=name: self._remove_module(n))
+            parts["close"] = close
+
+            for canvas_item in parts.values():
+                self.bg.addtag_withtag(f"blk_{name}", canvas_item)
+            self._grips[name] = parts
+
+        self._dim_module_content()
+        self._build_add_module_row(rects)
+
+    def _dim_module_content(self):
+        """"Content while editing: pointer-events:none · opacity .55".
+
+        Canvas items have no alpha, so the content is covered by a scrim of the
+        ground colour at 45% - the same thing the browser composites - which
+        also swallows clicks aimed at anything under it. Embedded widgets sit
+        above the canvas and can't be covered, so they are disabled instead.
+        """
+        for name, (x, y, w, h) in self._grid_rects.items():
+            scrim = self._glass(
+                x, y + dv.HANDLE_STRIP_H, w, h - dv.HANDLE_STRIP_H,
+                tint=dv.GROUND, radius=dv.CARD_LAYERS["panel"][0],
+                tint_alpha=int(round((1 - dv.EDIT_CONTENT_OPACITY) * 255)),
+                border_alpha=0)
+            self.bg.tag_bind(scrim, "<Button-1>", lambda _e: "break")
+            self.bg.addtag_withtag(f"blk_{name}", scrim)
+            self._grips.setdefault(name, {})["scrim"] = scrim
+        # Embedded widgets sit above the canvas, so the scrim can't cover them.
+        # Disable them (that is the pointer-events half) and dim their text to
+        # the same .55 the scrim gives everything else, or the activity log
+        # stays bright while the card behind it greys out.
+        for widget in getattr(self, "_dashboard_widgets", []):
+            try:
+                widget.configure(state="disabled")
+            except Exception:
+                pass
+            try:
+                current = widget.cget("text_color")
+                widget._nebula_text_color = current
+                widget.configure(text_color=dv.over(
+                    current if isinstance(current, str) else MUTED,
+                    dv.EDIT_CONTENT_OPACITY, dv.PANEL))
+            except Exception:
+                pass
+
+    def _build_add_module_row(self, rects):
+        """Modules that have been removed, offered back (6.8's catalogue).
+
+        The catalogue is whatever is registered minus whatever is on the
+        dashboard. Today that is the three real modules; 7g adds replay, ribbon
+        and storage to it, which is why this reads the registry rather than a
+        hard-coded list.
+        """
+        placed = {it["id"] for it in self._grid_layout}
+        missing = [b for b in DEFAULT_BLOCKS if b not in placed]
+        if not missing:
+            return
+        bottom = max((r[1] + r[3] for r in rects.values()), default=self._content_y0())
+        x = self._content_x0()
+        y = bottom + BLOCK_GAP
+        if y > HEIGHT - MARGIN - 34:
+            return
+        self.bg.addtag_withtag(
+            "blk_addmodule",
+            self.bg.create_text(x, y + 15, anchor="w", text=self._track("Add module"),
+                                fill=FAINT, font=dv.type_font("eyebrow")))
+        cx = x + 100
+        for name in missing:
+            label = BLOCK_LABELS[name]
+            chip_w = 26 + self._text_w(label, dv.font(11, 500))
+            chip = self._glass(cx, y, chip_w, 30, tint=ACCENT, radius=8,
+                               tint_alpha=44, border_hex=ACCENT, border_alpha=70)
+            text = self.bg.create_text(cx + chip_w / 2, y + 15, text=f"+  {label}",
+                                       fill=ACCENT_LIGHT, font=dv.font(11, 500))
+            for item in (chip, text):
+                self.bg.tag_bind(item, "<Button-1>",
+                                 lambda _e, n=name: self._add_module(n))
+                self.bg.addtag_withtag("blk_addmodule", item)
+            cx += chip_w + 10
+
+    def _set_customise(self, on, commit=True):
+        """Enter or leave edit mode.
+
+        Leaving rebuilds the dashboard because the handle strips changed every
+        module's height; that is a user action, so the rebuild cost doesn't
+        matter. `commit=False` is Esc: restore the layout captured on entry.
+        """
+        was = getattr(self, "_customising", False)
         self._customising = on
-        for parts in self._grips.values():
-            for item in parts.values():
-                self.bg.itemconfigure(item, state="normal" if on else "hidden")
+        if on and not was:
+            self._layout_before_edit = [dict(it) for it in self._grid_layout]
         if hasattr(self, "customise_btn"):
             self.customise_btn.configure(
                 text="Done" if on else "Customise",
                 text_color=ACCENT_LIGHT if on else MUTED)
+        if hasattr(self, "reset_btn"):
+            # "Header swap: Done + Reset layout replace it in place."
+            self.bg.itemconfigure(self._reset_win, state="normal" if on else "hidden")
+        if was == on:
+            return
+        layout = self._grid_layout
+        if not on and not commit:
+            layout = getattr(self, "_layout_before_edit", layout)
+        self._relayout_grid(layout, persist=(not on and commit))
 
     def _toggle_customise(self):
         leaving = self._customising
-        self._set_customise(not self._customising)
+        self._set_customise(not leaving)
         if leaving:
-            order = " · ".join(item["id"] for item in self._grid_layout)
+            order = " · ".join(
+                f"{it['id']}:{dv.SPAN_LABELS[it['span']]}" for it in self._grid_layout)
             self._log(f"[Manual] Dashboard layout saved: {order}")
 
-    def _toggle_block_span(self, name):
-        if name == "hero" or not self._customising:
+    def _cancel_customise(self, _event=None):
+        """Esc. "Done commits · Esc reverts the session"."""
+        if not getattr(self, "_customising", False):
+            return
+        if getattr(self, "_drag_block", None):
+            self._grip_cancel()
+            return
+        self._set_customise(False, commit=False)
+        self._log("[Manual] Dashboard changes discarded.")
+
+    def _set_block_span(self, name, span):
+        if name == "hero" or not self._customising or span not in dv.SPANS:
             return
         layout = [dict(it) for it in self._grid_layout]
         for it in layout:
-            if it["name"] == name:
-                it["span"] = 1 if it["span"] == 2 else 2
+            if it["id"] == name:
+                if it["span"] == span:
+                    return
+                it["span"] = span
         self._relayout_grid(layout)
 
+    def _remove_module(self, name):
+        if not self._customising or len(self._grid_layout) <= 1:
+            return
+        self._relayout_grid([dict(it) for it in self._grid_layout if it["id"] != name])
+
+    def _add_module(self, name):
+        if not self._customising or any(it["id"] == name for it in self._grid_layout):
+            return
+        layout = [dict(it) for it in self._grid_layout]
+        layout.append({"id": name, "span": dv.GRID_COLS})
+        self._relayout_grid(layout)
+
+    # ---- the drag ----
     def _grip_press(self, event, name):
         if not self._customising:
             return
         self._drag_block = name
-        self._drag_last_y = event.y / self.scale
-        self._drag_live_y = self._grid_rects[name][1]
+        self._drag_origin = self._grid_rects[name]
+        self._drag_last = (event.x / self.scale, event.y / self.scale)
+        self._drag_pos = [self._drag_origin[0], self._drag_origin[1]]
+
+        # "Drop target: dashed accent placeholder at true size." Drawn where the
+        # module came from and moved as the target slot changes.
+        x, y, w, h = self._drag_origin
+        self._drop_marker = self.bg.create_rectangle(
+            x, y, x + w, y + h, outline=ACCENT, width=2, dash=(6, 5), fill="")
+        # "Origin slot collapses" - the module leaves the flow, so hide it and
+        # drag a pre-rendered rotated copy instead of the live items.
+        self.bg.itemconfigure(f"blk_{name}", state="hidden")
+        self._drag_ghost = self._make_drag_ghost(name, w, h)
+
+    def _make_drag_ghost(self, name, w, h):
+        """"Dragged copy: rotate -0.6deg · shadow lg · follows cursor."
+
+        Rendered once, here, and then only moved. Re-rotating per motion event
+        would be a resample plus a full window composite for every pixel of
+        mouse travel.
+        """
+        sw, sh = self._S(w), self._S(h)
+        card = self._composite.crop(
+            (self._S(self._drag_origin[0]), self._S(self._drag_origin[1]),
+             self._S(self._drag_origin[0]) + sw,
+             self._S(self._drag_origin[1]) + sh)).convert("RGBA")
+        shadow = Image.new("RGBA", (sw, sh), (0, 0, 0, 150))
+        pad = self._S(18)
+        canvas_img = Image.new("RGBA", (sw + pad * 2, sh + pad * 2), (0, 0, 0, 0))
+        canvas_img.paste(shadow.filter(ImageFilter.GaussianBlur(self._S(9))),
+                         (pad, pad + self._S(4)), None)
+        canvas_img.alpha_composite(card, (pad, pad))
+        canvas_img = canvas_img.rotate(dv.DRAG_ROTATE_DEG, resample=Image.BICUBIC,
+                                       expand=False)
+        photo = to_photo(canvas_img)
+        self._images.append(photo)
+        item = self.bg.create_image(self._drag_origin[0] - 18,
+                                    self._drag_origin[1] - 18,
+                                    anchor="nw", image=photo)
+        return item
 
     def _grip_drag(self, event):
-        if not getattr(self, "_drag_block", None):
-            return
-        now = event.y / self.scale
-        delta = now - self._drag_last_y
-        self.bg.move(f"blk_{self._drag_block}", 0, delta)  # live feedback only
-        self._drag_live_y += delta
-        self._drag_last_y = now
-
-    def _grip_release(self, _event):
         name = getattr(self, "_drag_block", None)
         if not name:
             return
+        now = (event.x / self.scale, event.y / self.scale)
+        dx, dy = now[0] - self._drag_last[0], now[1] - self._drag_last[1]
+        self._drag_last = now
+        self._drag_pos[0] += dx
+        self._drag_pos[1] += dy
+        self.bg.move(self._drag_ghost, dx, dy)
+        self._move_drop_marker()
+
+    def _move_drop_marker(self):
+        """Put the placeholder in the slot the module would land in."""
+        target = self._drop_index()
+        layout = [it for it in self._grid_layout if it["id"] != self._drag_block]
+        layout.insert(target, {"id": self._drag_block,
+                               "span": self._span_of(self._drag_block)})
+        rects = self._compute_grid(layout, editing=True)
+        x, y, w, h = rects[self._drag_block]
+        self.bg.coords(self._drop_marker, x, y, x + w, y + h)
+
+    def _span_of(self, name):
+        return next((it["span"] for it in self._grid_layout if it["id"] == name),
+                    dv.GRID_COLS)
+
+    def _drop_index(self):
+        """Where the dragged module would slot in, from the ghost's centre.
+
+        Compared against the *other* modules' centres, so the answer is an
+        index into the list rather than a free position - which is what makes
+        overlap impossible.
+        """
+        cx = self._drag_pos[0] + self._drag_origin[2] / 2
+        cy = self._drag_pos[1] + self._drag_origin[3] / 2
+        index = 0
+        for it in self._grid_layout:
+            if it["id"] == self._drag_block:
+                continue
+            rx, ry, rw, rh = self._grid_rects[it["id"]]
+            past = (cy > ry + rh / 2) or (
+                abs(cy - (ry + rh / 2)) < rh / 2 and cx > rx + rw / 2)
+            if past:
+                index += 1
+        return index
+
+    def _grip_release(self, _event=None):
+        name = getattr(self, "_drag_block", None)
+        if not name:
+            return
+        target = self._drop_index()
+        self._grip_cleanup()
+        layout = [dict(it) for it in self._grid_layout if it["id"] != name]
+        layout.insert(target, {"id": name, "span": self._span_of(name)})
+        self._relayout_grid(layout)
+
+    def _grip_cancel(self):
+        """Esc mid-drag: put it back exactly where it was."""
+        name = getattr(self, "_drag_block", None)
+        if not name:
+            return
+        self._grip_cleanup()
+        self.bg.itemconfigure(f"blk_{name}", state="normal")
+
+    def _grip_cleanup(self):
+        for attr in ("_drag_ghost", "_drop_marker"):
+            item = getattr(self, attr, None)
+            if item:
+                try:
+                    self.bg.delete(item)
+                except Exception:
+                    pass
+            setattr(self, attr, None)
         self._drag_block = None
 
-        def centre(bn):
-            r = self._grid_rects[bn]
-            top = self._drag_live_y if bn == name else r[1]
-            return top + r[3] / 2
+    # ---- keyboard parity ----
+    # "Handle is focusable. Space picks up, arrows move, Space drops, Esc
+    # cancels. A pointer-only implementation is incomplete."
+    def _customise_key(self, event):
+        if not getattr(self, "_customising", False):
+            return
+        order = [it["id"] for it in self._grid_layout]
+        if not order:
+            return
+        held = getattr(self, "_kbd_held", None)
+        focus = getattr(self, "_kbd_focus", order[0])
+        if focus not in order:
+            focus = order[0]
 
-        # Stable sort by vertical centre: a side-by-side pair shares a centre, so
-        # their left-right order (list order) is preserved.
-        new_layout = sorted(self._grid_layout, key=lambda it: centre(it["name"]))
-        self._relayout_grid(new_layout)
+        if event.keysym == "space":
+            self._kbd_held = None if held else focus
+            self._kbd_focus = focus
+            self._highlight_handle(focus, picked=bool(self._kbd_held))
+            return "break"
+        if event.keysym not in ("Up", "Down", "Left", "Right"):
+            return None
+        step = -1 if event.keysym in ("Up", "Left") else 1
+        index = order.index(focus)
+        if held:
+            new_index = max(0, min(len(order) - 1, index + step))
+            if new_index == index:
+                return "break"
+            layout = [dict(it) for it in self._grid_layout]
+            layout.insert(new_index, layout.pop(index))
+            self._kbd_focus = held
+            self._relayout_grid(layout)
+            self._highlight_handle(held, picked=True)
+        else:
+            self._kbd_focus = order[max(0, min(len(order) - 1, index + step))]
+            self._highlight_handle(self._kbd_focus, picked=False)
+        return "break"
+
+    def _highlight_handle(self, name, picked):
+        for key, parts in self._grips.items():
+            strip = parts.get("label")
+            if strip is None:
+                continue
+            focused = key == name
+            self.bg.itemconfigure(
+                strip, fill=(EMBER if picked else NAV_ACTIVE_TEXT) if focused else MUTED)
 
     def _reset_dashboard(self):
         self._relayout_grid([dict(it) for it in DEFAULT_GRID])
@@ -2813,7 +3208,10 @@ class AppWindow:
         # a half-width grid slot. Every tile's contents are laid out relative to
         # its own (tx, ty), so both arrangements just work.
         gap = 14
-        cols = 4 if w >= 480 else 2
+        # Four across only when there is genuinely room. At half width the four
+        # tiles came out ~110px each and their captions clipped, which is how a
+        # stray letter ended up floating outside the module.
+        cols = 4 if w >= 700 else 2
         tw = (w - gap * (cols - 1)) / cols
         h = 92
 
@@ -2979,7 +3377,11 @@ class AppWindow:
         # Rounded plate + a flat square textbox inset inside it (see the note in
         # the old build - a tall widget can't match a sheen gradient's corners).
         box_x, box_y = x0 + 10, py + self.ACTIVITY_HEADER_H + 6
-        box_w, box_h = w - 20, panel_h - self.ACTIVITY_HEADER_H - 16
+        box_w = max(40, w - 20)
+        # Edit mode borrows height from the last row for the handle strips, and
+        # a narrow module can leave nothing under the header bar. Clamp rather
+        # than hand PIL a negative size - the panel just shows fewer rows.
+        box_h = max(30, panel_h - self.ACTIVITY_HEADER_H - 16)
         box_r = 10
         backing = make_solid_tile(self._S(box_w), self._S(box_h), LOG_BG, radius=self._S(box_r))
         backing_photo = to_photo(backing)
@@ -3367,9 +3769,13 @@ class AppWindow:
         # Only enablement here - the label, binding and emphasis belong to
         # _set_hero_state, which is the one place the state enum is expressed.
         # "Retry now" has to stay clickable precisely when OBS is unreachable.
-        self._set_enabled(self.record_toggle_btn,
-                          self.obs.connected or state == "disconnected",
-                          text_color=self._hero_primary_text)
+        # Not while customising: "Content while editing: pointer-events:none".
+        # The poll would otherwise re-enable the hero's button a beat after
+        # edit mode had deliberately made it inert.
+        if not getattr(self, "_customising", False):
+            self._set_enabled(self.record_toggle_btn,
+                              self.obs.connected or state == "disconnected",
+                              text_color=self._hero_primary_text)
 
         # A second is right when you're watching the timer tick; while hidden in
         # the tray nothing renders it, so back off. The monitor thread drives the
