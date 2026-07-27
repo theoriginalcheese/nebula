@@ -57,6 +57,9 @@ GROUPS = (
      "Tools \u2192 WebSocket Server Settings."),
     ("recording", "Recording",
      "Where clips land, and how eagerly Nebula starts and pauses them."),
+    ("replay", "Instant replay",
+     "OBS keeps the last few seconds in RAM. One key writes them to disk, with "
+     "no session recording running. Replays never get auto-culled."),
     ("hotkey", "Hotkey",
      "One global key toggles monitoring from anywhere, even mid-game."),
     ("gamesync", "Game list sync",
@@ -98,6 +101,31 @@ FIELDS = (
     Field("poll_interval_seconds", "Poll interval", "int", "recording",
           minimum=1, maximum=60,
           hint="Seconds between foreground-window checks."),
+
+    # ---- Instant replay (7a) ----
+    Field("replay_enabled", "Instant replay", "bool", "replay",
+          hint="Arm OBS's replay buffer so the last few seconds can be saved "
+               "on a key press."),
+    Field("replay_seconds", "Buffer length", "int", "replay",
+          minimum=10, maximum=300,
+          hint="Seconds held in RAM. Roughly (bitrate ÷ 8) × seconds "
+               "× 1.1 megabytes — shown live on the dashboard module."),
+    Field("replay_hotkey", "Save key", "text", "replay",
+          hint="Pressed anywhere, including inside a game. Bound by scan code, "
+               "so it works whatever the keyboard layout."),
+    Field("replay_hotkey_scancode", "Save key scan code", "optional_int", "replay",
+          minimum=0, maximum=65535,
+          hint="Optional. Binds this exact physical key rather than resolving "
+               "the name (67 is F9). Blank = bind by name."),
+    Field("replay_subfolder", "Replay folder", "text", "replay",
+          hint="Created inside each game's folder. Replays land here rather "
+               "than beside full recordings."),
+    Field("replay_arm_with_monitoring", "Arm with monitoring", "bool", "replay",
+          hint="Arm the buffer whenever monitoring is on, rather than waiting "
+               "for a game to be detected."),
+    Field("replay_only_for_games", "Games only", "bool", "replay",
+          hint="Keep the buffer disarmed while the foreground app isn't a "
+               "game, so it isn't holding your desktop in RAM."),
     Field("keep_alive_audio_processes", "Audio keep-alive", "list", "recording",
           hint="Comma-separated executables. While one of them is producing "
                "sound (friends talking in Discord), recording won't auto-pause "

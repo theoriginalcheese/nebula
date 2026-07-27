@@ -82,6 +82,14 @@ def build_tray_icon(app_window, icon_path):
             on_tk(app_window._toggle_pause), visible=recording),
         pystray.MenuItem("Stop recording", on_tk(app_window._toggle_record),
                          visible=recording),
+        # 7a lists the tray among the surfaces that can save a replay. Shown
+        # only while the buffer is actually armed - an item that can only tell
+        # you it won't work is worse than no item.
+        pystray.MenuItem(
+            lambda item: f"Save the last {app_window.replay.seconds}s",
+            on_tk(app_window._save_replay),
+            visible=lambda _item: bool(getattr(app_window, "replay", None))
+            and app_window.replay.armed),
         pystray.MenuItem(
             lambda item: "Monitoring on" if status()["monitoring"] else "Monitoring off",
             on_tk(app_window._toggle_monitoring),

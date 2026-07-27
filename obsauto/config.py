@@ -16,6 +16,17 @@ DEFAULTS = {
     # catches junk from a game window that briefly flickered rather than an
     # actual play session.
     "min_clip_seconds": 10,
+    # ---- instant replay (spec 7a) ----
+    # OBS's own rolling RAM buffer. Nebula arms it, asks for the save, and
+    # files the result into <recording_root>/<game>/<replay_subfolder>/.
+    # Replays deliberately ignore min_clip_seconds - they're intentional.
+    "replay_enabled": True,
+    "replay_seconds": 30,               # 10-300
+    "replay_hotkey": "f9",
+    "replay_hotkey_scancode": 67,       # bound by scan code, like the toggle
+    "replay_subfolder": "Replays",
+    "replay_arm_with_monitoring": True,
+    "replay_only_for_games": True,
     # Legacy folder-based sync for games.json / steam_appid_cache.json (was
     # OneDrive). Superseded by the GitHub sync below, which is instant and
     # reliable; leave blank. Kept so an old config still resolves.

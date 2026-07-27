@@ -16,6 +16,8 @@ from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 from . import classifier as classifier_module
 from . import design_v3 as dv
+from . import replay as replay_mod
+from . import session_log
 from . import settings_spec
 from .obs_client import OBSClient, OBSError
 from .monitor import Monitor, ensure_obs_running, is_obs_running, list_visible_windows
@@ -249,8 +251,9 @@ def format_video_label(settings):
 
 # Rearrangeable dashboard blocks. Heights are fixed so reordering is a pure
 # translation of each block - no rebuilding, nothing to resize.
-DEFAULT_BLOCKS = ("hero", "stats", "activity")
-BLOCK_LABELS = {"hero": "Now recording", "stats": "Stats", "activity": "Activity"}
+DEFAULT_BLOCKS = ("hero", "stats", "replay", "activity")
+BLOCK_LABELS = {"hero": "Live session", "stats": "Session stats",
+                "replay": "Instant replay", "activity": "Activity"}
 BLOCK_GAP = 18
 GRID_COL_GAP = 18
 HERO_H = 300
@@ -263,10 +266,18 @@ HERO_H = 300
 BLOCK_HEIGHTS = {
     "hero": {12: HERO_H, 6: HERO_H},   # hero is full-width only; 6 is never used
     "stats": {12: 92, 6: 198},
+    "replay": {12: 236, 6: 236},       # 7a: "486x236, half width"
     "activity": {12: 246, 6: 246},
 }
 # 6.8: "Persisted as dashboard_layout[] - {id, span}", span in grid columns.
-DEFAULT_GRID = [{"id": b, "span": dv.GRID_COLS} for b in DEFAULT_BLOCKS]
+# 7g: "Default layout puts replay beside the hero card" - the hero is full
+# width, so beside it means the row directly under, sharing with the stats.
+DEFAULT_GRID = [
+    {"id": "hero", "span": 12},
+    {"id": "stats", "span": 6},
+    {"id": "replay", "span": 6},
+    {"id": "activity", "span": 12},
+]
 
 
 # ---- DPI / UI scaling ----------------------------------------------------
@@ -448,6 +459,14 @@ class AppWindow:
             on_notify=self._show_notification, on_connection_change=self._on_connection_change,
             offloader=offloader,
         )
+        # Instant replay (7a). OBS holds the video; this arms the buffer and
+        # files what comes out. The event hook is how the saved path arrives -
+        # SaveReplayBuffer's own response doesn't carry it.
+        self.replay = replay_mod.ReplayBuffer(
+            self.obs, config, on_log=self._log,
+            on_saved=self._on_replay_saved, on_state=self._on_replay_state)
+        self.obs.on_event = self.replay.handle_event
+        self._last_bitrate_mbps = None   # measured, for the RAM estimate
         # The v3 toast is a SINGLE SLOT: at most one window, ever, reused in
         # place. See _show_notification / _toast_replace.
         self._toast = None
@@ -1445,15 +1464,21 @@ class AppWindow:
         heights = [max(BLOCK_HEIGHTS[k][12 if s == 12 else 6] for k, s in r) + strip
                    for r in rows]
 
-        # The default stack fills the content area exactly, so three handle
-        # strips would push the last module 78px off the bottom. Edit mode
-        # borrows that space from the last row rather than overflowing - it is
-        # the one that can give it up (the activity panel just shows fewer
-        # lines), and a module you cannot see is worse than a shorter one.
+        # The window is a fixed 808px and the modules' natural heights can
+        # exceed it - four modules do, and so do three once edit mode adds a
+        # handle strip to each. Rather than letting the last one fall off the
+        # bottom, rows give up height from the bottom upwards until it fits.
+        # The bottom rows are the flexible ones (a log panel just shows fewer
+        # lines); a module you cannot see at all is worse than a shorter one.
         available = (HEIGHT - MARGIN) - self._content_y0()
+        floor = dv.HANDLE_STRIP_H + 40
         overflow = sum(heights) + BLOCK_GAP * max(0, len(rows) - 1) - available
-        if overflow > 0 and heights:
-            heights[-1] = max(dv.HANDLE_STRIP_H + 40, heights[-1] - overflow)
+        for i in range(len(heights) - 1, -1, -1):
+            if overflow <= 0:
+                break
+            give = min(overflow, max(0, heights[i] - floor))
+            heights[i] -= give
+            overflow -= give
 
         rects = {}
         y = self._content_y0()
@@ -1474,6 +1499,8 @@ class AppWindow:
         builders = {
             "hero": lambda r: self._build_hero(r[0], r[1] + strip, r[2]),
             "stats": lambda r: self._build_stats(r[0], r[1] + strip, r[2]),
+            "replay": lambda r: self._build_replay(r[0], r[1] + strip, r[2],
+                                                   r[3] - strip),
             "activity": lambda r: self._build_activity(r[0], r[1] + strip, r[2],
                                                        r[3] - strip),
         }
@@ -3334,6 +3361,114 @@ class AppWindow:
         self.bg.create_text(x + 34, y + 20, anchor="w", text=self._track(label),
                             fill=FAINT, font=dv.type_font("eyebrow"))
 
+    # ---- instant replay module (7a) ----
+    # "Dashboard module - 486x236, half width." Registers in the 6.8 catalogue
+    # like any other module, which is what 7g means by "7a, 7b and 7c each
+    # register in the module catalogue from 6h".
+    def _build_replay(self, x0, y, w, h):
+        self._card(x0, y, w, h, kind="panel")
+        pad = 16
+        self.bg.create_text(x0 + pad, y + 22, anchor="w",
+                            text=self._track("Instant replay"),
+                            fill=FAINT, font=dv.type_font("eyebrow"))
+
+        # The armed badge. Ember, because an armed buffer is a live thing -
+        # the spec pulses it, which would be a per-frame canvas repaint, so it
+        # is a static ember badge and the state reads from the fill instead.
+        self._replay_badge = self._glass(x0 + w - pad - 104, y + 12, 104, 22,
+                                         tint=EMBER, radius=dv.RADIUS_CONTROL,
+                                         tint_alpha=44, border_hex=EMBER,
+                                         border_alpha=90)
+        self._replay_badge_text = self.bg.create_text(
+            x0 + w - pad - 52, y + 23, text=self._track("Disarmed"),
+            fill=MUTED, font=dv.type_font("eyebrow"))
+
+        self._replay_len_id = self.bg.create_text(
+            x0 + pad, y + 54, anchor="w", text="", fill=TEXT,
+            font=dv.font(19, 500))
+        self._replay_ram_id = self.bg.create_text(
+            x0 + pad, y + 78, anchor="w", text="", fill=MUTED,
+            font=dv.type_font("meta"))
+
+        key = (self.config.get("replay_hotkey") or "").upper()
+        if key:
+            self._draw_keycap(x0 + w - pad - 22, y + 62, key)
+        self.bg.create_text(
+            x0 + pad, y + 104, anchor="w",
+            text=f"Save the last {self.replay.seconds} seconds",
+            fill=TEXT_SOFT, font=dv.type_font("body"))
+        self.bg.create_text(
+            x0 + pad, y + 124, anchor="w", text="Tray menu  ·  mini overlay",
+            fill=FAINT, font=dv.type_font("meta"))
+
+        self._fading_rule(x0 + pad, y + 142, w - pad * 2)
+        self.bg.create_text(x0 + pad, y + 160, anchor="w",
+                            text=self._track("Saved this session"),
+                            fill=FAINT, font=dv.type_font("eyebrow"))
+        self._replay_rows_y = y + 178
+        self._replay_rows_w = w - pad * 2
+        self._replay_rows = []
+        self._refresh_replay_module()
+
+    def _refresh_replay_module(self):
+        if getattr(self, "_replay_badge", None) is None:
+            return
+        armed = self.replay.armed
+        # "Armed: ember badge · Disarmed: neutral badge, key dimmed."
+        self._regen_glass(
+            self._replay_badge, *self._replay_badge_geom(),
+            tint=EMBER if armed else dv.GROUND, radius=dv.RADIUS_CONTROL,
+            tint_alpha=44 if armed else 120,
+            border_hex=EMBER if armed else EDGE, border_alpha=90 if armed else 40)
+        self.bg.itemconfigure(self._replay_badge_text,
+                              text=self._track("Buffer armed" if armed else "Disarmed"),
+                              fill=EMBER if armed else MUTED)
+        self.bg.itemconfigure(self._replay_len_id, text=f"{self.replay.seconds}s")
+
+        # "Show it live next to the duration so raising the buffer has a
+        # visible cost. Warn above 2 GB." Nothing is shown until a real bitrate
+        # exists - an estimate from a guessed bitrate is a made-up number.
+        mb = replay_mod.ram_estimate_mb(self._last_bitrate_mbps, self.replay.seconds)
+        if mb is None:
+            self.bg.itemconfigure(self._replay_ram_id, text="", fill=MUTED)
+        else:
+            over = mb > replay_mod.RAM_WARN_MB
+            self.bg.itemconfigure(
+                self._replay_ram_id,
+                text=f"~{mb / 1024:.1f} GB RAM" if mb >= 1024 else f"~{mb:.0f} MB RAM",
+                fill=EMBER if over else MUTED)
+
+        for item in self._replay_rows:
+            self.bg.delete(item)
+        self._replay_rows = []
+        recent = list(reversed(self.replay.saved_this_session))[:2]
+        if not recent:
+            self._replay_rows.append(self.bg.create_text(
+                self._content_x0() + 16, self._replay_rows_y, anchor="nw",
+                text="Nothing saved yet." if armed
+                     else "Arm the buffer to start holding the last few seconds.",
+                fill=FAINT, font=dv.type_font("meta")))
+        else:
+            for i, (path, when) in enumerate(recent):
+                age = max(0, int((time.time() - when) // 60))
+                self._replay_rows.append(self.bg.create_text(
+                    self._content_x0() + 16, self._replay_rows_y + i * 20, anchor="nw",
+                    text=os.path.basename(path), fill=TEXT_SOFT,
+                    font=dv.font(11, mono=True)))
+                self._replay_rows.append(self.bg.create_text(
+                    self._content_x0() + 16 + self._replay_rows_w,
+                    self._replay_rows_y + i * 20, anchor="ne",
+                    text=f"{self.replay.seconds}s  ·  {age}m ago" if age
+                         else f"{self.replay.seconds}s  ·  just now",
+                    fill=FAINT, font=dv.type_font("meta")))
+        for item in self._replay_rows:
+            self.bg.addtag_withtag("blk_replay", item)
+            self.bg.addtag_withtag("view_dashboard", item)
+
+    def _replay_badge_geom(self):
+        x, y, w, _h = self._grid_rects.get("replay", (0, 0, 0, 0))
+        return (x + w - 16 - 104, y + 12, 104, 22)
+
     # ---- activity log (6.4) ----
     # "Currently a tall empty box with the text clipped at the top and a
     # scrollbar. It is a fixed-height panel with a header bar, newest entry
@@ -3529,6 +3664,29 @@ class AppWindow:
                               text="Monitoring on" if on else "Monitoring off",
                               fill=NAV_ACTIVE_TEXT if on else TEXT_SOFT)
         self.bg.itemconfigure(self._mon_icon, fill=ACCENT if on else FAINT)
+        self._sync_replay_arming()
+
+    def _sync_replay_arming(self):
+        """Arm or disarm the buffer from the two switches 7a names.
+
+        "StartReplayBuffer on game detected, or with monitoring" /
+        "StopReplayBuffer: monitoring off, or non-game focus". Runs on a worker
+        because every one of those is a blocking socket round-trip, and this is
+        called from state changes on the Tk thread.
+        """
+        if not getattr(self, "replay", None) or not self.replay.enabled:
+            return
+        want = bool(self._monitoring_on) and self.obs.connected
+        if want and self.config.get("replay_only_for_games", True):
+            want = bool(self._current_game)
+        if not self.config.get("replay_arm_with_monitoring", True):
+            want = want and bool(self._current_game)
+        if want == self.replay.armed:
+            return
+        game = self._current_game
+        threading.Thread(
+            target=(lambda: self.replay.arm(game)) if want else self.replay.disarm,
+            daemon=True).start()
 
     # ---- logging ----
     def _log(self, message):
@@ -3714,6 +3872,11 @@ class AppWindow:
             return
         mbits = (d_bytes * 8.0) / (d_ms / 1000.0) / 1_000_000.0
         self.bg.itemconfigure(self._readouts["bitrate"][1], text=f"{mbits:.1f} Mb/s")
+        # 7a's RAM estimate is (bitrate / 8) x seconds x 1.1, and this is the
+        # only place a real bitrate exists. Until a recording has produced one,
+        # the module shows no estimate rather than one from a guessed bitrate.
+        self._last_bitrate_mbps = mbits
+        self._refresh_replay_module()
 
     def _poll_obs_status(self):
         """Source of truth for the timer/storage/pulse is OBS's own
@@ -4415,6 +4578,11 @@ class AppWindow:
                 )
                 self._tray_game = game
                 self._current_game = game
+                # The replay buffer follows the detected game: it files into
+                # that game's folder, and "replay_only_for_games" keeps it from
+                # holding the desktop in RAM.
+                self.replay.set_game(game)
+                self._sync_replay_arming()
                 # Refresh the hero in place so the scene caption picks up the
                 # new title (the state itself is unchanged, so this is a no-op
                 # visually apart from that caption).
@@ -4722,6 +4890,35 @@ class AppWindow:
 
         hotkey.register(binding, on_press, suppress=True, on_log=self._log,
                         scancode=self.config.get("toggle_hotkey_scancode"))
+
+        # 7a's save key. Bound by scan code for the same reason as the toggle:
+        # a character can resolve to several scan codes, and pinning it is what
+        # stops the hook swallowing the wrong key system-wide.
+        if self.config.get("replay_enabled", True):
+            hotkey.register(
+                self.config.get("replay_hotkey", "f9"),
+                lambda: self.root.after(0, self._save_replay),
+                suppress=False, on_log=self._log,
+                scancode=self.config.get("replay_hotkey_scancode"))
+
+    def _save_replay(self):
+        """Save the last N seconds. Wired to the hotkey, tray and overlay."""
+        if not self.replay.save():
+            self._toast_replace("error", "Nothing to save — the buffer isn't armed")
+
+    def _on_replay_saved(self, path, game):
+        """Called from OBS's receive thread once the file has landed."""
+        self._ui(lambda: self._replay_saved_ui(path, game))
+
+    def _replay_saved_ui(self, path, game):
+        # "Confirmation toast - 360 wide: Last 30s saved / <game>/Replays/<file>"
+        shown = os.path.join(game, self.replay.subfolder, os.path.basename(path))
+        self._toast_replace("start", f"Last {self.replay.seconds}s saved", None)
+        self._log(f"[Replay] {shown}")
+        self._refresh_replay_module()
+
+    def _on_replay_state(self, armed):
+        self._ui(self._refresh_replay_module)
 
     def _toggle_monitoring(self):
         """Flip monitoring on/off - the fan-key action. Turning it OFF stops

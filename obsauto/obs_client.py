@@ -44,6 +44,9 @@ class OBSClient:
         # Wall-clock ms for the last successful Hello→Identified handshake.
         # The Settings pane and titlebar read this; never invent a figure.
         self.last_handshake_ms = None
+        # Called as on_event(event_type, data) from the receive thread for every
+        # OBS event. Set by whoever cares; nothing here interprets them.
+        self.on_event = None
 
     def log(self, msg):
         self.on_log(msg)
@@ -133,7 +136,17 @@ class OBSClient:
                     ev["response"] = msg["d"]
                     ev["event"].set()
             elif op == OP_REEVENT:
-                pass  # events (RecordStateChanged etc.) not currently consumed
+                # 7a needs ReplayBufferSaved: OBS writes the clip to its own
+                # output directory and only then tells you where, so the path
+                # arrives as an event rather than as a response to the save.
+                # Runs on this receive thread - handlers must marshal.
+                handler = self.on_event
+                if handler:
+                    try:
+                        handler(msg["d"].get("eventType"),
+                                msg["d"].get("eventData") or {})
+                    except Exception as exc:
+                        self.log(f"[OBS] Event handler failed: {exc}")
         self._identified.clear()
 
     # ---- requests ----
@@ -242,3 +255,31 @@ class OBSClient:
     def get_current_program_scene(self):
         data = self.call("GetCurrentProgramScene")
         return data.get("currentProgramSceneName") or data.get("sceneName") or ""
+
+    # ---- replay buffer (spec 7a) ----
+    # The buffer is OBS's own rolling window in RAM. Nebula's job is only to arm
+    # it, ask for a save, and file the result - it never holds video itself.
+
+    def start_replay_buffer(self):
+        self.call("StartReplayBuffer")
+
+    def stop_replay_buffer(self):
+        self.call("StopReplayBuffer")
+
+    def save_replay_buffer(self):
+        """Ask OBS to write the buffer out.
+
+        The path is NOT in this response - OBS finishes the file afterwards and
+        announces it in a ReplayBufferSaved event, which is why on_event exists.
+        """
+        self.call("SaveReplayBuffer")
+
+    def get_replay_buffer_status(self):
+        return bool(self.call("GetReplayBufferStatus").get("outputActive"))
+
+    def set_profile_parameter(self, category, name, value):
+        self.call("SetProfileParameter", {
+            "parameterCategory": category,
+            "parameterName": name,
+            "parameterValue": str(value),
+        })
