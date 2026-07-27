@@ -347,6 +347,38 @@ check("only dashboard modules are in the dashboard widget list",
 app._show_view("dashboard")
 settle(120)
 
+# ---------------------------------------------------------------------------
+# Every visit to Clips spawned another ffprobe storm
+# ---------------------------------------------------------------------------
+# Symptom: _queue_thumb_work started a raw thread per render, each launching an
+# ffprobe per clip. Flicking between panes stacked 25 threads and dozens of
+# concurrent subprocesses. One in flight is enough - the next render picks up
+# whatever it didn't reach.
+import threading
+
+from obsauto import thumbs as thumbs_mod
+
+_real_duration = thumbs_mod.duration_of
+thumbs_mod.duration_of = lambda p: (time.sleep(0.02), 60.0)[1]
+app._ui = lambda fn: None          # the marshal isn't what's under test here
+app._clip_durations.clear()
+clips = [{"path": f"C:/probe/c{i}.mkv", "name": f"c{i}.mkv", "game": "G",
+          "rel": f"G/c{i}.mkv", "size": 10 ** 6, "mtime": time.time()}
+         for i in range(30)]
+base_threads = threading.active_count()
+peak = base_threads
+for _ in range(20):
+    app._queue_thumb_work(clips, "C:/probe")
+    peak = max(peak, threading.active_count())
+check("repeated Clips renders don't stack scan threads",
+      peak - base_threads <= 2, f"+{peak - base_threads} threads over 20 renders")
+deadline = time.time() + 8
+while time.time() < deadline and app._thumb_scan_busy:
+    time.sleep(0.05)
+check("the single-flight guard always releases", not app._thumb_scan_busy,
+      "still busy after 8s")
+thumbs_mod.duration_of = _real_duration
+
 check("no callback exceptions overall", not callback_errors,
       callback_errors[0].strip().splitlines()[-1] if callback_errors else "clean")
 

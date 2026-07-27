@@ -1256,7 +1256,7 @@ class AppWindow:
         for item in (hit, self._mon_icon, self._mon_label):
             self.bg.tag_bind(item, "<Button-1>", lambda _e: self._toggle_monitoring())
             self.bg.tag_bind(item, "<Enter>", lambda _e: self.bg.configure(cursor="hand2"))
-            self.bg.tag_bind(item, "<Leave>", lambda _e: self.bg.configure(cursor=""))
+            self.bg.tag_bind(item, "<Leave>", lambda _e=None: self.bg.configure(cursor=""))
 
         # ---- right side: OBS connection, then the window controls ----
         # Hit target >= 30px (spec). Diameter 30 -> radius 15.
@@ -1702,13 +1702,13 @@ class AppWindow:
             # "Grab target: the strip only - never the whole card."
             for grab in (strip, label):
                 self.bg.tag_bind(grab, "<ButtonPress-1>",
-                                 lambda e, n=name: self._grip_press(e, n))
+                                 lambda e=None, n=name: self._grip_press(e, n))
                 self.bg.tag_bind(grab, "<B1-Motion>", self._grip_drag)
                 self.bg.tag_bind(grab, "<ButtonRelease-1>", self._grip_release)
                 self.bg.tag_bind(grab, "<Enter>",
-                                 lambda _e: self.bg.configure(cursor="fleur"))
+                                 lambda _e=None: self.bg.configure(cursor="fleur"))
                 self.bg.tag_bind(grab, "<Leave>",
-                                 lambda _e: self.bg.configure(cursor=""))
+                                 lambda _e=None: self.bg.configure(cursor=""))
 
             # "The segmented control lives in the handle strip - never a
             # floating chip over the header. Three widths only."
@@ -1729,7 +1729,7 @@ class AppWindow:
                     for seg_item in (seg, text):
                         self.bg.tag_bind(
                             seg_item, "<Button-1>",
-                            lambda _e, n=name, s=span: self._set_block_span(n, s))
+                            lambda _e=None, n=name, s=span: self._set_block_span(n, s))
                     parts[f"seg{span}"] = seg
                     parts[f"segtext{span}"] = text
 
@@ -1739,7 +1739,7 @@ class AppWindow:
                 x + w - (8 if name == "hero" else 128), y + dv.HANDLE_STRIP_H / 2,
                 text=ICON_GLYPHS["x"], fill=MUTED, font=(ICON_FONT, -9), anchor="e")
             self.bg.tag_bind(close, "<Button-1>",
-                             lambda _e, n=name: self._remove_module(n))
+                             lambda _e=None, n=name: self._remove_module(n))
             parts["close"] = close
 
             for canvas_item in parts.values():
@@ -1931,7 +1931,14 @@ class AppWindow:
                                     anchor="nw", image=photo)
         return item
 
-    def _grip_drag(self, event):
+    def _grip_drag(self, event=None):
+        # Every handler bound in customise mode takes its event optionally.
+        # Tkinter's _substitute passes the arguments through *raw* when their
+        # count doesn't match its format, so a binding Tk invokes without
+        # substitutions arrives with none at all - which crashed the stress
+        # test's log-flood phase intermittently. None of these read the event.
+        if event is None:
+            return
         name = getattr(self, "_drag_block", None)
         if not name:
             return
@@ -2289,18 +2296,29 @@ class AppWindow:
         """
         if not thumbs.available() or not clips:
             return
+        # Single-flight. Every visit to the Clips pane calls this, and each run
+        # launches an ffprobe per clip - without the guard, flicking between
+        # panes stacked a thread per visit and left dozens of ffprobe processes
+        # racing each other. One in flight is enough; the next render picks up
+        # whatever this one didn't reach.
+        if getattr(self, "_thumb_scan_busy", False):
+            return
+        self._thumb_scan_busy = True
         self.thumbs.recording_root = root_dir
         newest = clips[:40]      # "oldest last": the visible page first
 
         def worker():
-            for clip in newest:
-                if clip["path"] in self._clip_durations:
-                    continue
-                seconds = thumbs.duration_of(clip["path"])
-                if seconds:
-                    self._clip_durations[clip["path"]] = seconds
-                    self._ui(lambda p=clip["path"]: self._apply_clip_length(p))
-            self.thumbs.backfill([c["path"] for c in newest])
+            try:
+                for clip in newest:
+                    if clip["path"] in self._clip_durations:
+                        continue
+                    seconds = thumbs.duration_of(clip["path"])
+                    if seconds:
+                        self._clip_durations[clip["path"]] = seconds
+                        self._ui(lambda p=clip["path"]: self._apply_clip_length(p))
+                self.thumbs.backfill([c["path"] for c in newest])
+            finally:
+                self._thumb_scan_busy = False
 
         threading.Thread(target=worker, daemon=True).start()
 
@@ -3082,7 +3100,7 @@ class AppWindow:
             self.bg.tag_bind(item, "<Button-1>",
                              lambda _e, k=key: self._show_settings_group(k))
             self.bg.tag_bind(item, "<Enter>", lambda _e: self.bg.configure(cursor="hand2"))
-            self.bg.tag_bind(item, "<Leave>", lambda _e: self.bg.configure(cursor=""))
+            self.bg.tag_bind(item, "<Leave>", lambda _e=None: self.bg.configure(cursor=""))
         return {"tile": tile, "text": label}
 
     def _show_settings_group(self, key):
@@ -4271,7 +4289,7 @@ class AppWindow:
                                        fill="", outline="")
         self.bg.tag_bind(hit, "<Button-1>", lambda _e, s=span: self._select_span(s))
         self.bg.tag_bind(hit, "<Enter>", lambda _e: self.bg.configure(cursor="hand2"))
-        self.bg.tag_bind(hit, "<Leave>", lambda _e: self.bg.configure(cursor=""))
+        self.bg.tag_bind(hit, "<Leave>", lambda _e=None: self.bg.configure(cursor=""))
         self._ribbon_items.append(hit)
 
     def _ribbon_axis(self, tx, ty, tw, start, end):
