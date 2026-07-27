@@ -47,8 +47,8 @@ because they are behavioural, not visual, so nothing inherits from them.
 | 6 | `sessions.jsonl` event log (7g step 1) | **done** — landed with step 4 |
 | 7 | 7a Instant replay | **done** — `5a20994` |
 | 8 | 7f Thumbnails + Length (ffmpeg) | **done** — `3c42068` |
-| 9 | 7b Session ribbon | todo |
-| 10 | 7c Storage forecast | todo |
+| 9 | 7b Session ribbon | **done** — `056bf6b` |
+| 10 | 7c Storage forecast | **done** — `056bf6b` (cull action still to wire) |
 | 11 | 7e Command palette | todo |
 | 12 | 7d Per-game profiles | todo |
 | 13 | Mini overlay buttons, exe rebuild, docs | todo |
