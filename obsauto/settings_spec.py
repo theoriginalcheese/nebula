@@ -157,6 +157,9 @@ FIELDS = (
     Field("toggle_hotkey", "Toggle key", "text", "hotkey",
           hint="A keyboard-package binding such as f12 or ctrl+alt+r. Also "
                "what's drawn on the keycap in the nav rail. Blank = no hotkey."),
+    Field("palette_hotkey", "Command palette", "text", "hotkey",
+          hint="Opens the palette from anywhere, including over a game. "
+               "Blank = no global key."),
     Field("toggle_hotkey_scancode", "Scan code", "optional_int", "hotkey",
           minimum=0, maximum=65535,
           hint="Optional. Binds this exact physical key instead of resolving "

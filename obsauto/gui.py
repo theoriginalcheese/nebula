@@ -17,6 +17,7 @@ from PIL import Image, ImageDraw, ImageFilter, ImageFont
 from . import classifier as classifier_module
 from . import design_v3 as dv
 from . import forecast
+from . import palette
 from . import replay as replay_mod
 from . import session_log
 from . import thumbs
@@ -535,6 +536,10 @@ class AppWindow:
         self._tray_icon_state = None  # last icon pushed, so we only swap on change
         self._is_recording = False  # tracked from OBS's own GetRecordStatus, not a client-side timestamp
         self._is_paused = False
+        # Defined before any builder runs: _set_hero_state consults it through
+        # _hero_vis, and the dashboard's builder can reach it before
+        # _build_views has finished assigning views.
+        self._current_view = "dashboard"
         self._customising = False     # 6.8 edit mode; owns the handle strips and grid overlay
         self._drag_block = None
         self._poll_job = None         # the single _poll_obs_status timer, so it can be pulled forward
@@ -1397,7 +1402,7 @@ class AppWindow:
                 self.bg.addtag_withtag(f"view_{name}", item)
         self._composite = self._base_composite
         self._views = [name for name, _ in builders]
-        self._current_view = None
+        self._current_view = None      # force the first _show_view to do its work
         self._show_view("dashboard")
 
     def _show_view(self, name):
@@ -3322,6 +3327,21 @@ class AppWindow:
         img.putalpha(mask)
         return img
 
+    def _hero_vis(self, want_visible):
+        """"normal" only if the hero is actually on screen.
+
+        _set_hero_state un-hides the readouts and the transport buttons, and
+        _poll_obs_status calls it once a second - so while a recording ran, the
+        elapsed timer, file size, bitrate and the Pause button reappeared on
+        top of whatever pane you had navigated to. _show_view hides them once;
+        the very next poll put them straight back.
+
+        Every visibility change on a hero item goes through here, so the answer
+        is always "is the dashboard showing?" rather than a hidden state that
+        one code path happens to respect.
+        """
+        return "normal" if (want_visible and self._current_view == "dashboard") else "hidden"
+
     def _set_hero_state(self, state):
         """Swap the hero card between the four v3 states from one enum.
 
@@ -3372,8 +3392,8 @@ class AppWindow:
         # "Idle - neutral tint, no timer, no scene preview."
         show_readout = state in ("recording", "paused")
         for cap, val in self._readouts.values():
-            self.bg.itemconfigure(cap, state="normal" if show_readout else "hidden")
-            self.bg.itemconfigure(val, state="normal" if show_readout else "hidden")
+            self.bg.itemconfigure(cap, state=self._hero_vis(show_readout))
+            self.bg.itemconfigure(val, state=self._hero_vis(show_readout))
         # "Paused - accent tint, timer frozen at 60% opacity." No alpha on a
         # canvas item, so the 60% is composited against the card core.
         self.bg.itemconfigure(
@@ -3383,7 +3403,7 @@ class AppWindow:
 
         self.bg.itemconfigure(
             self._hero_hint_id,
-            state="hidden" if show_readout else "normal",
+            state=self._hero_vis(not show_readout),
             text="" if show_readout else {
                 "disconnected": (
                     f"Retrying every {self.config.get('reconnect_interval_seconds', 10)}s. "
@@ -3399,7 +3419,7 @@ class AppWindow:
         if state == "watching" and foreground:
             name, verdict = foreground
             self.bg.itemconfigure(
-                self._hero_source_id, state="normal",
+                self._hero_source_id, state=self._hero_vis(True),
                 text=f"Foreground: {name} — " + {
                     "non_game": "classified as not a game.",
                     "unknown": "not classified yet.",
@@ -3431,7 +3451,7 @@ class AppWindow:
             self.bg.itemconfigure(
                 self._preview_video_id,
                 text=self._video_label if show_vid else "",
-                state="normal" if show_vid else "hidden")
+                state=self._hero_vis(show_vid))
 
         # The button row: same position always, different label / binding /
         # emphasis per state (2f-2h). Ember only leads on a real disconnection.
@@ -3475,8 +3495,9 @@ class AppWindow:
         self._hero_secondary_cmd = command
         self.pause_btn.configure(text=text)
         # Both buttons are meaningful in every v3 state, so unlike v2 the
-        # secondary is never hidden - only relabelled.
-        self.bg.itemconfigure(self._pause_btn_win, state="normal")
+        # secondary is never hidden - only relabelled. It still follows the
+        # view, or it floats over the Macropad pane while a recording runs.
+        self.bg.itemconfigure(self._pause_btn_win, state=self._hero_vis(True))
 
     # ---- stat tiles ----
     def _build_stats(self, x0, y, w):
@@ -3609,6 +3630,213 @@ class AppWindow:
                             fill=color, font=(ICON_FONT, -13))
         self.bg.create_text(x + 34, y + 20, anchor="w", text=self._track(label),
                             fill=FAINT, font=dv.type_font("eyebrow"))
+
+    # ---- command palette (7e) ----
+    # "Ctrl K from anywhere, including a global hotkey that opens it over a
+    # game." Matching and ranking live in obsauto/palette.py; this is the
+    # window and the row builders.
+
+    def _palette_rows(self):
+        """The four sources, in the spec's order.
+
+        Nothing destructive is offered: "Destructive rows never in the palette
+        - no delete, no cull." A fuzzy list that can delete a clip two
+        keystrokes after a typo is a trap, so those actions simply aren't
+        built.
+        """
+        rows = []
+
+        def add(group, label, action, hint="", recency=0.0):
+            rows.append(palette.Row(group, label, action, hint, recency))
+
+        # --- Actions ---
+        recording = self._is_recording
+        add("Actions",
+            "Stop recording" if recording else "Start recording — current window",
+            self._toggle_record, hint="record")
+        if recording:
+            add("Actions", "Resume recording" if self._is_paused else "Pause recording",
+                self._toggle_pause, hint="pause")
+        if getattr(self, "replay", None) and self.replay.enabled:
+            add("Actions", f"Save the last {self.replay.seconds}s (instant replay)",
+                self._save_replay, hint=(self.config.get("replay_hotkey") or "").upper())
+        add("Actions", "Open recordings folder", self._open_recording_root,
+            hint="folder")
+        add("Actions",
+            "Turn monitoring off" if self._monitoring_on else "Turn monitoring on",
+            self._toggle_monitoring, hint="monitor")
+        add("Actions", "Show the mini overlay", self.show_mini, hint="overlay")
+
+        # --- Games (real classifications, never invented) ---
+        try:
+            games = self.classifier._data.get("games", {})
+        except Exception:
+            games = {}
+        seen = set()
+        for key, value in games.items():
+            name = value.get("display_name") if isinstance(value, dict) else None
+            name = name or key
+            if name in seen:
+                continue
+            seen.add(name)
+            add("Games", name, lambda n=name: self._show_game(n), hint=key)
+
+        # --- Recent clips ---
+        for clip in (getattr(self, "_clips", None) or [])[:12]:
+            add("Recent clips", os.path.splitext(clip["name"])[0],
+                lambda c=clip: self._open_path(os.path.dirname(c["path"])),
+                hint=clip["game"], recency=clip.get("mtime", 0))
+
+        # --- Settings ---
+        for field in settings_spec.FIELDS:
+            add("Settings", field.label,
+                lambda g=field.group: self._open_settings_group(g),
+                hint=field.key)
+        return rows
+
+    def _show_game(self, name):
+        self._show_view("games")
+        self._refresh_games()
+
+    def _open_settings_group(self, group):
+        self._show_view("settings")
+        self._show_settings_group(group)
+
+    def show_palette(self):
+        """Ctrl+K. Opens over whatever is in front, without stealing the game."""
+        if getattr(self, "_palette", None) is not None:
+            try:
+                self._palette["popup"].destroy()
+            except Exception:
+                pass
+            self._palette = None
+
+        rows = self._palette_rows()
+        width = dv.PALETTE_W
+        popup = ctk.CTkToplevel(self.root)
+        popup.overrideredirect(True)
+        popup.attributes("-topmost", True)
+        popup.configure(fg_color=dv.CARD_CORE)
+        apply_rounded_corners(popup)
+
+        left, top, right, bottom = self._toast_workarea()
+        sw = self._S(width)
+        x = left + ((right - left) - sw) // 2
+        y = top + int((bottom - top) * dv.PALETTE_TOP_FRACTION)
+
+        entry = ctk.CTkEntry(
+            popup, placeholder_text="Search actions, games, clips and settings",
+            fg_color=dv.GROUND, border_color=EDGE, border_width=1, text_color=TEXT,
+            corner_radius=dv.RADIUS_CONTROL, font=ctk.CTkFont(size=15), height=44)
+        entry.pack(fill="x", padx=14, pady=(14, 8))
+
+        body = ctk.CTkFrame(popup, fg_color="transparent")
+        body.pack(fill="both", expand=True, padx=8)
+
+        footer = ctk.CTkLabel(popup, text="", anchor="w", text_color=FAINT,
+                              font=ctk.CTkFont(size=11))
+        footer.pack(fill="x", padx=18, pady=(4, 12))
+
+        state = {"popup": popup, "rows": rows, "flat": [], "index": 0,
+                 "widgets": []}
+        self._palette = state
+
+        def close(_event=None):
+            self._palette = None
+            try:
+                popup.destroy()
+            except Exception:
+                pass
+
+        def run(_event=None):
+            flat = state["flat"]
+            if not flat:
+                return "break"
+            action = flat[state["index"]].action
+            close()
+            # "Over a game: shows, runs, and closes - no window focus." The
+            # window is only raised if the action itself is one that needs it.
+            try:
+                action()
+            except Exception as exc:
+                self._log(f"[Palette] {exc}")
+            return "break"
+
+        def move(step):
+            if state["flat"]:
+                state["index"] = (state["index"] + step) % len(state["flat"])
+                paint()
+            return "break"
+
+        def paint():
+            for widget in state["widgets"]:
+                widget.destroy()
+            state["widgets"] = []
+            query = entry.get().strip()
+            grouped = palette.search(rows, query)
+            state["flat"] = palette.flatten(grouped)
+            state["index"] = min(state["index"], max(0, len(state["flat"]) - 1))
+
+            if not state["flat"]:
+                # "No match: Nothing matches 'xyzzy' / Try a game name, a clip
+                # date, or an action."
+                label = ctk.CTkLabel(
+                    body, justify="left", anchor="w", text_color=MUTED,
+                    font=ctk.CTkFont(size=13),
+                    text=f'Nothing matches "{query}"\n'
+                         "Try a game name, a clip date, or an action")
+                label.pack(fill="x", padx=10, pady=14)
+                state["widgets"].append(label)
+                footer.configure(text="Esc  close")
+                return
+
+            position = 0
+            for group, group_rows in grouped:
+                heading = ctk.CTkLabel(
+                    body, text=self._track(group if query else "Suggested"),
+                    anchor="w", text_color=FAINT, font=ctk.CTkFont(size=10))
+                heading.pack(fill="x", padx=12, pady=(8, 2))
+                state["widgets"].append(heading)
+                for row in group_rows:
+                    selected = position == state["index"]
+                    item = ctk.CTkFrame(
+                        body, fg_color=ACCENT_TINT if selected else "transparent",
+                        corner_radius=8, height=dv.PALETTE_ROW_H)
+                    item.pack(fill="x", padx=8, pady=1)
+                    ctk.CTkLabel(item, text=row.label, anchor="w",
+                                 text_color=TEXT if selected else TEXT_SOFT,
+                                 font=ctk.CTkFont(size=13)).pack(
+                        side="left", padx=12, pady=7)
+                    if row.hint:
+                        ctk.CTkLabel(item, text=row.hint, anchor="e",
+                                     text_color=FAINT,
+                                     font=ctk.CTkFont(family="Consolas", size=10)).pack(
+                            side="right", padx=12)
+                    for widget in (item, *item.winfo_children()):
+                        widget.bind("<Button-1>",
+                                    lambda _e, i=position: (state.update(index=i), run()))
+                    state["widgets"].append(item)
+                    position += 1
+
+            total = palette.count_all(rows, query)
+            footer.configure(
+                text=f"↑↓  navigate     ↵  run     Esc  close"
+                     f"          {len(state['flat'])} of {total} results")
+
+        entry.bind("<KeyRelease>", lambda _e: paint())
+        entry.bind("<Down>", lambda _e: move(1))
+        entry.bind("<Up>", lambda _e: move(-1))
+        entry.bind("<Return>", run)
+        entry.bind("<Escape>", close)
+        popup.bind("<Escape>", close)
+        popup.bind("<FocusOut>", lambda _e: None)
+
+        paint()
+        popup.update_idletasks()
+        popup.geometry(f"{sw}x{popup.winfo_reqheight()}+{x}+{y}")
+        popup.lift()
+        entry.focus_force()
+        return state
 
     # ---- session ribbon (7b) ----
     # "The day as one strip. Blocks are recording spans coloured per game,
@@ -5438,6 +5666,14 @@ class AppWindow:
                 lambda: self.root.after(0, self._save_replay),
                 suppress=False, on_log=self._log,
                 scancode=self.config.get("replay_hotkey_scancode"))
+
+        # 7e: "Global hotkey: palette_hotkey, default ctrl+k" - and it has to
+        # be global, because the palette's whole point is opening over a game.
+        palette_key = self.config.get("palette_hotkey", "ctrl+k")
+        if palette_key:
+            hotkey.register(palette_key,
+                            lambda: self.root.after(0, self.show_palette),
+                            suppress=False, on_log=self._log)
 
     def _save_replay(self):
         """Save the last N seconds. Wired to the hotkey, tray and overlay."""

@@ -97,9 +97,14 @@ available = thumbs.available()
 check("ffmpeg and ffprobe are both found", available,
       f"ffmpeg={thumbs._tool('ffmpeg')} ffprobe={thumbs._tool('ffprobe')}")
 
-real = sorted(glob.glob(os.path.join(load_config().get("recording_root", ""),
-                                     "*", "*.mkv")),
-              key=os.path.getmtime, reverse=True)
+# Newest *finished* clip. A recording still being written has no duration in
+# its container header - Matroska writes that on finalisation - so ffprobe
+# correctly reports nothing for it, and picking it would fail this test for the
+# right reason at the wrong moment. Anything untouched for a minute is settled.
+real = [p for p in sorted(glob.glob(os.path.join(
+            load_config().get("recording_root", ""), "*", "*.mkv")),
+        key=os.path.getmtime, reverse=True)
+        if time.time() - os.path.getmtime(p) > 60]
 if available and real:
     clip = real[0]
     t0 = time.perf_counter()

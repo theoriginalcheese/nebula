@@ -455,6 +455,14 @@ RIBBON_AXIS_TICKS = (4, 5)
 RIBBON_LIVE_UPDATE_MS = 10000   # "Live update: last block width every 10s"
 RIBBON_RANGES = ("Day", "12h", "Session")
 
+# 7e - command palette. "560xauto, centred with a 22% top offset, backdrop at
+# 55% black."
+PALETTE_W = 560
+PALETTE_TOP_FRACTION = 0.22
+PALETTE_BACKDROP_ALPHA = 0.55
+PALETTE_ROW_H = 38
+PALETTE_GROUP_H = 24
+
 STORAGE_CARD = (486, 286)
 FORECAST_REFRESH_MS = 15 * 60 * 1000     # "Refresh: on launch, on rec_stop, every 15 min"
 

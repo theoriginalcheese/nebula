@@ -39,6 +39,8 @@ DEFAULTS = {
     "cull_auto": False,               # ask first, always
     "disk_warn_days": 3,              # one toast at this threshold, once a day
     "disk_block_below_gb": 20,        # below this the hero refuses to start
+    # ---- command palette (spec 7e) ----
+    "palette_hotkey": "ctrl+k",       # blank = no global palette key
     # Legacy folder-based sync for games.json / steam_appid_cache.json (was
     # OneDrive). Superseded by the GitHub sync below, which is instant and
     # reliable; leave blank. Kept so an old config still resolves.

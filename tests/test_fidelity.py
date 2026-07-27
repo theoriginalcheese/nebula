@@ -63,7 +63,9 @@ check("no emoji or glyph stand-ins for icons", not found,
       {BANNED_GLYPHS[g]: n for g, n in found.items()})
 
 # Anything above the BMP symbol range that isn't PUA or ordinary typography.
-allowed_punct = {"—", "–", "…", "→", "·", "‘", "’"}
+# Ordinary typography, plus the three key glyphs 7e's palette footer draws
+# ("↑↓ navigate  ↵ run  Esc close"). Those are specified, not decoration.
+allowed_punct = {"—", "–", "…", "→", "·", "‘", "’", "↑", "↓", "↵", "½", "⅔"}
 stray = sorted({c for c in GUI_SRC
                 if ord(c) > 0x2000 and not (0xE000 <= ord(c) <= 0xF8FF)
                 and c not in allowed_punct})
