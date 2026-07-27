@@ -435,6 +435,29 @@ DRAG_ROTATE_DEG = -0.6       # "Dragged copy: rotate -0.6deg · shadow lg"
 # composite, which is the one thing this UI cannot do. Siblings snap on drop.
 REFLOW_MS_UNUSED = 260
 
+# ---------------------------------------------------------------------------
+# Session ribbon (7b) and storage forecast (7c)
+# ---------------------------------------------------------------------------
+RIBBON_H = 188                  # "Real size - 996x188 inside the Clips pane"
+RIBBON_TRACK_H = 38             # "Track h 38, gap 3, radius 3 (6 on ends)"
+RIBBON_TRACK_GAP = 3
+RIBBON_RADIUS = 3
+RIBBON_END_RADIUS = 6
+RIBBON_MIN_BLOCK = 4            # "shorter spans merge into neighbour"
+RIBBON_BLOCK_TOP = "#8B7CF6"    # linear-gradient(180deg, #8B7CF6, #5340A8)
+RIBBON_BLOCK_BOTTOM = "#5340A8"
+RIBBON_SHADE_STEP = 0.08        # "Per-game shade: lightness ±8% only"
+RIBBON_HATCH_ALPHA = 0.07       # "Idle gap: 135° hatch, 4px period, alpha .07"
+RIBBON_HATCH_PERIOD = 4
+RIBBON_MARK_W = 2               # "Clip mark: 2px #FF5C7A, overhangs 5px"
+RIBBON_MARK_OVERHANG = 5
+RIBBON_AXIS_TICKS = (4, 5)
+RIBBON_LIVE_UPDATE_MS = 10000   # "Live update: last block width every 10s"
+RIBBON_RANGES = ("Day", "12h", "Session")
+
+STORAGE_CARD = (486, 286)
+FORECAST_REFRESH_MS = 15 * 60 * 1000     # "Refresh: on launch, on rec_stop, every 15 min"
+
 MINI_W, MINI_H = 296, 54
 MINI_SNAP_PX = 32                    # snap to nearest corner within this
 MINI_FADE_AFTER_MS = 3000

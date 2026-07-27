@@ -68,6 +68,9 @@ GROUPS = (
     ("offload", "NAS offload",
      "Finished clips are copied to the NAS and byte-verified before anything "
      "local is touched."),
+    ("storage", "Storage",
+     "How long the disk lasts at your current rate, and the two things that "
+     "change it. Culling moves files to the Recycle Bin - never a hard delete."),
     ("legacy", "Legacy",
      "Superseded, kept so an older config still resolves."),
 )
@@ -130,6 +133,25 @@ FIELDS = (
           hint="Comma-separated executables. While one of them is producing "
                "sound (friends talking in Discord), recording won't auto-pause "
                "on idle. Empty disables the keep-alive."),
+
+    # ---- Storage (7c) ----
+    Field("cull_after_days", "Cull clips older than", "int", "storage",
+          minimum=0, maximum=3650,
+          hint="Days. Clips older than this can be culled to the Recycle Bin "
+               "from the Storage card. 0 turns culling off entirely."),
+    Field("cull_keep_marked", "Keep marked clips", "bool", "storage",
+          hint="A marked clip is never culled. Replays are never culled "
+               "either, whatever this says."),
+    Field("cull_auto", "Cull without asking", "bool", "storage",
+          hint="Off by default and worth leaving off — with it on, the cull "
+               "runs on its own instead of showing you the count first."),
+    Field("disk_warn_days", "Warn when days left below", "int", "storage",
+          minimum=0, maximum=365,
+          hint="One toast at this threshold, at most once a day. 0 = silent."),
+    Field("disk_block_below_gb", "Refuse to record below", "int", "storage",
+          minimum=0, maximum=10000,
+          hint="Gigabytes free. Below this the hero card won't start a "
+               "recording — better than one that dies mid-session."),
 
     # ---- Hotkey ----
     Field("toggle_hotkey", "Toggle key", "text", "hotkey",

@@ -16,6 +16,7 @@ from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 from . import classifier as classifier_module
 from . import design_v3 as dv
+from . import forecast
 from . import replay as replay_mod
 from . import session_log
 from . import thumbs
@@ -428,6 +429,51 @@ def _blend_hex(c0, c1, t):
     rgb0 = tuple(int(c0[i:i + 2], 16) for i in (0, 2, 4))
     rgb1 = tuple(int(c1[i:i + 2], 16) for i in (0, 2, 4))
     return "#%02x%02x%02x" % tuple(int(rgb0[i] + (rgb1[i] - rgb0[i]) * t) for i in range(3))
+
+
+def _shift_lightness(hex_colour, amount):
+    """Lighten (+) or darken (-) by a fraction, keeping the hue.
+
+    7b: "Per-game shade: lightness ±8% only - never a new hue." Nudging each
+    channel toward white or black preserves the hue exactly, which a hue
+    rotation would not - and v3 is a two-hue system.
+    """
+    c = hex_colour.lstrip("#")
+    rgb = [int(c[i:i + 2], 16) for i in (0, 2, 4)]
+    if amount >= 0:
+        rgb = [v + (255 - v) * amount for v in rgb]
+    else:
+        rgb = [v * (1 + amount) for v in rgb]
+    return "#%02x%02x%02x" % tuple(max(0, min(255, int(round(v)))) for v in rgb)
+
+
+def _vertical_gradient_tile(width, height, top_hex, bottom_hex, radius):
+    """A rounded tile with a 180deg gradient - the ribbon's recording block."""
+    width, height = max(1, int(width)), max(1, int(height))
+    img = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(img)
+    for row in range(height):
+        colour = _blend_hex(top_hex, bottom_hex, row / max(1, height - 1))
+        rgb = tuple(int(colour[i:i + 2], 16) for i in (1, 3, 5))
+        draw.line([(0, row), (width, row)], fill=(*rgb, 255))
+    mask = Image.new("L", (width, height), 0)
+    # A radius wider than half the tile is a PIL error, and a 4px-minimum block
+    # is narrower than the 3px radius once scaled down.
+    ImageDraw.Draw(mask).rounded_rectangle(
+        [0, 0, width - 1, height - 1],
+        radius=min(radius, (width - 1) // 2, (height - 1) // 2), fill=255)
+    img.putalpha(mask)
+    return img
+
+
+def _hatch_tile(width, height, rgb, alpha, period):
+    """135-degree hatching - the ribbon's idle gaps."""
+    img = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(img)
+    value = (*rgb, int(round(alpha * 255)))
+    for offset in range(-height, width + height, max(2, period)):
+        draw.line([(offset, height), (offset + height, 0)], fill=value, width=1)
+    return img
 
 
 # Bright status color -> dark tinted background for badge-style rendering.
@@ -1031,9 +1077,14 @@ class AppWindow:
         number in it is real - see _apply_disk_stats. Until the first disk poll
         returns, the bar and figure are simply absent rather than showing zeros.
         """
+        # 7c turned this from a percentage bar into a forecast, which needs a
+        # fourth line for the "not enough history yet" note. Sized and placed
+        # so the card ends exactly on the content margin rather than hanging
+        # off the bottom of the window, which it did once the note was added.
         cx, cw = dv.RAIL_PAD_Y, SIDEBAR_W - dv.RAIL_PAD_Y * 2
-        oy = HEIGHT - 92
-        self._card(cx, oy, cw, 74, kind="tile")
+        card_h = 96
+        oy = HEIGHT - MARGIN - card_h
+        self._card(cx, oy, cw, card_h, kind="tile")
 
         self.bg.create_text(cx + 14, oy + 18, anchor="w",
                             text=ICON_GLYPHS[dv.ICONS["storage"]],
@@ -1058,6 +1109,10 @@ class AppWindow:
         self._store_free = self.bg.create_text(
             cx + 14, oy + 54, anchor="w", text="", fill=FAINT,
             font=dv.type_font("meta"))
+        # 7c's "not enough history" line, empty once the forecast is real.
+        self._store_note = self.bg.create_text(
+            cx + 14, oy + 74, anchor="nw", text="", fill=dv.TEXT_EYEBROW,
+            font=dv.type_font("meta"), width=cw - 28)
 
     # ---- themed interaction states (spec: "Motion & states") ----
     def _focus_ring(self, widget, resting_border=None):
@@ -2095,13 +2150,18 @@ class AppWindow:
         self.bg.create_window(x + w - 130, y + 20, anchor="nw",
                               window=self._clip_sort, width=110, height=30)
 
+        # 7b: "Lives in: Top of the Clips pane, full width."
+        ribbon_h = dv.RIBBON_H
+        self._build_ribbon(x + 12, y + 74, w - 24, ribbon_h)
+        head_y = y + 82 + ribbon_h + 8
+
         # Left: By game. Right: the clip table.
         side_w = 224
-        body_y = y + 96
-        body_h = h - 96 - 34
-        self.bg.create_text(x + 16, y + 82, anchor="w", text=self._track("By game"),
+        body_y = head_y + 14
+        body_h = h - (body_y - y) - 34
+        self.bg.create_text(x + 16, head_y, anchor="w", text=self._track("By game"),
                             fill=FAINT, font=dv.type_font("eyebrow"))
-        self.bg.create_text(x + 16 + side_w + 16, y + 82, anchor="w",
+        self.bg.create_text(x + 16 + side_w + 16, head_y, anchor="w",
                             text=self._track("Clip"), fill=FAINT,
                             font=dv.type_font("eyebrow"))
         # Length is back (7f) - it needed ffprobe, which is now an optional
@@ -2109,13 +2169,13 @@ class AppWindow:
         # empty, which is truthful and keeps the row alignment stable.
         for label, dx in (("Length", w - 376), ("Size", w - 300),
                           ("Recorded", w - 210), ("Actions", w - 96)):
-            self.bg.create_text(x + dx, y + 82, anchor="w", text=self._track(label),
+            self.bg.create_text(x + dx, head_y, anchor="w", text=self._track(label),
                                 fill=FAINT, font=dv.type_font("eyebrow"))
         # The frame draws a hairline under the column head. It fades like every
         # other rule here - "no hard-stopped 1px greys" outranks the frame's
         # plain CSS border (BUILD-SPEC line 175).
         head_x = x + 16 + side_w + 16
-        self._fading_rule(head_x, y + 92, w - 32 - side_w - 16)
+        self._fading_rule(head_x, head_y + 10, w - 32 - side_w - 16)
 
         self._clip_games = self._scroll_list(x + 16, body_y, side_w, body_h)
         self._rec_list = self._scroll_list(x + 16 + side_w + 16, body_y,
@@ -3550,6 +3610,211 @@ class AppWindow:
         self.bg.create_text(x + 34, y + 20, anchor="w", text=self._track(label),
                             fill=FAINT, font=dv.type_font("eyebrow"))
 
+    # ---- session ribbon (7b) ----
+    # "The day as one strip. Blocks are recording spans coloured per game,
+    # hatched gaps are idle pauses, ember ticks are clip marks, and the last
+    # block glows if it's still running."
+    #
+    # The whole thing is a rendering of sessions.jsonl - session_log.spans()
+    # does the folding, and nothing here collects data of its own.
+    RIBBON_RANGE_SECONDS = {"Day": None, "12h": 12 * 3600, "Session": None}
+
+    def _build_ribbon(self, x0, y, w, h):
+        self._card(x0, y, w, h, kind="panel")
+        pad = 18
+        self.bg.create_text(x0 + pad, y + 22, anchor="w",
+                            text=self._track("Session ribbon"),
+                            fill=FAINT, font=dv.type_font("eyebrow"))
+        self._ribbon_summary = self.bg.create_text(
+            x0 + pad, y + 44, anchor="w", text="", fill=TEXT_SOFT,
+            font=dv.type_font("body"))
+
+        # Day / 12h / Session, a segmented control in the header. The tiles are
+        # canvas items, so switching range only re-tints them - no rebuild.
+        seg_w = 56
+        self._ribbon_segments = {}
+        for i, name in enumerate(reversed(dv.RIBBON_RANGES)):
+            sx = x0 + w - pad - (i + 1) * seg_w - i * 3
+            tile = self._glass(sx, y + 14, seg_w, 24, tint=BASE_BG,
+                               radius=dv.RADIUS_CONTROL, tint_alpha=90,
+                               border_alpha=0)
+            text = self.bg.create_text(sx + seg_w / 2, y + 26, text=name,
+                                       fill=MUTED, font=dv.font(11, 500))
+            for item in (tile, text):
+                self.bg.tag_bind(item, "<Button-1>",
+                                 lambda _e, n=name: self._set_ribbon_range(n))
+            self._ribbon_segments[name] = (text, (sx, y + 14, seg_w, 24), tile)
+        self._paint_ribbon_segments()
+
+        self._ribbon_geom = (x0 + pad, y + 66, w - pad * 2, dv.RIBBON_TRACK_H)
+        self._ribbon_items = []
+        self._ribbon_detail_y = y + 66 + dv.RIBBON_TRACK_H + 34
+        self._ribbon_detail = self.bg.create_text(
+            x0 + pad, self._ribbon_detail_y, anchor="w", text="", fill=TEXT,
+            font=dv.type_font("body"))
+        self._ribbon_detail_sub = self.bg.create_text(
+            x0 + pad, self._ribbon_detail_y + 20, anchor="w", text="",
+            fill=FAINT, font=dv.font(11, mono=True))
+        self._refresh_ribbon()
+
+    def _paint_ribbon_segments(self):
+        active = getattr(self, "_ribbon_range", "Day")
+        for name, (text, geom, tile) in self._ribbon_segments.items():
+            on = name == active
+            self._regen_glass(tile, *geom, tint=ACCENT if on else BASE_BG,
+                              radius=dv.RADIUS_CONTROL,
+                              tint_alpha=120 if on else 90, border_alpha=0)
+            self.bg.itemconfigure(text, fill=NAV_ACTIVE_TEXT if on else MUTED)
+
+    def _set_ribbon_range(self, name):
+        self._ribbon_range = name
+        self._paint_ribbon_segments()
+        self._refresh_ribbon()
+
+    def _ribbon_window(self, spans, now):
+        """(start, end) of the axis for the current range."""
+        choice = getattr(self, "_ribbon_range", "Day")
+        if choice == "12h":
+            return now - 12 * 3600, now
+        if choice == "Session" and spans:
+            return min(s["start"] for s in spans), now
+        return session_log.day_start(now), now
+
+    def _refresh_ribbon(self):
+        if getattr(self, "_ribbon_geom", None) is None:
+            return
+        for item in self._ribbon_items:
+            self.bg.delete(item)
+        self._ribbon_items = []
+
+        now = time.time()
+        try:
+            spans = session_log.spans(now=now)
+        except Exception:
+            spans = []
+        start, end = self._ribbon_window(spans, now)
+        spans = [s for s in spans if (s["end"] or now) >= start]
+
+        summary = session_log.summarise(spans)
+        hours, rem = divmod(int(summary["seconds"]), 3600)
+        self.bg.itemconfigure(
+            self._ribbon_summary,
+            text=(f"{hours}h {rem // 60:02d}m recorded  ·  {summary['games']} game"
+                  f"{'' if summary['games'] == 1 else 's'}  ·  {summary['marks']} mark"
+                  f"{'' if summary['marks'] == 1 else 's'}") if spans
+                 else "Nothing recorded today")
+
+        tx, ty, tw, th = self._ribbon_geom
+        # The track itself, always drawn - "Empty state: hairline + Nothing
+        # recorded today", so the strip exists even with no spans on it.
+        self._ribbon_items.append(self._glass(
+            tx, ty, tw, th, tint=dv.GROUND, radius=dv.RIBBON_END_RADIUS,
+            tint_alpha=150, border_alpha=0))
+
+        span_seconds = max(1.0, end - start)
+        games = sorted({s["game"] for s in spans})
+        for span in spans:
+            self._ribbon_block(span, tx, ty, tw, th, start, span_seconds, games)
+        self._ribbon_axis(tx, ty + th + 10, tw, start, end)
+        for item in self._ribbon_items:
+            self.bg.addtag_withtag("view_clips", item)
+
+    def _ribbon_block(self, span, tx, ty, tw, th, start, span_seconds, games):
+        now = time.time()
+        s_start = max(span["start"], start)
+        s_end = min(span["end"] or now, start + span_seconds)
+        if s_end <= s_start:
+            return
+        # Clamp into the track before measuring: a span that starts past the
+        # right edge (or a range change mid-refresh) otherwise yields a zero or
+        # negative width, and PIL refuses to draw that.
+        bx = min(max(tx, tx + (s_start - start) / span_seconds * tw), tx + tw)
+        bw = max(dv.RIBBON_MIN_BLOCK, (s_end - s_start) / span_seconds * tw)
+        bw = min(bw, tx + tw - bx)
+        if bw < 1:
+            return
+
+        # "Per-game shade: lightness ±8% only - never a new hue."
+        index = games.index(span["game"]) if span["game"] in games else 0
+        step = ((index % 3) - 1) * dv.RIBBON_SHADE_STEP
+        top = _shift_lightness(dv.RIBBON_BLOCK_TOP, step)
+        bottom = _shift_lightness(dv.RIBBON_BLOCK_BOTTOM, step)
+        if span["live"]:
+            # "Live block: ember + 18px glow + pulsing dot." Ember and glow
+            # yes; the pulse would be a per-frame canvas repaint.
+            top, bottom = EMBER, _shift_lightness(EMBER, -0.18)
+
+        tile = _vertical_gradient_tile(self._S(int(bw)), self._S(th),
+                                       top, bottom, self._S(dv.RIBBON_RADIUS))
+        photo = to_photo(tile)
+        self._images.append(photo)
+        self._ribbon_items.append(
+            self.bg.create_image(bx, ty, anchor="nw", image=photo))
+
+        # "Idle gap: 135° hatch, 4px period, alpha .07."
+        for gap_start, gap_end in span.get("gaps", ()):
+            gx = tx + (max(gap_start, start) - start) / span_seconds * tw
+            gw = (min(gap_end or now, start + span_seconds) - max(gap_start, start))
+            gw = gw / span_seconds * tw
+            if gw <= 0:
+                continue
+            hatch = _hatch_tile(self._S(max(1, int(gw))), self._S(th),
+                                dv.HAIRLINE_RGB, dv.RIBBON_HATCH_ALPHA,
+                                self._S(dv.RIBBON_HATCH_PERIOD))
+            hphoto = to_photo(hatch)
+            self._images.append(hphoto)
+            self._ribbon_items.append(
+                self.bg.create_image(gx, ty, anchor="nw", image=hphoto))
+
+        # "Clip mark: 2px #FF5C7A, overhangs 5px both ends."
+        for mark in span.get("marks", ()):
+            mx = tx + (mark - start) / span_seconds * tw
+            self._ribbon_items.append(self.bg.create_rectangle(
+                mx, ty - dv.RIBBON_MARK_OVERHANG,
+                mx + dv.RIBBON_MARK_W, ty + th + dv.RIBBON_MARK_OVERHANG,
+                fill=EMBER, outline=""))
+
+        hit = self.bg.create_rectangle(bx, ty, bx + bw, ty + th,
+                                       fill="", outline="")
+        self.bg.tag_bind(hit, "<Button-1>", lambda _e, s=span: self._select_span(s))
+        self.bg.tag_bind(hit, "<Enter>", lambda _e: self.bg.configure(cursor="hand2"))
+        self.bg.tag_bind(hit, "<Leave>", lambda _e: self.bg.configure(cursor=""))
+        self._ribbon_items.append(hit)
+
+    def _ribbon_axis(self, tx, ty, tw, start, end):
+        """"Axis: mono 9.5, 4-5 ticks, 'now' last"."""
+        ticks = dv.RIBBON_AXIS_TICKS[0]
+        for i in range(ticks):
+            fraction = i / float(ticks)
+            when = start + (end - start) * fraction
+            self._ribbon_items.append(self.bg.create_text(
+                tx + fraction * tw, ty, anchor="nw",
+                text=time.strftime("%H:%M", time.localtime(when)),
+                fill=FAINT, font=dv.font(9.5, mono=True)))
+        self._ribbon_items.append(self.bg.create_text(
+            tx + tw, ty, anchor="ne", text="now", fill=MUTED,
+            font=dv.font(9.5, mono=True)))
+
+    def _select_span(self, span):
+        """"Click: select → fills detail row"."""
+        started = time.strftime("%H:%M", time.localtime(span["start"]))
+        ended = ("now" if span["live"]
+                 else time.strftime("%H:%M", time.localtime(span["end"])))
+        seconds = int((span["end"] or time.time()) - span["start"])
+        mm, ss = divmod(seconds, 60)
+        parts = [f"{mm}:{ss:02d}"]
+        if span.get("size"):
+            parts.append(_format_bytes(span["size"]))
+        if span.get("marks"):
+            parts.append(f"{len(span['marks'])} mark"
+                         + ("" if len(span["marks"]) == 1 else "s"))
+        if span.get("path"):
+            parts.append(os.path.basename(span["path"]))
+        self.bg.itemconfigure(self._ribbon_detail,
+                              text=f"{span['game']}  ·  {started} → {ended}")
+        self.bg.itemconfigure(self._ribbon_detail_sub, text="  ·  ".join(parts))
+        self._ribbon_selected = span
+
     # ---- instant replay module (7a) ----
     # "Dashboard module - 486x236, half width." Registers in the 6.8 catalogue
     # like any other module, which is what 7g means by "7a, 7b and 7c each
@@ -3807,15 +4072,87 @@ class AppWindow:
         # The rail storage card. Left blank until a real reading arrives - an
         # empty bar beats a bar sitting at zero, which would read as "disk full".
         if usage_pair:
+            self._disk_usage = usage_pair
             free, capacity = usage_pair
             used_frac = 0.0 if not capacity else max(0.0, min(1.0, (capacity - free) / capacity))
-            self.bg.itemconfigure(self._store_pct, text=f"{used_frac * 100:.0f}%")
             x0, bar_y, full_w, bar_h = self._store_bar_rect
             self.bg.coords(self._store_bar,
                            x0, bar_y, x0 + full_w * used_frac, bar_y + bar_h)
+            self._refresh_forecast()
+
+    # ---- storage forecast (7c) ----
+    # "Replaces the rail's bare percentage bar. States a date, not a ratio."
+    # The maths lives in obsauto/forecast.py, which the spec pins down
+    # precisely; everything here is presentation.
+    def _refresh_forecast(self):
+        usage = getattr(self, "_disk_usage", None)
+        if not usage or getattr(self, "_store_pct", None) is None:
+            return
+        free, capacity = usage
+        try:
+            data = forecast.forecast(free, capacity)
+        except Exception:
+            return
+        self._forecast = data
+
+        days = data["days_left"]
+        critical = days is not None and days < 1
+        warn_at = self.config.get("disk_warn_days", 3)
+
+        if data["ready"]:
+            # "States a date, not a ratio."
+            self.bg.itemconfigure(
+                self._store_pct, text=forecast.days_left_label(days) + " left",
+                fill=EMBER if critical or (warn_at and days <= warn_at) else FAINT)
+            rate = data["gb_per_hour"]
             self.bg.itemconfigure(
                 self._store_free,
-                text=f"{_format_bytes(free)} free of {_format_bytes(capacity)}")
+                text=f"{_format_bytes(free)} free  ·  {rate:.1f} GB/h")
+        else:
+            # "Not enough history - first 3 days." Say what's missing rather
+            # than showing a forecast nobody should trust.
+            self.bg.itemconfigure(self._store_pct, text="", fill=FAINT)
+            need = data["days_needed"]
+            self.bg.itemconfigure(
+                self._store_free,
+                text=(f"{_format_bytes(free)} free of {_format_bytes(capacity)}"
+                      if capacity else _format_bytes(free)))
+            self.bg.itemconfigure(
+                self._store_path,
+                text=self._elide(self.config.get("recording_root", ""), 22))
+            self._forecast_note(f"Forecast needs {forecast.MIN_HISTORY_DAYS} days "
+                                f"of history — {need} to go" if need else "")
+            return
+        self._forecast_note("")
+
+        # "One toast at disk_warn_days, once per day maximum."
+        if warn_at and days is not None and days <= warn_at:
+            today = time.strftime("%Y-%m-%d")
+            if getattr(self, "_disk_warned_on", None) != today:
+                self._disk_warned_on = today
+                self._toast_replace(
+                    "error", f"Disk fills in {forecast.days_left_label(days)}")
+                self._log(f"[Storage] {forecast.days_left_label(days)} left at "
+                          f"{data['gb_per_hour']:.1f} GB/h.")
+
+    def _forecast_note(self, text):
+        if getattr(self, "_store_note", None) is not None:
+            self.bg.itemconfigure(self._store_note, text=text)
+
+    def can_start_recording(self):
+        """"Below disk_block_below_gb the hero card refuses to start."
+
+        Returns (ok, reason). Refusing beats a recording that dies mid-session.
+        """
+        usage = getattr(self, "_disk_usage", None)
+        floor_gb = self.config.get("disk_block_below_gb", 20)
+        if not usage or not floor_gb:
+            return True, ""
+        free_gb = usage[0] / forecast.GB
+        if free_gb >= floor_gb:
+            return True, ""
+        return False, (f"Only {free_gb:.0f} GB free — under the {floor_gb} GB "
+                       "floor. Cull some clips first.")
 
     # ---- titlebar status updaters ----
     def _set_obs_status(self, text, color):
@@ -4185,6 +4522,14 @@ class AppWindow:
     def _transport(self, action):
         if getattr(self, "_transport_busy", False):
             return
+        # 7c: "Below disk_block_below_gb the hero card refuses to start and
+        # offers the cull - better than a failed recording."
+        if action == "record" and not self._is_recording:
+            ok, reason = self.can_start_recording()
+            if not ok:
+                self._log(f"[Storage] Refused to start: {reason}")
+                self._toast_replace("error", reason)
+                return
         self._transport_busy = True
 
         def worker():
@@ -4231,6 +4576,10 @@ class AppWindow:
             self._log(f"[Manual] {result['outcome']}")
             if result["stopped"]:
                 self.monitor._recording_target = None
+                # "Refresh: on launch, on rec_stop, every 15 min."
+                self._refresh_forecast()
+                self._refresh_ribbon()
+                self._refresh_stat_tiles()
         # Don't make the card wait up to a second to catch up with a button the
         # user just pressed - that lag is what made double-presses possible.
         self._poll_now()

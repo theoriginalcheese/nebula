@@ -30,6 +30,15 @@ DEFAULTS = {
     # 7f's one-time "ffmpeg isn't installed" row in Settings. Not a Field -
     # it's a dismissal record, not something to edit.
     "ffmpeg_notice_dismissed": False,
+    # ---- storage forecast + cull (spec 7c) ----
+    # The forecast states a date rather than a percentage. Culling moves files
+    # to the Recycle Bin, never unlinks, always excludes replays and marked
+    # clips, and never runs while recording.
+    "cull_after_days": 30,            # 0 = off
+    "cull_keep_marked": True,
+    "cull_auto": False,               # ask first, always
+    "disk_warn_days": 3,              # one toast at this threshold, once a day
+    "disk_block_below_gb": 20,        # below this the hero refuses to start
     # Legacy folder-based sync for games.json / steam_appid_cache.json (was
     # OneDrive). Superseded by the GitHub sync below, which is instant and
     # reliable; leave blank. Kept so an old config still resolves.

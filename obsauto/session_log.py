@@ -108,6 +108,72 @@ def day_start(when=None):
     return time.mktime((t.tm_year, t.tm_mon, t.tm_mday, 0, 0, 0, 0, 0, -1))
 
 
+def spans(rows=None, now=None):
+    """Fold the event stream into recording spans - the ribbon's whole model.
+
+    7b: "Write the log first. The ribbon is only a rendering of
+    sessions.jsonl." So this is the rendering-independent half: each span is
+    one recording, carrying the idle gaps inside it and the marks on it.
+
+        {game, start, end, live, gaps: [(s, e)], marks: [ts], path, size}
+
+    A span with no rec_stop is `live` and ends at `now` - that's the block the
+    ribbon glows. A rec_stop with no matching rec_start still produces a span
+    (the log can begin mid-recording, e.g. after a crash); it just starts at
+    the stop minus its recorded duration rather than being thrown away.
+    """
+    rows = read() if rows is None else rows
+    now = time.time() if now is None else now
+    out, current = [], None
+    for row in sorted(rows, key=lambda r: r.get("ts", 0)):
+        kind, ts = row.get("type"), row.get("ts", 0)
+        if kind == "rec_start":
+            if current:                       # a start with no stop before it
+                current["end"] = ts
+                out.append(current)
+            current = {"game": row.get("game") or "Unknown", "start": ts,
+                       "end": None, "live": True, "gaps": [], "marks": [],
+                       "path": None, "size": None, "_idle": None}
+        elif kind == "rec_stop":
+            if current is None:
+                duration = float(row.get("duration") or 0)
+                current = {"game": row.get("game") or "Unknown",
+                           "start": ts - duration, "end": None, "live": True,
+                           "gaps": [], "marks": [], "path": None, "size": None,
+                           "_idle": None}
+            current.update(end=ts, live=False, path=row.get("path"),
+                           size=row.get("size"))
+            if current["_idle"] is not None:  # idle when the recording ended
+                current["gaps"].append((current["_idle"], ts))
+                current["_idle"] = None
+            out.append(current)
+            current = None
+        elif kind == "idle_in" and current is not None:
+            current["_idle"] = ts
+        elif kind == "idle_out" and current is not None:
+            if current["_idle"] is not None:
+                current["gaps"].append((current["_idle"], ts))
+                current["_idle"] = None
+        elif kind == "mark" and current is not None:
+            current["marks"].append(ts)
+    if current is not None:
+        current["end"] = now
+        if current["_idle"] is not None:
+            current["gaps"].append((current["_idle"], now))
+        out.append(current)
+    for span in out:
+        span.pop("_idle", None)
+    return out
+
+
+def summarise(span_list):
+    """"4h 12m recorded · 3 games · 7 marks" - the ribbon's header line."""
+    recorded = sum(max(0.0, (s["end"] or 0) - s["start"]) for s in span_list)
+    return {"seconds": recorded,
+            "games": len({s["game"] for s in span_list}),
+            "marks": sum(len(s["marks"]) for s in span_list)}
+
+
 def today():
     """The four figures the dashboard's stat tiles show (6.3).
 
