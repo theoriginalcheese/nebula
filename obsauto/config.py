@@ -27,6 +27,9 @@ DEFAULTS = {
     "replay_subfolder": "Replays",
     "replay_arm_with_monitoring": True,
     "replay_only_for_games": True,
+    # 7f's one-time "ffmpeg isn't installed" row in Settings. Not a Field -
+    # it's a dismissal record, not something to edit.
+    "ffmpeg_notice_dismissed": False,
     # Legacy folder-based sync for games.json / steam_appid_cache.json (was
     # OneDrive). Superseded by the GitHub sync below, which is instant and
     # reliable; leave blank. Kept so an old config still resolves.

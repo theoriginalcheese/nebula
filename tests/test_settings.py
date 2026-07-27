@@ -184,8 +184,15 @@ for group, _title, _blurb in settings_spec.GROUPS:
 mapped_all = {k for _l, k, _s, _u in dv.CONFIG_MAP}
 check("every CONFIG_MAP key has a field", mapped_all <= seen,
       sorted(mapped_all - seen))
-check("every DEFAULTS key is editable", set(DEFAULTS) <= seen,
-      sorted(set(DEFAULTS) - seen))
+# Every DEFAULTS key must be editable *unless* it is declared internal - state
+# the app writes for itself rather than a setting. Requiring the exemption to
+# be written down is what keeps this from quietly becoming "some keys, maybe".
+editable = set(DEFAULTS) - settings_spec.INTERNAL_KEYS
+check("every DEFAULTS key is editable or declared internal", editable <= seen,
+      sorted(editable - seen))
+check("no internal key sneaks into the UI",
+      not (settings_spec.INTERNAL_KEYS & seen),
+      sorted(settings_spec.INTERNAL_KEYS & seen))
 
 check("no callback exceptions", not callback_errors,
       callback_errors[0].strip().splitlines()[-1] if callback_errors else "clean")

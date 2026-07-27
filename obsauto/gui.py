@@ -18,6 +18,7 @@ from . import classifier as classifier_module
 from . import design_v3 as dv
 from . import replay as replay_mod
 from . import session_log
+from . import thumbs
 from . import settings_spec
 from .obs_client import OBSClient, OBSError
 from .monitor import Monitor, ensure_obs_running, is_obs_running, list_visible_windows
@@ -467,6 +468,16 @@ class AppWindow:
             on_saved=self._on_replay_saved, on_state=self._on_replay_state)
         self.obs.on_event = self.replay.handle_event
         self._last_bitrate_mbps = None   # measured, for the RAM estimate
+
+        # Thumbnails and clip lengths (7f). ffmpeg is optional: with it absent
+        # every one of these stays empty and the Clips pane is unchanged.
+        self._clip_thumb_cache = {}      # clip path -> [CTkImage x4]
+        self._clip_durations = {}        # clip path -> seconds, from ffprobe
+        self._clip_length_labels = {}
+        self.thumbs = thumbs.ThumbWorker(
+            config.get("recording_root", ""), on_log=self._log,
+            is_busy=lambda: self._is_recording,
+            on_done=self._on_thumbs_ready)
         # The v3 toast is a SINGLE SLOT: at most one window, ever, reused in
         # place. See _show_notification / _toast_replace.
         self._toast = None
@@ -2093,7 +2104,11 @@ class AppWindow:
         self.bg.create_text(x + 16 + side_w + 16, y + 82, anchor="w",
                             text=self._track("Clip"), fill=FAINT,
                             font=dv.type_font("eyebrow"))
-        for label, dx in (("Size", w - 300), ("Recorded", w - 210), ("Actions", w - 96)):
+        # Length is back (7f) - it needed ffprobe, which is now an optional
+        # dependency. The column stays even without ffmpeg; the cells are just
+        # empty, which is truthful and keeps the row alignment stable.
+        for label, dx in (("Length", w - 376), ("Size", w - 300),
+                          ("Recorded", w - 210), ("Actions", w - 96)):
             self.bg.create_text(x + dx, y + 82, anchor="w", text=self._track(label),
                                 fill=FAINT, font=dv.type_font("eyebrow"))
         # The frame draws a hairline under the column head. It fades like every
@@ -2172,6 +2187,40 @@ class AppWindow:
             text=f"{len(clips)} clip{'' if len(clips) == 1 else 's'}  ·  "
                  f"{_format_bytes(total)}  ·  {root_dir}")
         self._render_clips_rows()
+        self._queue_thumb_work(clips, root_dir)
+
+    def _queue_thumb_work(self, clips, root_dir):
+        """Backfill frames and durations for what's on screen (7f).
+
+        Both run on the thumb worker's own thread. Durations come first because
+        the Length column is cheap - ffprobe reads the container header - where
+        four seeks per clip is not.
+        """
+        if not thumbs.available() or not clips:
+            return
+        self.thumbs.recording_root = root_dir
+        newest = clips[:40]      # "oldest last": the visible page first
+
+        def worker():
+            for clip in newest:
+                if clip["path"] in self._clip_durations:
+                    continue
+                seconds = thumbs.duration_of(clip["path"])
+                if seconds:
+                    self._clip_durations[clip["path"]] = seconds
+                    self._ui(lambda p=clip["path"]: self._apply_clip_length(p))
+            self.thumbs.backfill([c["path"] for c in newest])
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _apply_clip_length(self, path):
+        label = self._clip_length_labels.get(path)
+        if label is None:
+            return
+        try:
+            label.configure(text=self._clip_length_label({"path": path}))
+        except Exception:
+            self._clip_length_labels.pop(path, None)
 
     def _game_button(self, game, label, count):
         row = ctk.CTkFrame(self._clip_games, fg_color=CARD_TINT, corner_radius=dv.RADIUS_CONTROL)
@@ -2192,6 +2241,9 @@ class AppWindow:
     def _render_clips_rows(self):
         for child in self._rec_list.winfo_children():
             child.destroy()
+        # The labels belong to widgets that were just destroyed; keeping the
+        # map would leave _apply_clip_length writing into dead Tk objects.
+        self._clip_length_labels = {}
         if getattr(self, "_clips_error", None) is not None:
             self._empty_note(self._rec_list,
                              f"Couldn't read {self._clips_root}\n{self._clips_error}")
@@ -2242,14 +2294,15 @@ class AppWindow:
             return time.strftime("%a", when)
         return time.strftime("%d %b", when)
 
+    # 7f: the row thumbnail is 4 frames wide at heart - it shows frame 3 and
+    # steps through all four as the pointer crosses it.
+    CLIP_THUMB_W, CLIP_THUMB_H = 76, 43
+
     def _clip_row(self, clip):
         row = ctk.CTkFrame(self._rec_list, fg_color=CARD_TINT, corner_radius=dv.RADIUS_CONTROL)
         row.pack(fill="x", padx=2, pady=3)
 
-        ctk.CTkLabel(row, text=self._initials(clip["game"]), width=34, height=34,
-                     fg_color=ACCENT_TINT, corner_radius=8, text_color=ACCENT_LIGHT,
-                     font=ctk.CTkFont(size=11, weight="bold")).pack(
-            side="left", padx=(8, 10), pady=6)
+        self._clip_thumb(row, clip)
 
         # Actions pack right-first so they keep their place as the title flexes.
         for role, command, tip in (
@@ -2267,6 +2320,14 @@ class AppWindow:
                      text_color=MUTED, font=ctk.CTkFont(size=11)).pack(side="right", padx=6)
         ctk.CTkLabel(row, text=_format_bytes(clip["size"]), width=80, anchor="e",
                      text_color=TEXT_SOFT, font=ctk.CTkFont(size=11)).pack(side="right")
+        # Length, at last - it needed ffprobe, which is now an optional
+        # dependency rather than a missing one. Blank when unknown; never a
+        # placeholder duration.
+        length = ctk.CTkLabel(row, text=self._clip_length_label(clip), width=64,
+                              anchor="e", text_color=MUTED,
+                              font=ctk.CTkFont(family="Consolas", size=11))
+        length.pack(side="right", padx=4)
+        self._clip_length_labels[clip["path"]] = length
 
         text = ctk.CTkFrame(row, fg_color="transparent")
         text.pack(side="left", fill="x", expand=True)
@@ -2274,6 +2335,90 @@ class AppWindow:
                      text_color=TEXT, font=ctk.CTkFont(size=12)).pack(anchor="w")
         ctk.CTkLabel(text, text=clip["rel"], anchor="w", text_color=FAINT,
                      font=ctk.CTkFont(family="Consolas", size=10)).pack(anchor="w")
+
+    def _clip_length_label(self, clip):
+        seconds = self._clip_durations.get(clip["path"])
+        if not seconds:
+            return ""
+        hours, rem = divmod(int(seconds), 3600)
+        minutes, secs = divmod(rem, 60)
+        return (f"{hours}:{minutes:02d}:{secs:02d}" if hours
+                else f"{minutes}:{secs:02d}")
+
+    def _clip_thumb(self, row, clip):
+        """The scrubbable thumbnail (7f).
+
+        "Trigger: pointer x over the thumb → 4 zones. Swap: instant - no
+        crossfade, no transition. Leave: returns to frame 3."
+
+        Until the frames exist it falls back to the game's initials, which is
+        real data - the spec's "dashed placeholder + spinner, never blank"
+        without a spinner, since animating one would repaint every tick.
+        """
+        frames = self._clip_frames(clip)
+        if not frames:
+            ctk.CTkLabel(row, text=self._initials(clip["game"]),
+                         width=self.CLIP_THUMB_W, height=self.CLIP_THUMB_H,
+                         fg_color=ACCENT_TINT, corner_radius=8,
+                         text_color=ACCENT_LIGHT,
+                         font=ctk.CTkFont(size=11, weight="bold")).pack(
+                side="left", padx=(8, 10), pady=6)
+            return
+
+        holder = ctk.CTkFrame(row, fg_color="transparent")
+        holder.pack(side="left", padx=(8, 10), pady=6)
+        label = ctk.CTkLabel(holder, text="", image=frames[thumbs.DEFAULT_FRAME])
+        label.pack()
+        # "Progress line 3px, #B9AEF9" under the thumbnail, one segment lit.
+        line = ctk.CTkFrame(holder, fg_color=dv.GROUND, height=3,
+                            width=self.CLIP_THUMB_W, corner_radius=2)
+        line.pack(fill="x")
+        fill = ctk.CTkFrame(line, fg_color=ACCENT_LIGHT, height=3, corner_radius=2)
+
+        def show(index):
+            label.configure(image=frames[index])
+            fill.place(relx=index / thumbs.FRAME_COUNT, rely=0,
+                       relwidth=1.0 / thumbs.FRAME_COUNT, relheight=1.0)
+
+        def on_motion(event):
+            zone = int(event.x / max(1, label.winfo_width()) * thumbs.FRAME_COUNT)
+            show(max(0, min(thumbs.FRAME_COUNT - 1, zone)))
+
+        def on_leave(_event):
+            label.configure(image=frames[thumbs.DEFAULT_FRAME])
+            fill.place_forget()
+
+        label.bind("<Motion>", on_motion)
+        label.bind("<Leave>", on_leave)
+        label.configure(cursor="hand2")
+
+    def _clip_frames(self, clip):
+        """Cached CTkImages for a clip's four frames, or None."""
+        path = clip["path"]
+        cached = self._clip_thumb_cache.get(path)
+        if cached is not None:
+            return cached
+        root = self.config.get("recording_root", "")
+        if not thumbs.have_frames(root, path):
+            return None
+        images = []
+        for frame in thumbs.frame_paths(root, path):
+            try:
+                img = Image.open(frame).convert("RGB")
+            except Exception:
+                return None
+            images.append(ctk.CTkImage(light_image=img, dark_image=img,
+                                       size=(self.CLIP_THUMB_W, self.CLIP_THUMB_H)))
+        self._clip_thumb_cache[path] = images
+        return images
+
+    def _on_thumbs_ready(self, clip_path, _frames):
+        """Worker callback - arrives on the extraction thread."""
+        def apply():
+            self._clip_thumb_cache.pop(clip_path, None)
+            if self._current_view == "clips":
+                self._refresh_clips()
+        self._ui(apply)
 
     def _delete_clip(self, clip):
         """Manual delete, under obs-footage-sacred's copy-verify-then-delete rule.
@@ -2311,6 +2456,11 @@ class AppWindow:
             self._log(f"[Manual] Couldn't delete {clip['name']}: {error}")
             return
         self._log(f"[Manual] Deleted {clip['rel']}")
+        # The cached frames outlive nothing: a deleted clip's thumbnails are
+        # just orphaned files in .nebula/thumbs that would never be cleaned up.
+        thumbs.purge(self.config.get("recording_root", ""), clip["path"])
+        self._clip_thumb_cache.pop(clip["path"], None)
+        self._clip_durations.pop(clip["path"], None)
         self._clips = [c for c in self._clips if c["path"] != clip["path"]]
         self._render_clips(self._clips, None, self._clips_root)
 
@@ -2711,7 +2861,13 @@ class AppWindow:
             self._settings_field(field)
         if self._settings_group == "obs":
             self._build_settings_obs_footer()
-        elif self._settings_group in ("gamesync", "offload"):
+        elif self._settings_group == "offload" and not thumbs.available():
+            # 7f: "If ffmpeg isn't on PATH, show one dismissible row in
+            # Settings → Storage offering the download - not a modal, not a
+            # toast per clip. Everything else keeps working."
+            self._build_ffmpeg_notice()
+
+        if self._settings_group in ("gamesync", "offload"):
             # 6.3: "Sync status belongs in Settings -> Sync." It used to be a
             # stat tile on the dashboard, where a live queue depth had no
             # business sitting in a read-only display row.
@@ -2720,6 +2876,39 @@ class AppWindow:
                 justify="left", wraplength=520, text_color=ACCENT_LIGHT,
                 font=ctk.CTkFont(size=12))
             self._settings_sync_label.pack(anchor="w", padx=12, pady=(16, 12))
+
+    def _build_ffmpeg_notice(self):
+        """One dismissible row offering the ffmpeg download (7f).
+
+        Dismissal is remembered in config, so it really is one row and not a
+        nag - thumbnails and the Length column simply stay absent.
+        """
+        if self.config.get("ffmpeg_notice_dismissed"):
+            return
+        bar = ctk.CTkFrame(self._settings_host,
+                           fg_color=dv.over(ACCENT, 0.07, dv.CARD_CORE),
+                           corner_radius=dv.RADIUS_TILE, border_width=1,
+                           border_color=dv.over(ACCENT, 0.18, dv.CARD_CORE))
+        bar.pack(fill="x", padx=12, pady=(16, 4))
+        ctk.CTkLabel(
+            bar, anchor="w", justify="left", wraplength=430, text_color=MUTED,
+            font=ctk.CTkFont(size=12),
+            text=("ffmpeg isn't on PATH, so clips have no thumbnails and no "
+                  "Length. Everything else works. Install it with "
+                  "\"winget install Gyan.FFmpeg\" and restart Nebula."),
+        ).pack(side="left", padx=14, pady=10)
+
+        def dismiss():
+            self.config["ffmpeg_notice_dismissed"] = True
+            from .config import save_config
+            save_config(self.config)
+            bar.destroy()
+
+        ctk.CTkButton(bar, text="Dismiss", command=dismiss, width=84, height=30,
+                      fg_color="transparent", hover_color=SURFACE_HOVER,
+                      text_color=MUTED, border_width=1, border_color=EDGE,
+                      corner_radius=999,
+                      font=ctk.CTkFont(size=12)).pack(side="right", padx=8, pady=8)
 
     def _build_settings_obs_footer(self):
         """Frame 2c: ``Connected to OBS 30.2 — handshake 41 ms`` + Test again.

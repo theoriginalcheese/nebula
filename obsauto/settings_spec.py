@@ -274,3 +274,14 @@ def missing_paths(values):
 def restart_required(keys):
     """Which of `keys` only take effect after a restart."""
     return [BY_KEY[key] for key in keys if key in BY_KEY and BY_KEY[key].restart]
+
+
+# Keys that live in config.json but are state rather than settings, so they
+# deliberately have no field. Declared here (rather than just being absent) so
+# the "every DEFAULTS key is editable" test still catches a setting that was
+# added and then forgotten - the exemption has to be written down to apply.
+INTERNAL_KEYS = frozenset({
+    "ffmpeg_notice_dismissed",   # 7f: the one-time "install ffmpeg" row
+    "dashboard_layout",          # 6.8: written by Customise, not by hand
+    "dashboard_grid",            # the retired interim key
+})

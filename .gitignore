@@ -27,3 +27,4 @@ SORTED NON-GAMES.txt
 
 # Unrelated stray file (RoboCopy shell-extension reg tweak, not part of Nebula)
 Windows Registry Editor Version 5.0.reg
+.nebula/
