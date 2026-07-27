@@ -23,6 +23,7 @@ import time
 
 import psutil
 
+from . import profiles
 from . import session_log
 
 try:
@@ -442,6 +443,17 @@ class Monitor:
         if target is not None:
             _, _, display_name, folder = target
             os.makedirs(folder, exist_ok=True)
+
+            # 7d's apply sequence: the profile goes on *before* StartRecord.
+            # "Never apply mid-recording" is satisfied by construction here -
+            # the previous recording was stopped above, and the new one hasn't
+            # started yet, which is the one safe window there is.
+            exe = os.path.basename(target[1] or "").lower()
+            game_profile = profiles.for_game(self.classifier, exe)
+            if game_profile:
+                profiles.apply(self.obs, game_profile, is_recording=False,
+                               on_log=self.log)
+
             started = False
             last_error = None
             for attempt in range(3):

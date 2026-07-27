@@ -18,6 +18,7 @@ from . import classifier as classifier_module
 from . import design_v3 as dv
 from . import forecast
 from . import palette
+from . import profiles
 from . import replay as replay_mod
 from . import session_log
 from . import thumbs
@@ -2094,22 +2095,26 @@ class AppWindow:
             anchor="w", padx=12, pady=(8, 0))
         ctk.CTkLabel(row, text=detail, text_color=MUTED, anchor="w",
                      font=ctk.CTkFont(size=11)).pack(anchor="w", padx=12, pady=(0, 8))
+        action_w = 0
         if action:
             # A row action has to be visible. The promote path used to be
             # right-click only, which is the same as not existing: it worked
             # perfectly and still read as "I can't change non-games into
             # games", because nothing on screen said it was there.
             label, callback = action
-            ctk.CTkButton(row, text=label, command=callback, width=96, height=26,
-                          fg_color=SURFACE, hover_color=SURFACE_HOVER,
+            action_w = 96 if len(label) > 8 else 76
+            ctk.CTkButton(row, text=label, command=callback, width=action_w,
+                          height=26, fg_color=SURFACE, hover_color=SURFACE_HOVER,
                           text_color=ACCENT_LIGHT, border_width=1,
                           border_color=EDGE, corner_radius=8,
                           font=ctk.CTkFont(size=11)).place(
                 relx=1.0, rely=0.5, anchor="e", x=-10)
-        elif meta:
-            ctk.CTkLabel(row, text=meta, text_color=FAINT,
-                         font=ctk.CTkFont(size=11)).place(relx=1.0, rely=0.5,
-                                                          anchor="e", x=-12)
+        if meta:
+            # Sits left of the action when there is one, so a row can carry
+            # both a value (7d's profile column) and a button.
+            ctk.CTkLabel(row, text=meta, text_color=FAINT, anchor="e",
+                         font=ctk.CTkFont(size=11)).place(
+                relx=1.0, rely=0.5, anchor="e", x=-(action_w + 22 if action_w else 12))
         if command:
             for widget in (row, *row.winfo_children()):
                 widget.bind("<Button-1>", lambda _e: command())
@@ -2647,7 +2652,16 @@ class AppWindow:
                 exes = ", ".join(sorted(entry["exes"])[:3])
                 if len(entry["exes"]) > 3:
                     exes += f"  +{len(entry['exes']) - 3} more"
-                self._list_row(self._games_list, name, exes, entry["source"] or "manual")
+                # 7d's fourth column. A game with no profile says so rather
+                # than showing blank - "inherits default profile" is the
+                # frame's own wording.
+                primary = sorted(entry["exes"])[0]
+                profile = profiles.for_game(self.classifier, primary)
+                self._list_row(
+                    self._games_list, name, exes,
+                    profiles.summary(profile) or "inherits default",
+                    action=("Profile",
+                            lambda e=primary, n=name: self._edit_profile(e, n)))
 
         if not non_games:
             self._empty_note(self._nongames_list, "Nothing ignored yet.")
@@ -2792,6 +2806,149 @@ class AppWindow:
             font=ctk.CTkFont(size=12))
         canvas.create_window(width - 130, height - 52, anchor="nw",
                              window=close, width=106, height=34)
+
+        dialog.lift()
+        dialog.focus_force()
+        dialog.grab_set()
+        self.root.wait_window(dialog)
+
+    def _edit_profile(self, basename, display_name):
+        """7d's editor sheet - 440x356, modal over the pane.
+
+        Exactly five fields. "Scope guard: resolution, fps, encoder, bitrate,
+        scene. That is the whole feature. No audio tracks, no filters, no
+        output paths, no encoder presets - those stay in OBS, and Nebula must
+        never silently overwrite settings the user changed there."
+        """
+        current = profiles.for_game(self.classifier, basename) or {}
+        width, height = 440, 356
+        dialog = ctk.CTkToplevel(self.root)
+        dialog.title(f"{display_name} profile")
+        dialog.overrideredirect(True)
+        dialog.geometry(f"{self._S(width)}x{self._S(height)}")
+        dialog.attributes("-topmost", True)
+        apply_rounded_corners(dialog)
+        canvas = self._dialog_bg(dialog, width, height)
+
+        canvas.create_text(24, 30, anchor="w", text=display_name, fill=TEXT,
+                           font=dv.type_font("pane_title"))
+        canvas.create_text(24, 52, anchor="w", fill=FAINT,
+                           font=dv.type_font("meta"),
+                           text="Applied to OBS just before this game records.")
+
+        host = ctk.CTkFrame(dialog, fg_color="transparent")
+        canvas.create_window(20, 72, anchor="nw", window=host,
+                             width=width - 40, height=height - 148)
+
+        fields = {}
+
+        def field_row(label, widget):
+            line = ctk.CTkFrame(host, fg_color="transparent")
+            line.pack(fill="x", pady=3)
+            ctk.CTkLabel(line, text=label, width=104, anchor="w",
+                         text_color=MUTED,
+                         font=ctk.CTkFont(size=12)).pack(side="left", padx=(4, 8))
+            widget.pack(side="left", fill="x", expand=True, padx=(0, 4))
+            return widget
+
+        res = ctk.CTkEntry(host, fg_color=dv.GROUND, border_color=EDGE,
+                           border_width=1, text_color=TEXT, height=30,
+                           corner_radius=dv.RADIUS_CONTROL,
+                           font=ctk.CTkFont(size=12),
+                           placeholder_text="2560x1440")
+        if current.get("res"):
+            res.insert(0, current["res"])
+        fields["res"] = field_row("Resolution", res)
+
+        fps = ctk.CTkOptionMenu(
+            host, values=[""] + [str(f) for f in profiles.FPS_CHOICES],
+            fg_color=dv.GROUND, button_color=SURFACE, text_color=TEXT,
+            corner_radius=dv.RADIUS_CONTROL, font=ctk.CTkFont(size=12), height=30)
+        fps.set(str(current.get("fps", "")) if current.get("fps") else "")
+        fields["fps"] = field_row("Frame rate", fps)
+
+        encoder = ctk.CTkOptionMenu(
+            host, values=[""] + list(profiles.ENCODERS),
+            fg_color=dv.GROUND, button_color=SURFACE, text_color=TEXT,
+            corner_radius=dv.RADIUS_CONTROL, font=ctk.CTkFont(size=12), height=30)
+        encoder.set(current.get("encoder", ""))
+        fields["encoder"] = field_row("Encoder", encoder)
+
+        bitrate = ctk.CTkEntry(host, fg_color=dv.GROUND, border_color=EDGE,
+                               border_width=1, text_color=TEXT, height=30,
+                               corner_radius=dv.RADIUS_CONTROL,
+                               font=ctk.CTkFont(size=12),
+                               placeholder_text="18000")
+        if current.get("bitrate_kbps"):
+            bitrate.insert(0, str(current["bitrate_kbps"]))
+        fields["bitrate_kbps"] = field_row("Bitrate kb/s", bitrate)
+
+        scene = ctk.CTkEntry(host, fg_color=dv.GROUND, border_color=EDGE,
+                             border_width=1, text_color=TEXT, height=30,
+                             corner_radius=dv.RADIUS_CONTROL,
+                             font=ctk.CTkFont(size=12),
+                             placeholder_text="leave blank to keep the current scene")
+        if current.get("scene"):
+            scene.insert(0, current["scene"])
+        fields["scene"] = field_row("OBS scene", scene)
+
+        estimate = ctk.CTkLabel(host, text="", anchor="w", text_color=FAINT,
+                                font=ctk.CTkFont(size=11))
+        estimate.pack(anchor="w", padx=8, pady=(10, 0))
+
+        def refresh_estimate(_event=None):
+            try:
+                kbps = int(bitrate.get())
+            except (TypeError, ValueError):
+                estimate.configure(text="")
+                return
+            gb = profiles.estimated_gb_per_hour(kbps)
+            estimate.configure(text=f"Estimated {gb:.1f} GB/h at this bitrate"
+                               if gb else "")
+
+        bitrate.bind("<KeyRelease>", refresh_estimate)
+        refresh_estimate()
+
+        def collect():
+            raw = {"enabled": True, "res": res.get().strip(),
+                   "scene": scene.get().strip(),
+                   "encoder": encoder.get().strip()}
+            for key, widget in (("fps", fps), ("bitrate_kbps", bitrate)):
+                value = widget.get().strip()
+                raw[key] = value or None
+            return profiles.sanitise(raw)
+
+        def do_save():
+            profile = collect()
+            profiles.save(self.classifier, basename, profile)
+            self._log(f"[Profile] {display_name}: {profiles.summary(profile) or 'cleared'}")
+            dialog.destroy()
+            self._refresh_games()
+            self._push_game_data()
+
+        def do_remove():
+            profiles.save(self.classifier, basename, None)
+            self._log(f"[Profile] {display_name}: removed, inherits the default")
+            dialog.destroy()
+            self._refresh_games()
+            self._push_game_data()
+
+        btn_y = height - 56
+        for label, command, dx, accent in (
+                ("Save profile", do_save, 24, True),
+                ("Remove", do_remove, 158, False),
+                ("Cancel", dialog.destroy, 258, False)):
+            button = ctk.CTkButton(
+                dialog, text=label, command=command,
+                fg_color=ACCENT_TINT if accent else SURFACE,
+                hover_color=SURFACE_HOVER,
+                text_color=ACCENT_LIGHT if accent else MUTED,
+                bg_color=self._bg_at(dx / width * WIDTH,
+                                     (btn_y + 17) / height * HEIGHT, CARD_TINT, 225),
+                border_width=1, border_color=EDGE, corner_radius=10,
+                font=ctk.CTkFont(size=12))
+            canvas.create_window(dx, btn_y, anchor="nw", window=button,
+                                 width=124 if accent else 90, height=34)
 
         dialog.lift()
         dialog.focus_force()
