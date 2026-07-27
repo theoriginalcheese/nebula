@@ -1,8 +1,8 @@
 """Regression tests for nav-rail view switching.
 
 Every workspace tab must open without raising, restore the dashboard's
-state-dependent visibility correctly, and keep the activity log mirrored into
-both the dashboard panel and the full Activity view.
+state-dependent visibility correctly, and keep the activity log writing into
+the dashboard Activity panel.
 
     python tests/test_views.py
 """
@@ -50,10 +50,10 @@ def settle(ms=250):
         time.sleep(0.005)
 
 
-VIEWS = ["dashboard", "clips", "games", "activity", "macropad", "settings"]
+VIEWS = ["dashboard", "clips", "games", "macropad", "settings"]
 
-# Log something before the Activity view is ever shown, to prove replay works.
-app._log("[Monitor] test line before activity view was opened")
+# Log something before settle so the dashboard activity panel still receives it.
+app._log("[Monitor] test line before dashboard settle")
 
 for view in VIEWS:
     callback_errors.clear()
@@ -107,14 +107,12 @@ check("timer shown again while recording",
       app.bg.itemcget(app.timer_label_id, "state") == "normal",
       app.bg.itemcget(app.timer_label_id, "state"))
 
-# Log mirroring
+# Log reaches the dashboard Activity panel (v3 has no standalone Activity page).
 app._log("[OBS] mirrored line")
 settle(120)
 dash_text = app.console.get("1.0", "end")
-full_text = app.console_full.get("1.0", "end")
 check("log reaches dashboard panel", "mirrored line" in dash_text)
-check("log reaches Activity view", "mirrored line" in full_text)
-check("Activity replayed earlier lines", "before activity view was opened" in full_text)
+check("earlier lines still in the panel", "before dashboard settle" in dash_text)
 
 # Visibility gating: hidden window must skip animation work.
 check("animations gated while hidden", app._visible is False, app._visible)

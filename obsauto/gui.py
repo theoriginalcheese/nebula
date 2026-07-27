@@ -206,23 +206,46 @@ CONTENT_Y0 = TITLEBAR_HEIGHT                 # where the rail and content column
 ICON_TICK_MS = 400
 IDLE_TICK_MS = 500
 
-# The rail's five destinations (frame 2a). Note this is a SUBSET of the views:
-# v3 has no standalone Activity page - the activity log is a dashboard block -
-# but the view is still registered and still mirrors the log, because _log()
-# writes to both consoles. Folding it away entirely belongs with the step-2
-# dashboard rewrite; until then it is simply not reachable from the rail.
+# The rail's five destinations (frame 2a). v3 has no standalone Activity page —
+# the activity log is a dashboard block only — so RAIL_VIEWS is the full set of
+# views, not a subset.
 RAIL_VIEWS = list(dv.PANES)
 
 VIEW_TITLES = {
     "dashboard": "Dashboard",
     "clips": "Clips",
     "games": "Games",
-    "activity": "Activity",
     "macropad": "Macropad",
     "settings": "Settings",
 }
 VIDEO_EXTS = (".mkv", ".mp4", ".mov", ".flv", ".ts", ".m4v")
-LOG_HISTORY = 500  # lines kept for replay into the Activity view
+LOG_HISTORY = 500  # lines kept for replay into the dashboard activity panel
+
+
+def short_obs_version(raw):
+    """Frame 2a draws ``OBS 30.2`` — keep major.minor when a patch is present."""
+    if not raw:
+        return ""
+    parts = str(raw).strip().split(".")
+    if len(parts) >= 2 and parts[0].isdigit() and parts[1].isdigit():
+        return f"{parts[0]}.{parts[1]}"
+    return str(raw).strip()
+
+
+def format_video_label(settings):
+    """``2560×1440 · 60 fps`` from GetVideoSettings — or ``""`` if incomplete."""
+    if not settings:
+        return ""
+    w = settings.get("baseWidth") or settings.get("outputWidth")
+    h = settings.get("baseHeight") or settings.get("outputHeight")
+    num = settings.get("fpsNumerator")
+    den = settings.get("fpsDenominator") or 1
+    if not w or not h or not num or not den:
+        return ""
+    fps = float(num) / float(den)
+    fps_s = (f"{fps:.0f}" if abs(fps - round(fps)) < 0.05
+             else f"{fps:.2f}".rstrip("0").rstrip("."))
+    return f"{int(w)}\u00d7{int(h)} \u00b7 {fps_s} fps"
 
 # Rearrangeable dashboard blocks. Heights are fixed so reordering is a pure
 # translation of each block - no rebuilding, nothing to resize.
@@ -443,17 +466,20 @@ class AppWindow:
         self._connecting = False      # a connect attempt is in flight on a worker
         self._abort_connect = False   # set when monitoring is stopped mid-connect
         self._monitoring_on = False   # reflected in the sidebar toggle
-        self._obs_connected = False   # reflected in the sidebar OBS card
+        self._obs_connected = False   # reflected in the titlebar OBS readout
+        self._obs_version = ""        # short form from GetVersion, e.g. "30.2"
+        self._handshake_ms = None     # last Hello→Identified, for Settings footer
+        self._video_label = ""        # "2560×1440 · 60 fps" from GetVideoSettings
+        self._scene_name = ""         # current program scene from OBS
         self._hero_state = "disconnected"  # disconnected | watching | recording | paused
         self._bitrate_sample = None   # (duration_ms, bytes) from the previous poll
         self._current_game = None
         self._eq_bars = []            # scene-preview equaliser bar canvas ids
-        self._log_lines = []          # replayed into the Activity view when shown
+        self._log_lines = []          # replayed into the dashboard activity panel
         self._log_pending = []        # buffered lines awaiting a coalesced flush
         self._log_flush_scheduled = False
         self._log_lock = threading.Lock()
         self.console = None           # set by _build_activity
-        self.console_full = None      # set by _build_activity_view
 
         ctk.set_appearance_mode("dark")
         ctk.set_default_color_theme("dark-blue")
@@ -1010,28 +1036,29 @@ class AppWindow:
             self.bg.tag_bind(item, "<Leave>", lambda _e: self.bg.configure(cursor=""))
 
         # ---- right side: OBS connection, then the window controls ----
-        self._make_circle_button(WIDTH - pad_r - 15, cy, 13, SURFACE, EMBER,
+        # Hit target >= 30px (spec). Diameter 30 -> radius 15.
+        self._make_circle_button(WIDTH - pad_r - 17, cy, 15, SURFACE, EMBER,
                                  ICON_GLYPHS["x"], self._hide, font=(ICON_FONT, -9))
-        self._make_circle_button(WIDTH - pad_r - 47, cy, 13, SURFACE, SURFACE_HOVER,
+        self._make_circle_button(WIDTH - pad_r - 53, cy, 15, SURFACE, SURFACE_HOVER,
                                  ICON_GLYPHS["minus"], self._hide, font=(ICON_FONT, -9))
         # Collapse to the mini overlay (2k). It refuses while idle, which is why
         # this is a normal button rather than one that gets hidden - the refusal
         # says why, where a vanishing control would just be confusing.
         self._make_circle_button(
-            WIDTH - pad_r - 79, cy, 13, SURFACE, SURFACE_HOVER,
+            WIDTH - pad_r - 89, cy, 15, SURFACE, SURFACE_HOVER,
             ICON_GLYPHS[dv.ICONS["collapse_mini"]], self.show_mini,
             font=(ICON_FONT, -9))
 
-        ox = WIDTH - pad_r - 106   # clears the three circle buttons
-        self._obs_card_sub = self.bg.create_text(
-            ox, cy, anchor="e",
-            text=f"{self.config.get('obs_host', 'localhost')}:{self.config.get('obs_port', 4455)}",
-            fill=FAINT, font=dv.font(10.5, mono=True))
+        ox = WIDTH - pad_r - 120   # clears the three 30px circle buttons
+        # Frame 2a: one readout `OBS 30.2 · localhost:4455`. Host:port stays
+        # visible even while disconnected so you can see what we're aiming at.
+        hostport = (f"{self.config.get('obs_host', 'localhost')}:"
+                    f"{self.config.get('obs_port', 4455)}")
         self._obs_card_title = self.bg.create_text(
-            ox - 116, cy, anchor="e", text="OBS disconnected",
+            ox, cy, anchor="e", text=f"OBS offline \u00b7 {hostport}",
             fill=MUTED, font=dv.type_font("meta"))
         self._obs_card_dot = self.bg.create_text(
-            ox - 232, cy, anchor="e", text=ICON_GLYPHS["plugs"],
+            ox - 210, cy, anchor="e", text=ICON_GLYPHS["plugs"],
             fill=EMBER, font=(ICON_FONT, -13))
 
         # The rule under the titlebar, fading at both ends like every other.
@@ -1125,7 +1152,6 @@ class AppWindow:
             ("dashboard", self._build_dashboard),
             ("clips", self._build_clips),
             ("games", self._build_games),
-            ("activity", self._build_activity_view),
             ("macropad", self._build_macropad),
             ("settings", self._build_settings),
         ]
@@ -1879,29 +1905,6 @@ class AppWindow:
             return
         threading.Thread(target=lambda: self.gamesync.push(snapshot), daemon=True).start()
 
-    # ---- Activity (full height) ----
-    def _build_activity_view(self):
-        (x, y, w, h), _ = self._view_panel(
-            "Activity", "Everything Nebula has done this session.")
-        box_x, box_y = x + 16, y + 74
-        box_w, box_h = w - 32, h - 90
-        plate = make_solid_tile(self._S(box_w), self._S(box_h), LOG_BG, radius=self._S(10))
-        photo = to_photo(plate)
-        self._images.append(photo)
-        self.bg.create_image(box_x, box_y, anchor="nw", image=photo)
-        self._composite.paste(plate, (self._S(box_x), self._S(box_y)), plate)
-        self.console_full = ctk.CTkTextbox(
-            self.root, state="disabled", wrap="word", fg_color=LOG_BG,
-            corner_radius=0, bg_color=LOG_BG,
-            font=ctk.CTkFont(family="Consolas", size=12), text_color=MUTED,
-        )
-        self.bg.create_window(box_x + 10, box_y + 10, anchor="nw",
-                              window=self.console_full,
-                              width=box_w - 20, height=box_h - 20)
-        self._prepare_log_tags(self.console_full)
-        # Replay anything logged before this view existed.
-        self._append_log_batch(self.console_full, list(self._log_lines))
-
     # ---- Macropad ----
     # ---- Macropad (frame 2e) ----
     # The frame draws a CONNECTED 3x3 pad: "HID 0x1209:0xA1B2", a live key map,
@@ -2008,6 +2011,7 @@ class AppWindow:
         for child in self._settings_host.winfo_children():
             child.destroy()
         self._settings_fields = {}
+        self._settings_obs_footer_label = None
 
         blurb = next((b for k, _t, b in settings_spec.GROUPS if k == self._settings_group), "")
         if blurb:
@@ -2016,6 +2020,51 @@ class AppWindow:
                          font=ctk.CTkFont(size=11)).pack(anchor="w", padx=12, pady=(10, 2))
         for field in settings_spec.fields_in(self._settings_group):
             self._settings_field(field)
+        if self._settings_group == "obs":
+            self._build_settings_obs_footer()
+
+    def _build_settings_obs_footer(self):
+        """Frame 2c: ``Connected to OBS 30.2 — handshake 41 ms`` + Test again.
+
+        Every figure is real — version from GetVersion, handshake from the last
+        successful Hello→Identified. Nothing is drawn until both exist.
+        """
+        foot = ctk.CTkFrame(self._settings_host, fg_color=dv.over(ACCENT, 0.07, dv.CARD_CORE),
+                            corner_radius=dv.RADIUS_TILE, border_width=1,
+                            border_color=dv.over(ACCENT, 0.18, dv.CARD_CORE))
+        foot.pack(fill="x", padx=12, pady=(16, 12))
+        self._settings_obs_footer_label = ctk.CTkLabel(
+            foot, text="", anchor="w", text_color=ACCENT_LIGHT,
+            font=ctk.CTkFont(size=12))
+        self._settings_obs_footer_label.pack(side="left", padx=14, pady=10)
+        test = ctk.CTkButton(
+            foot, text="Test again", command=self._start,
+            fg_color="transparent", hover_color=SURFACE_HOVER, text_color=TEXT,
+            border_width=1, border_color=dv.over(ACCENT, 0.42, dv.CARD_CORE),
+            corner_radius=999, font=ctk.CTkFont(size=12), width=110, height=34)
+        self._focus_ring(test)
+        test.pack(side="right", padx=8, pady=8)
+        self._refresh_settings_obs_footer()
+
+    def _refresh_settings_obs_footer(self):
+        label = getattr(self, "_settings_obs_footer_label", None)
+        if label is None:
+            return
+        try:
+            if not label.winfo_exists():
+                return
+        except Exception:
+            return
+        if self._obs_connected and self._obs_version and self._handshake_ms is not None:
+            text = (f"Connected to OBS {self._obs_version} — "
+                    f"handshake {self._handshake_ms} ms")
+        elif self._obs_connected and self._obs_version:
+            text = f"Connected to OBS {self._obs_version}"
+        elif self._obs_connected:
+            text = "Connected to OBS"
+        else:
+            text = "Not connected to OBS"
+        label.configure(text=text)
 
     def _settings_field(self, field):
         row = ctk.CTkFrame(self._settings_host, fg_color="transparent")
@@ -2288,13 +2337,21 @@ class AppWindow:
         self._images.append(photo)
         self.bg.create_image(x, y, anchor="nw", image=photo)
 
-        # Source label chip, top-left.
+        # Source label chip, top-left. Scene name is filled in once OBS answers
+        # GetCurrentProgramScene — never a fabricated "Game Capture" string.
         self._glass(x + 12, y + 12, 168, 24, tint=BASE_BG, radius=8,
                     tint_alpha=150, border_alpha=0)
         self._preview_dot_id = self.bg.create_text(x + 22, y + 24, anchor="w", text=ICON_GLYPHS["record"],
                                                    fill=FAINT, font=(ICON_FONT, -8))
-        self.bg.create_text(x + 34, y + 24, anchor="w", text="Game Capture (Auto)",
-                            fill=NAV_ACTIVE_TEXT, font=dv.font(10, 500))
+        self._preview_scene_chip = self.bg.create_text(
+            x + 34, y + 24, anchor="w", text="OBS scene",
+            fill=NAV_ACTIVE_TEXT, font=dv.font(10, 500))
+
+        # Res/fps chip (frame 2a: ``2560×1440 · 60 fps``). Blank until
+        # GetVideoSettings arrives — never a placeholder resolution.
+        self._preview_video_id = self.bg.create_text(
+            x + w - 12, y + h - 14, anchor="se", text="",
+            fill=ACCENT_LIGHT, font=dv.font(10, mono=True))
 
         # Equaliser bars along the bottom. Drawn once, in a fixed waveform - they
         # used to animate, but every canvas mutation costs a full window
@@ -2406,16 +2463,30 @@ class AppWindow:
         )
 
         # Scene-preview caption follows the capture, so the right column isn't
-        # claiming "idle" while a recording is plainly running.
+        # claiming "idle" while a recording is plainly running. Scene name is
+        # real (GetCurrentProgramScene); res/fps only appear once fetched.
+        scene = self._scene_name
         info = {
-            "recording": (f"Game Capture → {self._current_game}"
-                          if self._current_game else "Capturing"),
-            "paused": "Capture held — paused",
-            "watching": "Scene capture idle",
+            "recording": (f"{scene} → {self._current_game}" if scene and self._current_game
+                          else scene or (f"Capturing {self._current_game}"
+                                         if self._current_game else "Capturing")),
+            "paused": (f"{scene} — paused" if scene else "Capture held — paused"),
+            "watching": (f"Scene — {scene}" if scene else "Scene capture idle"),
             "disconnected": "No scene — OBS offline",
         }[state]
         self.bg.itemconfigure(self._preview_info_id, text=info)
         self.bg.itemconfigure(self._preview_dot_id, fill=tint if show_readout else FAINT)
+        if getattr(self, "_preview_scene_chip", None):
+            self.bg.itemconfigure(
+                self._preview_scene_chip,
+                text=(scene[:22] if scene else "OBS scene"))
+        if getattr(self, "_preview_video_id", None):
+            # 2f: idle watching has no scene preview chrome with live numbers.
+            show_vid = bool(self._video_label) and state in ("recording", "paused", "watching")
+            self.bg.itemconfigure(
+                self._preview_video_id,
+                text=self._video_label if show_vid else "",
+                state="normal" if show_vid else "hidden")
 
         # The button row: same position always, different label / binding /
         # emphasis per state (2f-2h). Ember only leads on a real disconnection.
@@ -2675,17 +2746,31 @@ class AppWindow:
     def _set_obs_status(self, text, color):
         """Update the OBS readout in the titlebar.
 
-        v3 has only two hues, so this reads accent for anything healthy or
-        in-flight and ember only for a real disconnection - "the only place the
-        ember hue leads" (frame 2h).
+        Frame 2a draws ``OBS 30.2 · localhost:4455``. The version is real
+        (GetVersion); until it arrives we show the transitional status string
+        (connecting / disconnected / …). v3 has only two hues, so this reads
+        accent for anything healthy or in-flight and ember only for a real
+        disconnection — "the only place the ember hue leads" (frame 2h).
         """
         disconnected = color in (EMBER, RED)
         role = "plugs" if disconnected else "plugs-connected"
+        hostport = (f"{self.config.get('obs_host', 'localhost')}:"
+                    f"{self.config.get('obs_port', 4455)}")
+        if not disconnected and self._obs_version:
+            label = f"OBS {self._obs_version} \u00b7 {hostport}"
+        else:
+            # Keep the host:port visible so a disconnect still names the target.
+            label = f"OBS {text} \u00b7 {hostport}"
         self.bg.itemconfigure(self._obs_card_dot,
                               text=ICON_GLYPHS[role],
                               fill=EMBER if disconnected else ACCENT_LIGHT)
-        self.bg.itemconfigure(self._obs_card_title, text=f"OBS {text.lower()}",
+        self.bg.itemconfigure(self._obs_card_title, text=label,
                               fill=EMBER if disconnected else MUTED)
+        # Re-anchor the plugs glyph just left of the label (labels vary a lot).
+        ox = WIDTH - dv.TITLEBAR_PAD_RIGHT - 120
+        tw = self._text_w(label, dv.type_font("meta"))
+        self.bg.coords(self._obs_card_dot, ox - tw - 14, TITLEBAR_HEIGHT / 2)
+        self._refresh_settings_obs_footer()
 
     def _set_monitoring(self, on):
         self._monitoring_on = on
@@ -2707,11 +2792,11 @@ class AppWindow:
         log_to_file(message)
         # Two things happen here, both cheap and thread-safe (this is called
         # from the monitor/offload/sync worker threads): keep a bounded history
-        # for the Activity view to replay, and buffer the line for the UI. The
-        # actual textbox write is coalesced onto the Tk thread by _flush_log, so
-        # a burst of hundreds of lines becomes one textbox update per ~80ms
-        # instead of one window composite per line (which pegged the UI under a
-        # log flood), and Tk is only ever touched from the main thread.
+        # for the dashboard activity panel to replay, and buffer the line for
+        # the UI. The actual textbox write is coalesced onto the Tk thread by
+        # _flush_log, so a burst of hundreds of lines becomes one textbox update
+        # per ~80ms instead of one window composite per line (which pegged the
+        # UI under a log flood), and Tk is only ever touched from the main thread.
         with self._log_lock:
             self._log_lines.append(message)
             if len(self._log_lines) > LOG_HISTORY:
@@ -2727,7 +2812,7 @@ class AppWindow:
                     self._log_flush_scheduled = False
 
     def _flush_log(self):
-        """Drain the pending buffer into the log textbox(es) in one batch. Runs
+        """Drain the pending buffer into the activity textbox in one batch. Runs
         on the Tk thread (scheduled by _log)."""
         with self._log_lock:
             pending = self._log_pending
@@ -2740,7 +2825,7 @@ class AppWindow:
         # scrolled out of the bounded history, so there's no point rendering it.
         if len(pending) > LOG_HISTORY:
             pending = pending[-LOG_HISTORY:]
-        for box in (self.console, getattr(self, "console_full", None)):
+        for box in (self.console,):
             if box is not None:
                 self._append_log_batch(box, pending)
 
@@ -3539,11 +3624,11 @@ class AppWindow:
         # (launch-if-needed, connect, retry every 10s) instead of a one-shot
         # attempt that pops a discouraging error dialog while OBS is still
         # mid-launch.
-        self._set_obs_status("Connecting...", AMBER)
+        self._set_obs_status("connecting…", AMBER)
         self.autostart()
 
     def _on_connected(self):
-        self._set_obs_status("Connected", GREEN)
+        self._set_obs_status("connected", GREEN)
         self._set_monitoring(True)
         self.monitor.start()
 
@@ -3558,7 +3643,10 @@ class AppWindow:
             return
         self._connecting = True
         self._abort_connect = False
-        self._set_obs_status("Connecting...", AMBER)
+        # Drop stale version/handshake so the titlebar doesn't keep advertising
+        # a live OBS while the socket is still coming up.
+        self._clear_obs_meta()
+        self._set_obs_status("connecting…", AMBER)
 
         # Runs off the Tk thread. ensure_obs_running() may launch OBS, and
         # obs.connect() blocks for up to its 5s socket timeout - which is the
@@ -3566,9 +3654,14 @@ class AppWindow:
         # is still booting. Done inline (as it used to be) that froze the whole
         # window for seconds on launch, and again on every 10s retry.
         def worker():
+            meta = {}
             try:
                 ensure_obs_running(self.config.get("obs_path"), log=self._log)
                 self.obs.connect()
+                # Fetch once on the worker — never on the Tk thread. These are
+                # the real sources for the titlebar version, the res/fps chip
+                # and the Settings handshake line (handoff §2.2).
+                meta = self._fetch_obs_meta()
             except Exception as exc:
                 # Deliberately broad: anything escaping here would strand
                 # _connecting=True and permanently block every future
@@ -3587,9 +3680,45 @@ class AppWindow:
                 # running yet). A _connecting left stuck at True would block
                 # every future reconnect for the life of the process.
                 self._connecting = False
-            self._ui(self._connect_succeeded)
+            self._ui(lambda m=meta: self._connect_succeeded(m))
 
         threading.Thread(target=worker, daemon=True).start()
+
+    def _fetch_obs_meta(self):
+        """Read version / video / scene from OBS. Call from a worker only."""
+        meta = {
+            "handshake_ms": self.obs.last_handshake_ms,
+            "version": "",
+            "video_label": "",
+            "scene": "",
+        }
+        try:
+            meta["version"] = short_obs_version(self.obs.get_version())
+        except OBSError:
+            pass
+        try:
+            meta["video_label"] = format_video_label(self.obs.get_video_settings())
+        except OBSError:
+            pass
+        try:
+            meta["scene"] = self.obs.get_current_program_scene() or ""
+        except OBSError:
+            pass
+        return meta
+
+    def _apply_obs_meta(self, meta):
+        """Paint cached OBS metadata onto the titlebar / hero / Settings."""
+        if not meta:
+            return
+        self._handshake_ms = meta.get("handshake_ms")
+        self._obs_version = meta.get("version") or ""
+        self._video_label = meta.get("video_label") or ""
+        self._scene_name = meta.get("scene") or ""
+        # Re-apply the current hero state so the preview chip / caption pick up
+        # the new scene and video label without inventing a fifth state.
+        if self._hero_state:
+            self._set_hero_state(self._hero_state)
+        self._refresh_settings_obs_footer()
 
     def _ui(self, fn):
         """Marshal `fn` onto the Tk thread, tolerating a torn-down window."""
@@ -3612,21 +3741,34 @@ class AppWindow:
                       "accepting connections. In OBS: Tools -> WebSocket Server "
                       "Settings -> tick 'Enable WebSocket server' (or restart OBS). "
                       "Retrying in 10s...")
-            self._set_obs_status("Enable WS in OBS", AMBER)
+            self._set_obs_status("enable WS in OBS", AMBER)
         else:
             self._log(f"[Monitor] OBS not available yet ({error}); retrying in 10s...")
-            self._set_obs_status("Disconnected", RED)
+            self._set_obs_status("disconnected", RED)
         self.root.after(10000, self.autostart)
 
-    def _connect_succeeded(self):
+    def _connect_succeeded(self, meta=None):
         if self._abort_connect:
             # Monitoring was stopped while this attempt was still in flight -
             # don't quietly restart it behind the user's back.
             self.obs.disconnect()
-            self._set_obs_status("Disconnected", RED)
+            self._clear_obs_meta()
+            self._set_obs_status("disconnected", RED)
             return
+        self._apply_obs_meta(meta or {})
         self._on_connected()
         self._log("[Monitor] Auto-started.")
+
+    def _clear_obs_meta(self):
+        self._obs_version = ""
+        self._handshake_ms = None
+        self._video_label = ""
+        self._scene_name = ""
+        if getattr(self, "_preview_video_id", None):
+            self.bg.itemconfigure(self._preview_video_id, text="", state="hidden")
+        if getattr(self, "_preview_scene_chip", None):
+            self.bg.itemconfigure(self._preview_scene_chip, text="OBS scene")
+        self._refresh_settings_obs_footer()
 
     def _on_connection_change(self, connected):
         # _obs_connected was declared in __init__ and then never assigned - it
@@ -3636,16 +3778,34 @@ class AppWindow:
         # step here and in _poll_obs_status, which is the other place the truth
         # is observed.
         self._obs_connected = bool(connected)
-        self.root.after(0, lambda: self._set_obs_status(
-            *(("Connected", GREEN) if connected else ("Reconnecting...", RED))
-        ))
-        self.root.after(0, self._update_tray_tooltip)
+        if connected:
+            # Monitor reconnected off-thread — refresh meta the same way as
+            # the initial connect, never on the Tk thread.
+            def refresh():
+                try:
+                    meta = self._fetch_obs_meta()
+                except Exception:
+                    meta = {}
+
+                def apply():
+                    self._apply_obs_meta(meta)
+                    self._set_obs_status("connected", GREEN)
+                    self._update_tray_tooltip()
+
+                self._ui(apply)
+
+            threading.Thread(target=refresh, daemon=True).start()
+        else:
+            self._clear_obs_meta()
+            self.root.after(0, lambda: self._set_obs_status("reconnecting…", RED))
+            self.root.after(0, self._update_tray_tooltip)
 
     def _stop(self):
         self._abort_connect = True  # cancel any connect attempt still in flight
         self.monitor.stop()
         self.obs.disconnect()
-        self._set_obs_status("Disconnected", RED)
+        self._clear_obs_meta()
+        self._set_obs_status("disconnected", RED)
         self._set_monitoring(False)
         self._set_hero_state("disconnected")
 

@@ -115,9 +115,11 @@ performance lesson), `nebula-dpi-scaling`, `nebula-roadmap-ideas`, `obs-auto-fol
 
 <!-- STATE:BEGIN — keep this block current; it is the whole point of the file -->
 
-**Updated:** 2026-07-26 — **all seven build-order steps are done and verified.**
+**Updated:** 2026-07-27 — **v3 build complete on `main`; Cursor closed the last
+implementable fidelity gaps.** Hand remaining live-OBS QA + packaging to Claude via
+`CLAUDE-FINALISE-PROMPT.md`.
 
-Committed on local branch **`ui-v3`** (not pushed; `main` untouched).
+On branch **`main`** (includes the former `ui-v3` work + fine-detail + OBS meta).
 
 **Done — the import and the contract**
 - v3 design files imported to `design/ui-v3/` from Claude Design project
@@ -324,14 +326,17 @@ rather than inline — that keeps typing at one composite per keystroke.
   key in memory and saving quietly puts it back. Don't run classification tests against the
   real `games.json`.
 
-**The v3 build order is complete.** Sensible next moves, none of them started:
-- Fold away the transitional `activity` view — v3 has no standalone Activity page (it's a
-  dashboard block), but the view is still registered and mirrors the log because `_log()`
-  writes to both consoles. Unreachable from the rail; see `gui.RAIL_VIEWS`.
-- The remaining fabricated-data gaps, if you want the frames matched exactly: clip Length and
-  thumbnails (need ffmpeg), the `Auto-culled` / `Idle pauses` tiles (need counters in
-  `Monitor`), scene resolution/fps (obtainable from OBS `GetVideoSettings`).
-- Merge `ui-v3` into `main` when you're happy with it, and rebuild `dist/Nebula.exe`
-  (`pyinstaller nebula.spec`) — the exe does not track source.
+**The v3 build order is complete.** Cursor (2026-07-27) also:
+- Folded away the transitional standalone Activity view (dashboard block only).
+- Wired real OBS metadata on a worker: `GetVersion` → titlebar, `GetVideoSettings` →
+  hero res/fps chip, `GetCurrentProgramScene` → scene caption, handshake ms → Settings
+  OBS footer + Test again. Helpers: `short_obs_version`, `format_video_label`
+  (`tests/test_obs_meta.py`).
+- Documented frame **2l** in `FRAMES.md` (it is the build-spec sheet, not a pane).
+- Bumped titlebar circle hit targets to 30px.
+
+**Still for Claude (see `CLAUDE-FINALISE-PROMPT.md`):** live-OBS visual QA, rebuild
+`dist/Nebula.exe`, and the deliberate open gaps (ffmpeg Length/thumbs, Auto-culled /
+Idle pauses counters, Mic meter, Mark clip, Macropad HID, Phosphor TTF vs Fluent).
 
 <!-- STATE:END -->

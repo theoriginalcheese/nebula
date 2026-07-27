@@ -172,3 +172,11 @@ Menu: `Show Nebula`, `Pause recording`, `Stop recording`, `Monitoring on`,
 - Snaps to the nearest screen corner within 32px; **remembers position per monitor**.
 - Drops to **55% opacity after 3s** without the pointer; full opacity on hover.
 - Collapse restores the main window; **it never appears while idle**.
+
+### 2l — Build spec (not a UI frame)
+
+`id="2l"` in the `.dc.html` is **§ 05 · Build spec — the contract**, not another
+screen. It is the colour tokens / geometry / config map / icon legend / motion /
+living-background / build-order table. Transcribed verbatim to
+[`BUILD-SPEC.md`](BUILD-SPEC.md) and as code in `obsauto/design_v3.py`. There is
+nothing to render for 2l beyond honouring that contract.

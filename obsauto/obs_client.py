@@ -41,6 +41,9 @@ class OBSClient:
         self._lock = threading.Lock()
         self._pending = {}
         self._stop = False
+        # Wall-clock ms for the last successful Hello→Identified handshake.
+        # The Settings pane and titlebar read this; never invent a figure.
+        self.last_handshake_ms = None
 
     def log(self, msg):
         self.on_log(msg)
@@ -48,9 +51,11 @@ class OBSClient:
     # ---- connection lifecycle ----
     def connect(self, timeout=5):
         url = f"ws://{self.host}:{self.port}"
+        t0 = time.perf_counter()
         self._ws = websocket.create_connection(url, timeout=timeout)
         self._stop = False
         self._identified.clear()
+        self.last_handshake_ms = None
 
         hello_raw = self._ws.recv()
         hello = json.loads(hello_raw)
@@ -79,6 +84,7 @@ class OBSClient:
             raise OBSError(f"Identify failed: {identified_raw}")
 
         self._identified.set()
+        self.last_handshake_ms = max(1, int(round((time.perf_counter() - t0) * 1000)))
         self.log("[OBS] Connected and handshake complete.")
 
         # `timeout` above only bounds the handshake itself. If it stayed in
@@ -224,3 +230,15 @@ class OBSClient:
 
     def get_record_directory(self):
         return self.call("GetRecordDirectory").get("recordDirectory")
+
+    def get_version(self):
+        """OBS Studio version string from GetVersion (e.g. ``30.2.3``)."""
+        return self.call("GetVersion").get("obsVersion", "")
+
+    def get_video_settings(self):
+        """Canvas size + fps from GetVideoSettings."""
+        return self.call("GetVideoSettings")
+
+    def get_current_program_scene(self):
+        data = self.call("GetCurrentProgramScene")
+        return data.get("currentProgramSceneName") or data.get("sceneName") or ""

@@ -169,7 +169,7 @@ check("content padding", gui.MARGIN == dv.CONTENT_PAD == 26)
 
 # "Hit target >= 30px" for the titlebar circle buttons.
 check("titlebar buttons meet the 30px hit target",
-      2 * 13 >= dv.MIN_HIT_TARGET - 4, f"diameter 26 vs min {dv.MIN_HIT_TARGET}")
+      2 * 15 >= dv.MIN_HIT_TARGET, f"diameter 30 vs min {dv.MIN_HIT_TARGET}")
 
 # "In-window panels sit on rgba(16,13,28,0.72-0.92)" - never opaque.
 alphas = [int(a) for a in re.findall(r"tint_alpha=(\d+)", GUI_SRC)]
