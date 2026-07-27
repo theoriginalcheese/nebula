@@ -1,3 +1,4 @@
+import contextlib
 import ctypes
 import math
 import os
@@ -545,7 +546,17 @@ class AppWindow:
         self._drag_block = None
         self._poll_job = None         # the single _poll_obs_status timer, so it can be pulled forward
         self._transport_busy = False  # a start/stop/pause round-trip is in flight
-        self._images = []  # keeps PhotoImage refs alive - Tk GCs them otherwise
+        # Keeps PhotoImage refs alive - Tk garbage-collects them otherwise, and
+        # the canvas item goes blank. Append-only was fine when the UI was built
+        # once, but the dashboard and the ribbon are now rebuilt on every
+        # relayout and every refresh, and each rebuild's images stayed pinned
+        # here forever. The stress test found the end of that road: "Fail to
+        # allocate bitmap" after 120 relayouts, i.e. Windows out of GDI handles.
+        #
+        # So anything that redraws itself opens a scope first (_image_scope),
+        # and its previous generation is released when the next one starts.
+        self._images = []
+        self._image_sink = None
         self._glass_cache = {}  # (size, tint, alpha, radius, border...) -> PhotoImage
         self._dragging = False
         self._scanning = False
@@ -664,7 +675,7 @@ class AppWindow:
         self.bg.pack(fill="both", expand=True)
 
         bg_photo = to_photo(self.nebula)
-        self._images.append(bg_photo)
+        self._keep_image(bg_photo)
         self._backdrop_id = self.bg.create_image(0, 0, anchor="nw", image=bg_photo)
 
         # Truth source for widget corner-blending. An embedded CTk widget paints
@@ -799,7 +810,7 @@ class AppWindow:
         # reads its bg_color from the composite, sheen and all.
         self._composite.paste(plate, (self._S(x), self._S(y)), plate)
         photo = to_photo(plate)
-        self._images.append(photo)
+        self._keep_image(photo)
         return self.bg.create_image(x, y, anchor="nw", image=photo)
 
     def _card(self, x, y, w, h, kind="panel", core_tint=CARD_CORE,
@@ -933,7 +944,7 @@ class AppWindow:
         identical."""
         px = self._S(size)
         photo = to_photo(render_frame(size=px))
-        self._images.append(photo)
+        self._keep_image(photo)
         self.bg.create_image(cx - size / 2, cy - size / 2, anchor="nw", image=photo)
 
     # ---- left nav rail (frame 2a) ----
@@ -1009,7 +1020,7 @@ class AppWindow:
             (self._S(1), self._S(span)) if vertical else (self._S(span), self._S(1)),
             Image.NEAREST)
         photo = to_photo(strip)
-        self._images.append(photo)
+        self._keep_image(photo)
         return self.bg.create_image(a, b, anchor="nw", image=photo)
 
     def _game_count(self):
@@ -1355,7 +1366,7 @@ class AppWindow:
         tile = make_glass_tile(self._S(w), self._S(h), SURFACE, tint_alpha=235,
                                radius=self._S(5), border_hex=EDGE, border_alpha=200)
         photo = to_photo(tile)
-        self._images.append(photo)
+        self._keep_image(photo)
         self.bg.create_image(cx - w / 2, cy - h / 2, anchor="nw", image=photo)
         self.bg.create_text(cx, cy, text=label, fill=MUTED, font=dv.font(9.5, 500))
 
@@ -1607,7 +1618,11 @@ class AppWindow:
         self._composite = self._base_composite.copy()
         self._grid_layout = [dict(it) for it in new_layout]
         before = set(self.bg.find_all())
-        self._render_dashboard()
+        # The old dashboard's canvas items were just deleted, so its images can
+        # go with them. Without this each relayout pinned another set of
+        # bitmaps and Windows eventually refused to allocate more.
+        with self._image_scope("dashboard"):
+            self._render_dashboard()
         for item in set(self.bg.find_all()) - before:
             self.bg.addtag_withtag("view_dashboard", item)
         self._composite = self._base_composite
@@ -1908,7 +1923,7 @@ class AppWindow:
         canvas_img = canvas_img.rotate(dv.DRAG_ROTATE_DEG, resample=Image.BICUBIC,
                                        expand=False)
         photo = to_photo(canvas_img)
-        self._images.append(photo)
+        self._keep_image(photo)
         item = self.bg.create_image(self._drag_origin[0] - 18,
                                     self._drag_origin[1] - 18,
                                     anchor="nw", image=photo)
@@ -2068,7 +2083,7 @@ class AppWindow:
         widget trick the activity log uses, so the corners stay clean."""
         plate = make_solid_tile(self._S(w), self._S(h), LOG_BG, radius=self._S(10))
         photo = to_photo(plate)
-        self._images.append(photo)
+        self._keep_image(photo)
         self.bg.create_image(x, y, anchor="nw", image=photo)
         self._composite.paste(plate, (self._S(x), self._S(y)), plate)
         # A CTkScrollableFrame is internally a child of its own private canvas
@@ -3433,7 +3448,7 @@ class AppWindow:
         source label and a little equaliser that comes alive while recording."""
         tile = self._make_preview_tile(w, h)
         photo = to_photo(tile)
-        self._images.append(photo)
+        self._keep_image(photo)
         self.bg.create_image(x, y, anchor="nw", image=photo)
 
         # Source label chip, top-left. Scene name is filled in once OBS answers
@@ -3499,6 +3514,49 @@ class AppWindow:
         """
         return "normal" if (want_visible and self._current_view == "dashboard") else "hidden"
 
+    def _keep_image(self, photo):
+        """Hold a PhotoImage against Tk's garbage collector.
+
+        Goes into the active scope if one is open, so a surface that rebuilds
+        itself doesn't pin every generation it has ever drawn.
+        """
+        sink = self._image_sink
+        (self._images if sink is None else sink).append(photo)
+        return photo
+
+    @contextlib.contextmanager
+    def _image_scope(self, name):
+        """Images drawn inside this block replace the previous generation.
+
+        The canvas items from the last pass have already been deleted by the
+        caller, so nothing on screen is referencing those images any more -
+        dropping them is what returns the bitmaps to Windows.
+        """
+        attr = f"_images_{name}"
+        setattr(self, attr, [])                 # releases the previous list
+        previous, self._image_sink = self._image_sink, getattr(self, attr)
+        try:
+            yield
+        finally:
+            self._image_sink = previous
+
+    def _hero_present(self):
+        """Is the hero card actually built right now?
+
+        6.8's catalogue lets any module be removed, the hero included - and
+        when it goes, its widgets are destroyed while _poll_obs_status carries
+        on calling _set_hero_state once a second. Without this guard that is a
+        TclError ("invalid command name") every second, into a stderr that
+        doesn't exist under pythonw.
+        """
+        button = getattr(self, "record_toggle_btn", None)
+        if button is None:
+            return False
+        try:
+            return bool(button.winfo_exists())
+        except Exception:
+            return False
+
     def _set_hero_state(self, state):
         """Swap the hero card between the four v3 states from one enum.
 
@@ -3511,7 +3569,11 @@ class AppWindow:
         Note the tints: v3 is a two-hue system and "Disconnected - the only
         place the ember hue leads". Recording is therefore accent, not red.
         """
+        # The state is remembered either way, so putting the module back
+        # restores the card in whatever state the app has since reached.
         self._hero_state = state
+        if not self._hero_present():
+            return
         tint = dv.HERO_STATES[state]["tint"] or CARD_BORDER
         light = EMBER if tint is EMBER else ACCENT_LIGHT
         eyebrow = {
@@ -4090,17 +4152,22 @@ class AppWindow:
                  else "Nothing recorded today")
 
         tx, ty, tw, th = self._ribbon_geom
-        # The track itself, always drawn - "Empty state: hairline + Nothing
-        # recorded today", so the strip exists even with no spans on it.
-        self._ribbon_items.append(self._glass(
-            tx, ty, tw, th, tint=dv.GROUND, radius=dv.RIBBON_END_RADIUS,
-            tint_alpha=150, border_alpha=0))
+        # One gradient tile per block and one hatch per idle gap, redrawn on
+        # every refresh - on a rec_stop, a range switch, or the live tick. The
+        # scope drops the last pass's bitmaps, which the deletes above already
+        # orphaned.
+        with self._image_scope("ribbon"):
+            # The track itself, always drawn - "Empty state: hairline + Nothing
+            # recorded today", so the strip exists even with no spans on it.
+            self._ribbon_items.append(self._glass(
+                tx, ty, tw, th, tint=dv.GROUND, radius=dv.RIBBON_END_RADIUS,
+                tint_alpha=150, border_alpha=0))
 
-        span_seconds = max(1.0, end - start)
-        games = sorted({s["game"] for s in spans})
-        for span in spans:
-            self._ribbon_block(span, tx, ty, tw, th, start, span_seconds, games)
-        self._ribbon_axis(tx, ty + th + 10, tw, start, end)
+            span_seconds = max(1.0, end - start)
+            games = sorted({s["game"] for s in spans})
+            for span in spans:
+                self._ribbon_block(span, tx, ty, tw, th, start, span_seconds, games)
+            self._ribbon_axis(tx, ty + th + 10, tw, start, end)
         for item in self._ribbon_items:
             self.bg.addtag_withtag("view_clips", item)
 
@@ -4132,7 +4199,7 @@ class AppWindow:
         tile = _vertical_gradient_tile(self._S(int(bw)), self._S(th),
                                        top, bottom, self._S(dv.RIBBON_RADIUS))
         photo = to_photo(tile)
-        self._images.append(photo)
+        self._keep_image(photo)
         self._ribbon_items.append(
             self.bg.create_image(bx, ty, anchor="nw", image=photo))
 
@@ -4147,7 +4214,7 @@ class AppWindow:
                                 dv.HAIRLINE_RGB, dv.RIBBON_HATCH_ALPHA,
                                 self._S(dv.RIBBON_HATCH_PERIOD))
             hphoto = to_photo(hatch)
-            self._images.append(hphoto)
+            self._keep_image(hphoto)
             self._ribbon_items.append(
                 self.bg.create_image(gx, ty, anchor="nw", image=hphoto))
 
@@ -4359,7 +4426,7 @@ class AppWindow:
         box_r = 10
         backing = make_solid_tile(self._S(box_w), self._S(box_h), LOG_BG, radius=self._S(box_r))
         backing_photo = to_photo(backing)
-        self._images.append(backing_photo)
+        self._keep_image(backing_photo)
         self.bg.create_image(box_x, box_y, anchor="nw", image=backing_photo)
         self._composite.paste(backing, (self._S(box_x), self._S(box_y)), backing)
 
@@ -4807,10 +4874,15 @@ class AppWindow:
                     hh, rem = divmod(total_seconds, 3600)
                     mm, ss = divmod(rem, 60)
                     self._tray_elapsed = f"{hh:02d}:{mm:02d}:{ss:02d}"
-                    self.bg.itemconfigure(self.timer_label_id, text=self._tray_elapsed)
                     written = status.get("outputBytes", 0)
-                    self.bg.itemconfigure(self.storage_label_id, text=_format_bytes(written))
-                    self._update_bitrate(status.get("outputDuration", 0), written)
+                    # The tray tooltip and the mini overlay still want these,
+                    # so they're computed regardless - only the hero's own
+                    # canvas items need the card to exist.
+                    if self._hero_present():
+                        self.bg.itemconfigure(self.timer_label_id, text=self._tray_elapsed)
+                        self.bg.itemconfigure(self.storage_label_id,
+                                              text=_format_bytes(written))
+                        self._update_bitrate(status.get("outputDuration", 0), written)
             except OBSError:
                 pass
 
@@ -4846,7 +4918,7 @@ class AppWindow:
         # Not while customising: "Content while editing: pointer-events:none".
         # The poll would otherwise re-enable the hero's button a beat after
         # edit mode had deliberately made it inert.
-        if not getattr(self, "_customising", False):
+        if not getattr(self, "_customising", False) and self._hero_present():
             self._set_enabled(self.record_toggle_btn,
                               self.obs.connected or state == "disconnected",
                               text_color=self._hero_primary_text)
@@ -5122,13 +5194,13 @@ class AppWindow:
                 if self.nebula.size[0] >= sw and self.nebula.size[1] >= sh
                 else self.nebula.resize((sw, sh)))
         photo = to_photo(crop)
-        self._images.append(photo)
+        self._keep_image(photo)
         canvas.create_image(0, 0, anchor="nw", image=photo)
         tile = make_glass_tile(sw, sh, CARD_TINT, tint_alpha=215,
                                radius=self._S(dv.RADIUS_CARD),
                                border_hex=CARD_BORDER, border_alpha=80)
         tile_photo = to_photo(tile)
-        self._images.append(tile_photo)
+        self._keep_image(tile_photo)
         canvas.create_image(0, 0, anchor="nw", image=tile_photo)
 
         chip = canvas.create_oval(16, 20, 48, 52, fill=ACCENT_TINT, outline="")
@@ -5331,13 +5403,13 @@ class AppWindow:
                 if self.nebula.size[0] >= sw and self.nebula.size[1] >= sh
                 else self.nebula.resize((sw, sh)))
         photo = to_photo(crop)
-        self._images.append(photo)
+        self._keep_image(photo)
         canvas.create_image(0, 0, anchor="nw", image=photo)
         tile = make_glass_tile(sw, sh, CARD_TINT, tint_alpha=225,
                                radius=self._S(dv.RADIUS_TILE),
                                border_hex=CARD_BORDER, border_alpha=80)
         tile_photo = to_photo(tile)
-        self._images.append(tile_photo)
+        self._keep_image(tile_photo)
         canvas.create_image(0, 0, anchor="nw", image=tile_photo)
 
         dot = canvas.create_text(16, h / 2, text=ICON_GLYPHS["record"],
@@ -5998,11 +6070,11 @@ class AppWindow:
         canvas.place(x=0, y=0)
         crop = self.nebula.resize((sw, sh))
         photo = to_photo(crop)
-        self._images.append(photo)
+        self._keep_image(photo)
         canvas.create_image(0, 0, anchor="nw", image=photo)
         tile = make_glass_tile(sw, sh, CARD_TINT, tint_alpha=225, radius=self._S(18), border_hex=CARD_BORDER, border_alpha=80)
         tile_photo = to_photo(tile)
-        self._images.append(tile_photo)
+        self._keep_image(tile_photo)
         canvas.create_image(0, 0, anchor="nw", image=tile_photo)
         return canvas
 

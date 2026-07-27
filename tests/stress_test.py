@@ -280,10 +280,17 @@ def phase_gui():
     gui.is_obs_running = lambda: False
     from obsauto import config as config_module
     config_module.save_config = lambda *a, **k: None
+    from obsauto import design_v3 as dv
     from obsauto.classifier import Classifier
     from obsauto.config import load_config
     from obsauto.gui import AppWindow
     from obsauto.obs_client import OBSError
+
+    # Which phases actually ran. An exception inside a Tk callback goes to
+    # report_callback_exception and is swallowed, so a phase that dies simply
+    # never chains to the next one - phases 4 and 5 were silently skipped for
+    # exactly that reason once the grid layout format changed under them.
+    reached = set()
 
     AppWindow._poll_manual_review = lambda self: None
     app = AppWindow(load_config(), Classifier(), on_close_to_tray=lambda: None)
@@ -344,19 +351,37 @@ def phase_gui():
 
     def phase4_grid():
         callback_errors.clear()
+        reached.add("grid")
         app._show_view("dashboard")
         bad = {"overlap": 0}
-        names = ["hero", "stats", "activity"]
-        for _ in range(120):
-            layout = [{"name": n, "span": random.choice([1, 2])} for n in random.sample(names, 3)]
+        names = list(gui.DEFAULT_BLOCKS)
+        for i in range(120):
+            picked = random.sample(names, random.randint(1, len(names)))
+            layout = [{"id": n, "span": random.choice(dv.SPANS)} for n in picked]
             for it in layout:
-                if it["name"] == "hero":
-                    it["span"] = 2
+                if it["id"] == "hero":
+                    it["span"] = dv.GRID_COLS      # hero is full width only
+            # Every third pass churns edit mode too: entering and leaving
+            # re-renders with a handle strip inside every module, which is the
+            # path that changes each block's height.
+            if i % 3 == 0:
+                app._set_customise(not app._customising)
             app._relayout_grid(layout)
             if not rects_valid(app._grid_rects):
                 bad["overlap"] += 1
+        if app._customising:
+            app._set_customise(False)
         check("grid: 120 random relayouts, always valid", bad["overlap"] == 0,
               f"{bad['overlap']} invalid")
+        # A module removed in edit mode must be offered back, never destroyed.
+        app._relayout_grid([{"id": "hero", "span": 12}])
+        app._set_customise(True)
+        app._add_module("activity")
+        app._set_customise(False)
+        check("grid: a removed module can be added back",
+              any(it["id"] == "activity" for it in app._grid_layout),
+              [it["id"] for it in app._grid_layout])
+        app._relayout_grid([dict(it) for it in gui.DEFAULT_GRID])
         check("grid: no callback exceptions", not callback_errors,
               callback_errors[0].splitlines()[-1] if callback_errors else "clean")
         check("grid: widgets alive after churn",
@@ -369,6 +394,7 @@ def phase_gui():
 
     def phase5_flood():
         callback_errors.clear()
+        reached.add("flood")
         app.root.deiconify()
         app.root.update()
         # Flood the log while measuring frame pacing.
@@ -376,6 +402,8 @@ def phase_gui():
         flood = {"i": 0}
 
         def beat():
+            if gaps.get("stop"):
+                return
             now = time.perf_counter()
             gaps["list"].append(now - gaps["last"])
             gaps["last"] = now
@@ -397,17 +425,290 @@ def phase_gui():
             if data:
                 p50 = data[len(data) // 2] * 1000
                 check("log flood: UI stayed responsive (p50 < 60ms)", p50 < 60, f"{p50:.1f}ms")
+            if callback_errors:
+                # The last line alone doesn't say where it came from, and a
+                # swallowed Tk callback has no other trace.
+                print("\n--- first callback exception during the flood ---")
+                print(callback_errors[0])
             check("log flood: no callback exceptions", not callback_errors,
                   callback_errors[0].splitlines()[-1] if callback_errors else "clean")
-            app.root.quit()
+            # The heartbeat reschedules itself forever; stop it before the next
+            # phase, or it keeps firing through everything that follows.
+            gaps["stop"] = True
+            phase6_panes()
 
         beat()
         app.root.after(10, pump_logs)
+
+    def phase6_panes():
+        """Every pane, repeatedly, with the ribbon and forecast live.
+
+        View switching is one itemconfigure per tag, but the panes now carry
+        canvas images (ribbon blocks, thumbnails) that are rebuilt rather than
+        toggled - so churning them is what would expose a leak.
+        """
+        callback_errors.clear()
+        reached.add("panes")
+        before_items = len(app.bg.find_all())
+        for _ in range(40):
+            for view in gui.RAIL_VIEWS:
+                app._show_view(view)
+        app._show_view("dashboard")
+        after_items = len(app.bg.find_all())
+        check("panes: 200 view switches leak no canvas items",
+              after_items <= before_items + 40,
+              f"{before_items} -> {after_items}")
+        check("panes: no callback exceptions", not callback_errors,
+              callback_errors[0].splitlines()[-1] if callback_errors else "clean")
+
+        # The ribbon re-renders from scratch each time; 60 refreshes across all
+        # three ranges must not accumulate items either.
+        app._show_view("clips")
+        app.root.update()
+        # Render once *with* data before measuring. The ribbon was built when
+        # the log was empty, so counting from there measures the spans it
+        # legitimately drew, not a leak.
+        app._set_ribbon_range("Session")
+        app.root.update()
+        start_items = len(app.bg.find_all())
+        for i in range(60):
+            app._set_ribbon_range(dv.RIBBON_RANGES[i % len(dv.RIBBON_RANGES)])
+        app._set_ribbon_range("Session")
+        check("ribbon: 60 range switches leak nothing",
+              len(app.bg.find_all()) <= start_items + 30,
+              f"{start_items} -> {len(app.bg.find_all())}")
+        app._show_view("dashboard")
+        phase7_hero()
+
+    def phase7_hero():
+        """Hero state churn - the bug that put the timer over other panes."""
+        callback_errors.clear()
+        reached.add("hero")
+        states = ["watching", "recording", "paused", "disconnected"]
+        for i in range(200):
+            app._set_hero_state(states[i % 4])
+        check("hero: 200 state changes, no exceptions", not callback_errors,
+              callback_errors[0].splitlines()[-1] if callback_errors else "clean")
+
+        # Away from the dashboard, no hero item may be visible in ANY state -
+        # _poll_obs_status calls _set_hero_state once a second, so this is the
+        # exact path that leaked the elapsed timer onto the Macropad pane.
+        app._show_view("macropad")
+        leaked = []
+        for state in states:
+            app._set_hero_state(state)
+            for cap, val in app._readouts.values():
+                for item in (cap, val):
+                    if app.bg.itemcget(item, "state") != "hidden":
+                        leaked.append((state, item))
+            if app.bg.itemcget(app._pause_btn_win, "state") != "hidden":
+                leaked.append((state, "pause button"))
+        check("hero: nothing bleeds through on another pane", not leaked, leaked[:4])
+        app._show_view("dashboard")
+        app._set_hero_state("watching")
+        check("hero: readouts come back on the dashboard",
+              app.bg.itemcget(app._pause_btn_win, "state") == "normal")
+        phase8_palette()
+
+    def phase8_palette():
+        """The palette against a large, hostile row set."""
+        callback_errors.clear()
+        reached.add("palette")
+        from obsauto import palette as pal
+        rows = [pal.Row(random.choice(pal.GROUP_ORDER), f"Row {i} " + "".join(
+                    random.choice("abcdefg ") for _ in range(20)),
+                    lambda: None, hint=f"hint{i}", recency=random.random())
+                for i in range(2000)]
+        queries = ["", "a", "ab", "abc", "zzz", "row", "r o w", "  ", "é",
+                   "a" * 40, "hint199", "ROW 1"]
+        worst = 0.0
+        for query in queries:
+            t0 = time.perf_counter()
+            grouped = pal.search(rows, query)
+            worst = max(worst, time.perf_counter() - t0)
+            flat = pal.flatten(grouped)
+            if len(flat) > pal.MAX_ROWS:
+                check("palette: row cap held", False, len(flat))
+                break
+        else:
+            check("palette: row cap held across every query", True,
+                  f"worst search {worst * 1000:.1f}ms over 2000 rows")
+        check("palette: search stays interactive", worst < 0.25,
+              f"{worst * 1000:.1f}ms")
+        check("palette: a hostile query returns nothing, not an error",
+              pal.search(rows, "\x00\x01") == [])
+        phase9_done()
+
+    def phase9_done():
+        check("all GUI phases ran",
+              reached >= {"grid", "flood", "panes", "hero", "palette"},
+              sorted(reached))
+        app.root.quit()
 
     app.root.after(50, phase3_connection)
     app.root.after(120000, app.root.quit)  # global safety net
     app.root.mainloop()
     app.root.destroy()
+
+
+# ======================================================================
+# Phase A - the session log under concurrent writers, and what reads it
+# ======================================================================
+def phase_session_log():
+    from obsauto import forecast, session_log
+
+    work = tempfile.mkdtemp(prefix="nebula-stress-log-")
+    path = os.path.join(work, "sessions.jsonl")
+    session_log.log_path = lambda: path
+
+    # Eight threads appending at once. The file is line-oriented precisely so
+    # this is safe; a torn line would show up as a row that won't parse.
+    errors = []
+
+    def writer(n):
+        try:
+            for i in range(250):
+                session_log.append(random.choice(session_log.EVENT_TYPES),
+                                   game=f"Game{n}", path=f"clip{n}-{i}.mkv",
+                                   duration=random.randint(1, 3600),
+                                   size=random.randint(1, 5_000_000_000))
+        except Exception as exc:
+            errors.append(exc)
+
+    threads = [threading.Thread(target=writer, args=(n,)) for n in range(8)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    written = sum(1 for _ in open(path, encoding="utf-8"))
+    parsed = session_log.read()
+    check("session log: concurrent writers never raise", not errors, errors[:2])
+    check("session log: every line written is a whole line",
+          len(parsed) == written == 2000, f"{len(parsed)} parsed / {written} lines")
+
+    # A torn tail (power cut mid-append) must cost one row, not the file.
+    with open(path, "a", encoding="utf-8") as f:
+        f.write('{"ts": 1, "type": "rec_st')
+    check("session log: a torn tail costs one row, not the file",
+          len(session_log.read()) == 2000, len(session_log.read()))
+
+    t0 = time.perf_counter()
+    spans = session_log.spans()
+    span_ms = (time.perf_counter() - t0) * 1000
+    check("session log: 2000 events fold into spans quickly",
+          span_ms < 500, f"{span_ms:.0f}ms -> {len(spans)} spans")
+
+    t0 = time.perf_counter()
+    result = forecast.forecast(500 * forecast.GB, 2000 * forecast.GB, spans)
+    fc_ms = (time.perf_counter() - t0) * 1000
+    check("forecast: never divides by zero or throws on junk data",
+          isinstance(result, dict) and "days_left" in result, f"{fc_ms:.0f}ms")
+    check("forecast: days_left is never negative",
+          result["days_left"] is None or result["days_left"] >= 0,
+          result["days_left"])
+
+    # Deliberately absurd inputs.
+    for free, total in ((0, 100), (100, 0), (-5, 100), (10 ** 18, 10 ** 18)):
+        try:
+            forecast.forecast(free, total, spans)
+        except Exception as exc:
+            check(f"forecast: survives free={free} total={total}", False, exc)
+            break
+    else:
+        check("forecast: survives absurd disk figures", True)
+
+
+# ======================================================================
+# Phase B - the classification merge, concurrently (the reclassify bug)
+# ======================================================================
+def phase_classify():
+    from obsauto import classifier as classifier_module
+    from obsauto.classifier import Classifier, merge_classifications
+
+    work = tempfile.mkdtemp(prefix="nebula-stress-class-")
+    classifier_module.DATA_FILE = os.path.join(work, "games.json")
+    c = Classifier()
+
+    # Hammer the same keys from several threads, flipping each between buckets.
+    errors = []
+
+    def churn(n):
+        try:
+            for i in range(120):
+                key = f"app{i % 20}.exe"
+                if random.random() < 0.5:
+                    c.mark_game(key, f"Game {i % 20}")
+                else:
+                    c.mark_non_game(key)
+        except Exception as exc:
+            errors.append(exc)
+
+    threads = [threading.Thread(target=churn, args=(n,)) for n in range(6)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    check("classify: concurrent reclassification never raises", not errors, errors[:2])
+    both = set(c._data["games"]) & set(c._data["non_games"])
+    check("classify: nothing is ever filed as both game and non-game",
+          not both, sorted(both)[:5])
+
+    # And on disk, which is what the next launch and the sync push both read.
+    import json
+    on_disk = json.load(open(classifier_module.DATA_FILE, encoding="utf-8"))
+    disk_both = set(on_disk["games"]) & set(on_disk["non_games"])
+    check("classify: the file on disk is consistent too", not disk_both,
+          sorted(disk_both)[:5])
+
+    # The merge itself, against a remote that disagrees about everything.
+    remote = {"games": {f"app{i}.exe": {} for i in range(20)},
+              "non_games": {f"app{i}.exe": True for i in range(20)}}
+    merged = merge_classifications(remote, c.snapshot())
+    check("classify: merging a self-contradictory remote still resolves",
+          not (set(merged["games"]) & set(merged["non_games"])),
+          sorted(set(merged["games"]) & set(merged["non_games"]))[:5])
+
+
+# ======================================================================
+# Phase C - thumbnails: the worker must never run during a recording
+# ======================================================================
+def phase_thumbs():
+    from obsauto import thumbs
+
+    work = tempfile.mkdtemp(prefix="nebula-stress-thumbs-")
+    recording = {"on": True}
+    done = []
+    worker = thumbs.ThumbWorker(work, on_log=lambda m: None,
+                                is_busy=lambda: recording["on"],
+                                on_done=lambda c, f: done.append(c))
+    # 200 submissions of files that don't exist: extraction will find nothing,
+    # but the queue, the dedupe and the recording guard all still get worked.
+    accepted = sum(worker.submit(os.path.join(work, f"clip{i}.mkv"))
+                   for i in range(200))
+    duplicates = sum(worker.submit(os.path.join(work, f"clip{i}.mkv"))
+                     for i in range(200))
+    if thumbs.available():
+        check("thumbs: every distinct clip is accepted", accepted == 200, accepted)
+        check("thumbs: duplicates are refused", duplicates == 0, duplicates)
+    else:
+        check("thumbs: submissions refused cleanly with no ffmpeg",
+              accepted == 0 and duplicates == 0)
+
+    worker.start()
+    time.sleep(1.5)
+    check("thumbs: nothing extracted while a recording is running",
+          not done, len(done))
+    recording["on"] = False
+    time.sleep(1.0)
+    worker.stop()
+    # stop() signals; it doesn't block. Give the thread a moment to notice -
+    # checking is_alive() the instant after is a race, not a hang.
+    if worker._thread:
+        worker._thread.join(timeout=5)
+    check("thumbs: the worker stops within 5s of being told to",
+          not worker._thread.is_alive() if worker._thread else True)
 
 
 def main():
@@ -420,7 +721,19 @@ def main():
     print("=" * 70)
     phase_gamesync()
     print("\n" + "=" * 70)
-    print("PHASE 3-5: GUI - connection churn, grid churn, log flood + pacing")
+    print("PHASE A: Session log - concurrent writers, and what reads it")
+    print("=" * 70)
+    phase_session_log()
+    print("\n" + "=" * 70)
+    print("PHASE B: Classification - concurrent reclassification")
+    print("=" * 70)
+    phase_classify()
+    print("\n" + "=" * 70)
+    print("PHASE C: Thumbnails - the never-during-recording guard")
+    print("=" * 70)
+    phase_thumbs()
+    print("\n" + "=" * 70)
+    print("PHASE 3-9: GUI - connection, grid, log flood, panes, hero, palette")
     print("=" * 70)
     phase_gui()
 
