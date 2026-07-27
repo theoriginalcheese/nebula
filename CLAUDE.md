@@ -257,6 +257,46 @@ in one is invisible to the other. When checking whether a build works, read
   write, capped to LOG_HISTORY with top-trim. A per-line textbox write is a window composite
   each — a burst pegged the UI at 371ms before this. Don't write the textbox from `_log` directly.
 
+## Resource & rebind bugs (found 2026-07-27 by hunting, not by a failing test)
+
+Eight defects were live in shipped code without failing a single test, because
+each was about a *resource* or a *rebind* rather than a visible behaviour — the
+kind that only appears after hours of use, and which under `pythonw` logs to a
+stderr that doesn't exist. `tests/test_regressions.py` has one check per bug.
+The recurring shapes, worth checking in review:
+
+- **Register without unregister.** `_register_hotkey` discarded every handle, so
+  each rebind *added* three hooks: editing the toggle key four times left
+  fifteen live, the stale `suppress=True` ones still swallowing the old key
+  system-wide. `hotkey.unregister()` existed for exactly this and was never
+  called. Handles are kept in `_hotkey_handles` now.
+- **A setting that claims `restart=False` but has no live path.** Changing
+  `replay_hotkey` / `palette_hotkey` did nothing at all. If a field isn't in
+  `_settings_apply_live`, it needs a `restart` reason instead.
+- **A periodic timer writing to a widget the layout destroyed.** 6.8's catalogue
+  lets any module be removed; `_flush_log` (console) and `_set_hero_state`
+  (hero buttons) then wrote to dead widgets forever. Both are guarded
+  (`_hero_present()`, a `winfo_exists` check). Note canvas *items* are safe —
+  Tk ignores `itemconfigure` on a deleted id — so only widget-backed writers
+  are at risk.
+- **A pane's widget in another pane's teardown list.** `_build_clips` put its
+  search box in `_dashboard_widgets`, which `_relayout_grid` destroys wholesale
+  — so rearranging the dashboard killed the Clips search until restart.
+- **Unbounded caches of images.** `self._images` was append-only while the
+  dashboard and ribbon rebuild themselves; the stress test reached "Fail to
+  allocate bitmap" (Windows out of GDI handles). Anything that redraws itself
+  now opens an `_image_scope()`. The clip thumbnail cache is capped too.
+- **Unbounded work per view visit.** Every visit to Clips spawned a thread
+  launching an ffprobe per clip; `_queue_thumb_work` is single-flight now.
+- **A binding invoked with no event.** tkinter's `_substitute` passes arguments
+  through raw when their count doesn't match its format, so a binding Tk calls
+  without substitutions reaches the handler bare. Customise-mode handlers take
+  their event optionally.
+
+⚠️ The thumbnail scan **blocks** inside `root.after` under `update()`-pumping
+rather than merely being refused — a stronger form of the mainloop trap below.
+Test anything that touches it under a real `mainloop()`.
+
 ## Deferred-callback trap (bit us 2026-07-23 — check for it in review)
 `except SomeError as e:` **unbinds `e` when the block exits** (Python deletes the except
 target). So anything that captures `e` and runs *later* — a `lambda` handed to `root.after()`
