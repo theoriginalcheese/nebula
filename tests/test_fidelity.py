@@ -180,6 +180,31 @@ check("panel alphas land in the spec's band",
       all(a <= int(hi * 255) + 12 for a in alphas),
       sorted({a for a in alphas if a > int(hi * 255) + 12}))
 
+# 6.1: "Star dots are currently painted above the rail and the cards. The whole
+# background stack lives at z-index:0 behind the chrome." The rail and titlebar
+# used to be bare backdrop with text on it - nothing between the wordmark and
+# the sky - so every star in that area read as being inside the chrome. Both
+# now carry a .72 panel, which shows up as the composite differing from the
+# raw backdrop there.
+comp, aur = app._composite, app.aurora
+def differs(x, y):
+    sx, sy = app._S(x), app._S(y)
+    return comp.getpixel((sx, sy))[:3] != aur.convert("RGB").getpixel((sx, sy))[:3]
+
+check("the titlebar is a panel, not bare backdrop",
+      differs(gui.WIDTH * 0.6, gui.TITLEBAR_HEIGHT / 2),
+      "nothing painted between the titlebar text and the sky")
+check("the rail is a panel, not bare backdrop",
+      differs(gui.SIDEBAR_W / 2, gui.HEIGHT - 200),
+      "nothing painted between the rail and the sky")
+check("the chrome sits at the spec's .72",
+      dv.CHROME_ALPHA == int(round(0.72 * 255)), dv.CHROME_ALPHA)
+
+# The composite is what embedded widgets sample for their corner blend. Seeded
+# from the starless surface, so a widget landing on a star can't pick it up.
+check("widgets sample a dust-free surface",
+      app._composite.size == app.aurora.size, "composite/aurora size mismatch")
+
 check("no callback exceptions", not callback_errors,
       callback_errors[0].strip().splitlines()[-1] if callback_errors else "clean")
 

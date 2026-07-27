@@ -28,6 +28,7 @@ The background *randomisation* survives; only the animation is dropped. See
 # place a second hue leads, and only on the disconnected hero state (frame 2h).
 
 GROUND = "#100D1C"        # window ground
+GROUND_DEEP = "#0A0812"   # outer stop of the ground gradient (6.1 layer 0)
 PANEL = "#12101F"         # panel base
 CARD_CORE = "#181428"     # card core (the *inner* of the two card layers)
 RAISED = "#241E44"        # raised surface, keycaps
@@ -64,6 +65,11 @@ TINT_ALPHA = (0.06, 0.16)
 # them while text keeps its contrast. A fully opaque panel over the aurora is a
 # bug." (16,13,28) is #100D1C, i.e. the ground itself at partial alpha.
 PANEL_OVER_BACKDROP_ALPHA = (0.72, 0.92)
+
+# "In-window cores are translucent so the aurora reads through: .72 for the
+# rail and titlebar, .82-.92 for content cards." (6.2)
+CHROME_ALPHA = int(round(0.72 * 255))       # rail, titlebar
+CARD_ALPHA = int(round(0.86 * 255))         # content cards, mid-band
 
 
 def _hex_to_rgb(value):
@@ -404,12 +410,25 @@ MINI_FADED_OPACITY = 0.55
 # tests/test_frame_pacing.py).
 
 BACKGROUND = {
+    # 0 - ground: radial-gradient(150% 110% at 50% -10%, PANEL 0%, GROUND_DEEP 58%)
+    "ground_stop": 0.58,
+    # 1 - aurora: three blobs, sized as a fraction of the surface
     "blobs_per_surface": 3,
+    "blob_size_w": (0.42, 0.58),
+    "blob_size_h": (0.56, 0.88),
     "blob_blur_px": (54, 110),
+    "blob_fade_at": 0.68,               # rgba(...) -> transparent 68%
     "blob_alpha": {"accent": 0.22, "deep": 0.22, "ember": 0.07},
+    # 2/3 - star dust. "Near layer N = star density (default 34). Far layer =
+    # 0.75xN, max size 1.3px, max alpha .5, wrapper opacity .7."
     "star_layers": 2,
-    "star_size_px": (1, 2),
-    "star_alpha": (0.2, 0.85),
+    "star_density": 34,
+    "star_size_near": (1.0, 1.9),
+    "star_alpha_near": (0.24, 0.85),
+    "star_size_far_max": 1.3,
+    "star_alpha_far_max": 0.5,
+    "star_far_opacity": 0.7,
+    # 4 - vignette
     "vignette": {"transparent_to": 0.46, "black_alpha": 0.55},
 }
 

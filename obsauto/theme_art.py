@@ -121,7 +121,9 @@ def generate_nebula(width, height):
 # surface tone - the deepest chromatic token in the Nebula Deep palette.
 AURORA_DEEP = "#241E44"
 
-_STAR_TINTS = [(245, 243, 255), (196, 189, 240), (173, 196, 255)]
+# "Colour is always rgba(217,212,255,a) - never #fff." The old three-tint mix
+# included a blue that read as a second accent hue, which v3 doesn't have.
+STAR_RGB = (217, 212, 255)
 
 
 def _vignette_mask_v3(width, height, inner_frac, max_alpha):
@@ -144,61 +146,145 @@ def _vignette_mask_v3(width, height, inner_frac, max_alpha):
     return mask.resize((width, height), Image.BICUBIC)
 
 
+def _ground_gradient_v3(width, height, inner_hex, outer_hex, stop):
+    """Layer 0: radial-gradient(150% 110% at 50% -10%, inner 0%, outer `stop`).
+
+    Painted small and upscaled - it is the lowest-frequency thing on screen, so
+    a 96px render carries every bit of information a 1770px one would.
+    """
+    sw, sh = 96, 96
+    grad = Image.new("RGB", (sw, sh))
+    px = grad.load()
+    r0, g0, b0 = _hex_to_rgb(inner_hex)
+    r1, g1, b1 = _hex_to_rgb(outer_hex)
+    # The gradient box is 150% x 110% of the surface, centred at (50%, -10%).
+    cx, cy = 0.5, -0.10
+    rx, ry = 0.75, 0.55
+    for y in range(sh):
+        fy = ((y + 0.5) / sh - cy) / ry
+        for x in range(sw):
+            fx = ((x + 0.5) / sw - cx) / rx
+            t = min(1.0, ((fx * fx + fy * fy) ** 0.5) / stop)
+            px[x, y] = (int(r0 + (r1 - r0) * t),
+                        int(g0 + (g1 - g0) * t),
+                        int(b0 + (b1 - b0) * t))
+    return grad.resize((width, height), Image.BICUBIC).convert("RGBA")
+
+
+def _radial_blob(size, colour, alpha, fade_at=0.68):
+    """One aurora blob: radial-gradient(circle, rgba(colour, alpha), transparent
+    `fade_at`). Drawn as a real falloff rather than a hard ellipse that gets
+    blurred - a blurred disc keeps a flat plateau in the middle, which is what
+    made the aurora read as a smudge instead of light."""
+    w, h = size
+    steps = 48
+    layer = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(layer)
+    rgb = _hex_to_rgb(colour)
+    for i in range(steps, 0, -1):
+        t = i / steps                      # 1.0 at the rim, ->0 at the centre
+        if t > fade_at:
+            continue
+        # Linear, like the CSS stop it comes from. A squared falloff packs the
+        # brightness into a small core that a 54px blur then flattens away -
+        # measured peak 22/255 against the linear ramp's 38.
+        a = alpha * (1.0 - t / fade_at)
+        rx, ry = w / 2 * t, h / 2 * t
+        draw.ellipse([w / 2 - rx, h / 2 - ry, w / 2 + rx, h / 2 + ry],
+                     fill=(*rgb, int(round(a * 255))))
+    return layer
+
+
 def generate_backdrop_v3(width, height, seed=None):
-    """The v3 aurora + starfield, rendered once from `seed` (random per launch
-    when None). Returns an opaque RGBA image the size asked for."""
+    """The v3 living background, rendered once from `seed` (random per launch
+    when None).
+
+    Returns **two** images: the full stack, and the same stack without the star
+    dust. Section 6.1 of the build spec names the single biggest defect of the
+    last build as "star dots are currently painted above the rail and the
+    cards... the whole background stack lives at z-index:0 behind the chrome -
+    never inside it, never over it", while also requiring the chrome to stay
+    translucent so the aurora reads through it. Both hold at once only if the
+    chrome composites against a surface that has the aurora but not the dust:
+    the aurora is a broad wash that survives glass, a 1.9px star at .85 alpha
+    punches through it as a speck of dirt.
+
+    The five layers, back to front:
+      0  ground gradient
+      1  aurora blobs x3 (accent .22, deep indigo .22, ember .07)
+      2  star dust, near
+      3  star dust, far
+      4  vignette
+    """
     from . import design_v3 as d  # local: keeps this module importable alone
 
     rng = random.Random(seed)
     spec = d.BACKGROUND
-    img = Image.new("RGBA", (width, height), (*_hex_to_rgb(d.GROUND), 255))
+
+    # --- 0: ground -----------------------------------------------------------
+    img = _ground_gradient_v3(width, height, d.PANEL, d.GROUND_DEEP,
+                              spec["ground_stop"])
 
     # Blur radii in the spec are base design pixels; scale them with the surface
     # so a high-DPI render is proportionally as soft, not sharper.
     unit = max(width, height) / float(d.WIDTH)
     blur_lo, blur_hi = spec["blob_blur_px"]
+    w_lo, w_hi = spec["blob_size_w"]
+    h_lo, h_hi = spec["blob_size_h"]
 
-    # "3 per surface" - one blob each of accent, deep and ember.
-    for tone, alpha in (
-        ("accent", spec["blob_alpha"]["accent"]),
-        ("deep", spec["blob_alpha"]["deep"]),
-        ("ember", spec["blob_alpha"]["ember"]),
-    ):
+    # --- 1: aurora -----------------------------------------------------------
+    # "Three per surface: accent .22, deep indigo .22, ember .07. The ember one
+    # is what keeps the ground from going cold - do not drop it."
+    for tone in ("accent", "deep", "ember"):
+        alpha = spec["blob_alpha"][tone]
         hex_color = {"accent": d.ACCENT, "deep": AURORA_DEEP, "ember": d.EMBER}[tone]
+        bw = int(rng.uniform(w_lo, w_hi) * width)
+        bh = int(rng.uniform(h_lo, h_hi) * height)
+        blob = _radial_blob((bw, bh), hex_color, alpha, spec["blob_fade_at"])
+        # The spec's own CSS marks 54px as the per-element blur and 90-110 as
+        # what the page ends up with once the blobs overlap. Blurring each one
+        # by the page-level figure crushed the peak alpha from 49/255 to 9 and
+        # the aurora vanished, which is exactly the defect 6.1 reports.
+        blob = _blur_downscaled(blob, blur_lo * unit, (bw, bh))
         layer = Image.new("RGBA", (width, height), (0, 0, 0, 0))
-        cx = rng.uniform(0.04, 0.96) * width
-        cy = rng.uniform(-0.05, 1.05) * height
-        rx = rng.uniform(0.26, 0.40) * width
-        ry = rng.uniform(0.30, 0.46) * height
-        ImageDraw.Draw(layer).ellipse(
-            [cx - rx, cy - ry, cx + rx, cy + ry],
-            fill=(*_hex_to_rgb(hex_color), int(round(alpha * 255))),
-        )
-        layer = _blur_downscaled(layer, rng.uniform(blur_lo, blur_hi) * unit, (width, height))
+        # No mask. Passing the blob as its own mask multiplies its alpha by
+        # itself - a 19% blob became 3.6%, then rounded away to nothing.
+        layer.paste(blob, (int(rng.uniform(-0.18, 0.82) * width),
+                           int(rng.uniform(-0.28, 0.72) * height)))
         img = Image.alpha_composite(img, layer)
 
-    # Two star layers. Static, so "near/far" is expressed as size and alpha
-    # rather than parallax speed - the far layer is smaller, dimmer and sparser.
-    draw = ImageDraw.Draw(img)
-    size_lo, size_hi = spec["star_size_px"]
-    alpha_lo, alpha_hi = spec["star_alpha"]
-    area_ratio = (width * height) / float(d.WIDTH * d.HEIGHT)
-    for layer_index in range(spec["star_layers"]):
-        far = layer_index == 1
-        count = int(round((100 if far else 135) * area_ratio))
-        for _ in range(count):
-            x = rng.uniform(0, width)
-            y = rng.uniform(0, height)
-            radius = rng.uniform(size_lo, size_hi) * unit * (0.7 if far else 1.0) / 2.0
-            alpha = rng.uniform(alpha_lo, alpha_hi * (0.6 if far else 1.0))
-            tint = rng.choice(_STAR_TINTS)
-            draw.ellipse([x - radius, y - radius, x + radius, y + radius],
-                         fill=(*tint, int(round(alpha * 255))))
+    # This is the surface the chrome sits on: everything above is dust, which
+    # must not appear inside a card.
+    aurora_only = img.copy()
 
+    # --- 2 & 3: star dust ----------------------------------------------------
+    # "Vary size and alpha per dot; no uniform grid; never #fff." Static here,
+    # so near/far is carried by size, alpha and density rather than by parallax
+    # speed - animating either layer would cost a full window composite a frame.
+    draw = ImageDraw.Draw(img)
+    area_ratio = (width * height) / float(d.WIDTH * d.HEIGHT)
+    near_size_lo, near_size_hi = spec["star_size_near"]
+    near_a_lo, near_a_hi = spec["star_alpha_near"]
+    for far in (False, True):
+        count = int(round(spec["star_density"] * (0.75 if far else 1.0) * area_ratio))
+        size_hi = spec["star_size_far_max"] if far else near_size_hi
+        alpha_hi = spec["star_alpha_far_max"] if far else near_a_hi
+        # "wrapper opacity .7" on the far layer, on top of its lower ceiling.
+        dim = spec["star_far_opacity"] if far else 1.0
+        for _ in range(count):
+            x, y = rng.uniform(0, width), rng.uniform(0, height)
+            radius = rng.uniform(near_size_lo, size_hi) * unit / 2.0
+            alpha = rng.uniform(near_a_lo, alpha_hi) * dim
+            draw.ellipse([x - radius, y - radius, x + radius, y + radius],
+                         fill=(*STAR_RGB, int(round(alpha * 255))))
+
+    # --- 4: vignette ---------------------------------------------------------
     vignette = spec["vignette"]
-    img.paste((0, 0, 0), (0, 0), _vignette_mask_v3(
-        width, height, vignette["transparent_to"], vignette["black_alpha"]))
-    return img
+    mask = _vignette_mask_v3(width, height, vignette["transparent_to"],
+                             vignette["black_alpha"])
+    img.paste((0, 0, 0), (0, 0), mask)
+    aurora_only.paste((0, 0, 0), (0, 0), mask)
+    return img, aurora_only
 
 
 def make_glass_tile(width, height, tint_hex, tint_alpha=145, radius=16, border_hex=None, border_alpha=90):

@@ -562,7 +562,16 @@ class AppWindow:
         # particular was the one layer NOT captured by self._composite, so every
         # unit of its alpha was a unit of mismatch around embedded widgets'
         # rounded corners; baking it in removes that error entirely.
-        self.nebula = generate_backdrop_v3(self._S(WIDTH), self._S(HEIGHT))
+        #
+        # Two surfaces come back. `nebula` is the full stack and is what the
+        # canvas paints; `aurora` is the same thing without the star dust, and
+        # is what every panel is composited over. 6.1 calls stars appearing
+        # inside the rail and over the cards the single biggest defect of the
+        # last build, while still requiring the chrome to be translucent enough
+        # for the aurora to read through it - and both are true at once only if
+        # the chrome sits on a surface carrying the wash but not the specks.
+        self.nebula, self.aurora = generate_backdrop_v3(
+            self._S(WIDTH), self._S(HEIGHT))
         self.bg = ScaledCanvas(
             tk.Canvas(self.root, width=self._S(WIDTH), height=self._S(HEIGHT),
                       highlightthickness=0, bd=0),
@@ -579,9 +588,12 @@ class AppWindow:
         # that colour has to match the real pixels behind it or you get a square
         # fringe inside the rounded panel. Approximating it (nebula tint + alpha)
         # broke once the glass tiles gained their sheen gradient. Instead keep a
-        # real composite - the nebula exactly as it sits behind the window, with
-        # each glass panel pasted in as it's drawn - and sample that.
-        self._composite = self.nebula.convert("RGB")
+        # real composite - the backdrop exactly as it sits behind the window,
+        # with each glass panel pasted in as it's drawn - and sample that.
+        #
+        # Seeded from the starless surface, so a widget that happens to land on
+        # a star doesn't pick that star up as its corner-blend colour.
+        self._composite = self.aurora.convert("RGB")
 
         self.bg.bind("<ButtonPress-1>", self._start_move)
         self.bg.bind("<B1-Motion>", self._on_move)
@@ -652,15 +664,50 @@ class AppWindow:
     # x/y/w/h/radius are base design units; the placement coordinate is scaled
     # by the ScaledCanvas proxy, so only the generated tile image itself needs
     # to be rendered at the scaled pixel size here to stay crisp.
+    def _plate(self, x, y, w, h, tile, radius, source=None):
+        """Flatten a glass tile onto the starless surface at (x, y).
+
+        6.1 puts the whole background stack at z-index 0, "never inside
+        [the chrome], never over it", and in the same breath keeps the chrome
+        translucent so the aurora reads through. Both hold at once only if what
+        shows through a card is the *aurora* surface rather than the painted
+        one: a broad wash survives glass and reads as depth, a 1.9px star at
+        .85 alpha punches through as a speck of dirt sitting on the card.
+
+        So the tile is composited over `self._composite`, which starts from the
+        starless render and accumulates every panel drawn so far - that second
+        property is what makes a card inside a card (6.2's shell and core) come
+        out right instead of erasing its own shell. Outside the rounded rect
+        the plate stays transparent, so the corners still show the real
+        backdrop, stars and all.
+
+        `source` names what to flatten onto. It defaults to the accumulating
+        composite, which is what a fresh panel wants. A *re*-generated panel
+        passes the pristine shell instead: the composite already holds the
+        previous version of that same panel, so compositing onto it would
+        stack tint on tint and the hero card would darken a step on every
+        state change.
+        """
+        source = self._composite if source is None else source
+        sx, sy, sw, sh = self._S(x), self._S(y), self._S(w), self._S(h)
+        base = source.crop((sx, sy, sx + sw, sy + sh)).convert("RGBA")
+        base.alpha_composite(tile)
+        mask = Image.new("L", (sw, sh), 0)
+        ImageDraw.Draw(mask).rounded_rectangle(
+            [0, 0, sw - 1, sh - 1], radius=self._S(radius), fill=255)
+        base.putalpha(mask)
+        return base
+
     def _glass(self, x, y, w, h, tint=CARD_TINT, radius=18, tint_alpha=150, border_hex=None, border_alpha=55):
         tile = make_glass_tile(
             self._S(w), self._S(h), tint, tint_alpha=tint_alpha, radius=self._S(radius),
             border_hex=border_hex or CARD_BORDER, border_alpha=border_alpha,
         )
+        plate = self._plate(x, y, w, h, tile, radius)
         # Keep the sample source true: any widget placed on this panel afterwards
         # reads its bg_color from the composite, sheen and all.
-        self._composite.paste(tile, (self._S(x), self._S(y)), tile)
-        photo = to_photo(tile)
+        self._composite.paste(plate, (self._S(x), self._S(y)), plate)
+        photo = to_photo(plate)
         self._images.append(photo)
         return self.bg.create_image(x, y, anchor="nw", image=photo)
 
@@ -672,16 +719,21 @@ class AppWindow:
         panel costs ~35ms, and it's re-rendered on every state change plus five
         times per flash - so a game switch used to stall the UI for ~200ms and
         leak a PhotoImage per frame. The set of distinct tiles is tiny and
-        fixed, so caching makes every repeat instant and bounds the memory."""
-        key = (self._S(w), self._S(h), tint, tint_alpha, self._S(radius),
-               border_hex or CARD_BORDER, border_alpha)
+        fixed, so caching makes every repeat instant and bounds the memory.
+
+        The key carries (x, y) now that a plate is flattened onto whatever sits
+        behind it - the same tile at two positions is two different images."""
+        key = (self._S(x), self._S(y), self._S(w), self._S(h), tint, tint_alpha,
+               self._S(radius), border_hex or CARD_BORDER, border_alpha)
         photo = self._glass_cache.get(key)
         if photo is None:
             tile = make_glass_tile(
-                key[0], key[1], tint, tint_alpha=tint_alpha, radius=key[4],
-                border_hex=key[5], border_alpha=border_alpha,
+                key[2], key[3], tint, tint_alpha=tint_alpha, radius=key[6],
+                border_hex=key[7], border_alpha=border_alpha,
             )
-            photo = to_photo(tile)
+            photo = to_photo(self._plate(
+                x, y, w, h, tile, radius,
+                source=getattr(self, "_base_composite", self._composite)))
             self._glass_cache[key] = photo
         self.bg.itemconfigure(item_id, image=photo)
 
@@ -755,6 +807,12 @@ class AppWindow:
     # connection readout and the monitoring toggle both moved up into the
     # titlebar. Rail metrics: w 232, pad 16/12, item h 38, gap 3.
     def _build_sidebar(self):
+        # Same as the titlebar: the rail is a .72 panel so the background stack
+        # stays behind the chrome rather than showing up as specks inside it.
+        self._glass(0, CONTENT_Y0, SIDEBAR_W, HEIGHT - CONTENT_Y0,
+                    tint=dv.GROUND, radius=0, tint_alpha=dv.CHROME_ALPHA,
+                    border_alpha=0)
+
         # Faint divider between rail and content. A hairline, never a solid
         # grey, and it fades at both ends like every other rule in the system.
         self._fading_rule(SIDEBAR_W, CONTENT_Y0, HEIGHT - CONTENT_Y0, vertical=True)
@@ -1004,6 +1062,13 @@ class AppWindow:
         readout, then minimise and close - which per the spec BOTH hide to
         tray; Quit exists only in the tray menu.
         """
+        # The bar is a panel, not bare backdrop. Without it the star dust sat
+        # inside the chrome - 6.1's single biggest defect - because there was
+        # nothing between the wordmark and the sky. ".72 for the rail and
+        # titlebar" keeps the aurora reading through it.
+        self._glass(0, 0, WIDTH, TITLEBAR_HEIGHT, tint=dv.GROUND, radius=0,
+                    tint_alpha=dv.CHROME_ALPHA, border_alpha=0)
+
         cy = TITLEBAR_HEIGHT / 2
         pad_l, pad_r = dv.TITLEBAR_PAD_LEFT, dv.TITLEBAR_PAD_RIGHT
 
