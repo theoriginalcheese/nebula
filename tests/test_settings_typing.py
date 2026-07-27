@@ -102,6 +102,12 @@ ended = {}
 
 
 def beat():
+    # stop() flips the phase to "done" and quits, but a beat already queued
+    # still fires - and "done" isn't a counter, so indexing it raised KeyError
+    # intermittently. Count only the two measured phases, and stop rescheduling
+    # once the run is over.
+    if phase["name"] == "done":
+        return
     beats[phase["name"]] += 1
     app.root.after(16, beat)
 

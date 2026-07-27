@@ -189,6 +189,14 @@ check("the cap is declared", session_log.MAX_READ_BYTES <= 8 * 1024 * 1024,
       session_log.MAX_READ_BYTES)
 check("tail reading still yields parseable rows",
       rows and all("ts" in r for r in rows[:5]), len(rows))
+# 50k parsed dicts plus a 9MB file is real memory; holding it through the rest
+# of the file starved Tk of bitmaps ("Fail to allocate bitmap") in a later
+# section. The assertions above are done with it.
+del rows
+os.remove(big)
+import gc
+
+gc.collect()
 
 # ---------------------------------------------------------------------------
 # The spec'd periodic refreshes were declared but never scheduled
@@ -378,6 +386,71 @@ while time.time() < deadline and app._thumb_scan_busy:
 check("the single-flight guard always releases", not app._thumb_scan_busy,
       "still busy after 8s")
 thumbs_mod.duration_of = _real_duration
+
+# ---------------------------------------------------------------------------
+# A view's items drawn while another pane is showing appeared on top of it
+# ---------------------------------------------------------------------------
+# Symptom, from a screenshot: the Clips pane's session ribbon - track, axis
+# ticks and the ember live block - painted straight across the Dashboard's hero
+# card. _show_view hides a view by setting state on the items that exist at
+# that moment; anything drawn afterwards is born visible. _refresh_ribbon runs
+# on rec_stop and on mark, and _refresh_replay_module runs on every bitrate
+# poll while recording, so both could fire from the wrong pane.
+app._show_view("clips")
+settle(150)
+app._show_view("dashboard")
+settle(150)
+app._refresh_ribbon()
+leaked = [i for i in app.bg._c.find_withtag("view_clips")
+          if app.bg._c.itemcget(i, "state") != "hidden"]
+check("a ribbon refresh can't paint over the Dashboard", not leaked, len(leaked))
+
+app._refresh_replay_module()
+app._show_view("clips")
+settle(150)
+app._refresh_replay_module()
+leaked = [i for i in app.bg._c.find_withtag("blk_replay")
+          if app.bg._c.itemcget(i, "state") != "hidden"]
+check("a replay-module refresh can't paint over Clips", not leaked, len(leaked))
+
+shown = [i for i in app.bg._c.find_withtag("view_clips")
+         if app.bg._c.itemcget(i, "state") != "hidden"]
+check("...and the ribbon is still visible on its own pane", shown, len(shown))
+app._show_view("dashboard")
+settle(150)
+
+# ---------------------------------------------------------------------------
+# "Recorded 0m today" beside "2 clips · 7.3 GB"
+# ---------------------------------------------------------------------------
+# Symptom: the duration only lands on rec_stop, so an hour into a session the
+# tile read zero - which looks broken rather than honest.
+work2 = tempfile.mkdtemp(prefix="nebula-today-")
+today_log = os.path.join(work2, "sessions.jsonl")
+session_log.log_path = lambda: today_log
+now = time.time()
+import json as _json
+
+with open(today_log, "w", encoding="utf-8") as f:
+    for r in ({"ts": now - 7200, "type": "rec_start", "game": "A"},
+              {"ts": now - 5400, "type": "rec_stop", "game": "A",
+               "duration": 1800, "size": 10 ** 9},
+              {"ts": now - 3600, "type": "rec_start", "game": "B"}):
+        f.write(_json.dumps(r) + "\n")
+stats = session_log.today()
+check("Recorded counts the recording still in progress",
+      5000 < stats["recorded_seconds"] < 5600,
+      f"{stats['recorded_seconds']:.0f}s, expected ~5400 (30m done + 60m live)")
+check("...without inventing a finished clip", stats["clips"] == 1, stats)
+
+# ---------------------------------------------------------------------------
+# The hero named Nebula's own window as the foreground it rejected
+# ---------------------------------------------------------------------------
+from obsauto.monitor import Monitor
+
+for name in ("Nebula.exe", "obs64.exe", "pythonw.exe"):
+    check(f"{name} is never reported as the foreground",
+          name.lower() in Monitor.SELF_PROCESSES, sorted(Monitor.SELF_PROCESSES))
+check("a real app still is", "chrome.exe" not in Monitor.SELF_PROCESSES)
 
 check("no callback exceptions overall", not callback_errors,
       callback_errors[0].strip().splitlines()[-1] if callback_errors else "clean")

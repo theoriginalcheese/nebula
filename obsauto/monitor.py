@@ -197,6 +197,11 @@ def get_foreground_window_info():
 
 
 class Monitor:
+    # Nebula's own windows, and the OBS it drives. Never worth reporting as
+    # "the foreground that isn't a game".
+    SELF_PROCESSES = {"nebula.exe", "python.exe", "pythonw.exe",
+                      "obs64.exe", "obs32.exe"}
+
     def __init__(self, obs_client, classifier, config, on_log=None, on_state=None, on_notify=None,
                  on_connection_change=None, offloader=None):
         self.obs = obs_client
@@ -362,7 +367,13 @@ class Monitor:
             # Nothing to record here, but the idle hero says what it is looking
             # at rather than a bare "no game detected" (6.6). Reported only when
             # it changes - this loop runs once a second.
-            if proc_name and proc_name != self._last_foreground:
+            # Never report ourselves. Alt-tabbing to Nebula makes Nebula the
+            # foreground window, and "Foreground: Nebula.exe - classified as
+            # not a game" is both useless and slightly absurd: the line is
+            # meant to explain what Nebula is looking at instead of a game.
+            # OBS is excluded for the same reason - Nebula launched it.
+            if (proc_name and proc_name != self._last_foreground
+                    and proc_name.lower() not in self.SELF_PROCESSES):
                 self._last_foreground = proc_name
                 self.on_state(foreground=(proc_name, result))
 

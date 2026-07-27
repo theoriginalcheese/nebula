@@ -3535,6 +3535,25 @@ class AppWindow:
         img.putalpha(mask)
         return img
 
+    def _adopt_view_items(self, view, items, extra_tags=()):
+        """Tag freshly-created canvas items into a view, and hide them if that
+        view isn't the one on screen.
+
+        `_show_view` hides a view by setting state on the items that exist at
+        that moment. Anything drawn *afterwards* is born with state="normal",
+        so a refresh that runs while another pane is showing paints straight
+        over it - which is how the Clips pane's session ribbon ended up drawn
+        across the Dashboard's hero card, and how the replay module's rows
+        could appear over Clips (the bitrate poll refreshes it every second
+        while recording).
+        """
+        state = "normal" if self._current_view == view else "hidden"
+        for item in items:
+            self.bg.addtag_withtag(f"view_{view}", item)
+            for tag in extra_tags:
+                self.bg.addtag_withtag(tag, item)
+            self.bg.itemconfigure(item, state=state)
+
     def _hero_vis(self, want_visible):
         """"normal" only if the hero is actually on screen.
 
@@ -4227,8 +4246,7 @@ class AppWindow:
             for span in spans:
                 self._ribbon_block(span, tx, ty, tw, th, start, span_seconds, games)
             self._ribbon_axis(tx, ty + th + 10, tw, start, end)
-        for item in self._ribbon_items:
-            self.bg.addtag_withtag("view_clips", item)
+        self._adopt_view_items("clips", self._ribbon_items)
 
     def _ribbon_block(self, span, tx, ty, tw, th, start, span_seconds, games):
         now = time.time()
@@ -4445,9 +4463,7 @@ class AppWindow:
                 self._content_x0() + 16, self._replay_rows_y, anchor="nw",
                 text="Replay buffer is off in OBS.\nNebula can switch it on for you.",
                 fill=MUTED, font=dv.type_font("meta")))
-            for item in self._replay_rows:
-                self.bg.addtag_withtag("blk_replay", item)
-                self.bg.addtag_withtag("view_dashboard", item)
+            self._adopt_view_items("dashboard", self._replay_rows, ("blk_replay",))
             return
 
         recent = list(reversed(self.replay.saved_this_session))[:2]
@@ -4470,9 +4486,7 @@ class AppWindow:
                     text=f"{self.replay.seconds}s  ·  {age}m ago" if age
                          else f"{self.replay.seconds}s  ·  just now",
                     fill=FAINT, font=dv.type_font("meta")))
-        for item in self._replay_rows:
-            self.bg.addtag_withtag("blk_replay", item)
-            self.bg.addtag_withtag("view_dashboard", item)
+        self._adopt_view_items("dashboard", self._replay_rows, ("blk_replay",))
 
     def _replay_badge_geom(self):
         x, y, w, _h = self._grid_rects.get("replay", (0, 0, 0, 0))
@@ -5730,11 +5744,17 @@ class AppWindow:
                 # holding the desktop in RAM.
                 self.replay.set_game(game)
                 self._sync_replay_arming()
-                # Refresh the hero in place so the scene caption picks up the
-                # new title (the state itself is unchanged, so this is a no-op
-                # visually apart from that caption).
+                # Refresh the hero so the scene caption picks up the new title,
+                # and pull the status poll forward rather than re-applying the
+                # state we already had. The monitor announces the game the
+                # instant it starts recording, so re-applying meant the card
+                # read "IDLE - WATCHING" *with a game name under it* until the
+                # next heartbeat - which is exactly what it looked like:
+                # broken.
                 self._set_hero_state(self._hero_state)
                 self._flash_status_card()
+                if game:
+                    self._poll_now()
                 # The timer/storage/pulsing dot are driven by _poll_obs_status
                 # from OBS's own GetRecordStatus, not from this event - that
                 # way they reflect whether OBS is *actually* recording, not

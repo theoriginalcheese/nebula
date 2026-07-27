@@ -202,9 +202,13 @@ def today():
     clips = culled = idle_pauses = 0
     recorded = 0.0
     bytes_written = 0
+    started = None
     for row in rows:
         kind = row.get("type")
-        if kind == "rec_stop":
+        if kind == "rec_start":
+            started = row.get("ts")
+        elif kind == "rec_stop":
+            started = None
             recorded += float(row.get("duration") or 0)
             if row.get("culled"):
                 culled += 1
@@ -213,5 +217,11 @@ def today():
                 bytes_written += int(row.get("size") or 0)
         elif kind == "idle_in":
             idle_pauses += 1
+    # A recording still in progress counts too. Without this the Recorded tile
+    # read "0m today" beside "2 clips · 7.3 GB" an hour into a session, because
+    # the duration only lands on rec_stop - which looked like a broken tile
+    # rather than the honest "nothing has *finished* today".
+    if started:
+        recorded += max(0.0, time.time() - started)
     return {"clips": clips, "recorded_seconds": recorded, "bytes": bytes_written,
             "culled": culled, "idle_pauses": idle_pauses}
