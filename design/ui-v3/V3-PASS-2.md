@@ -45,8 +45,8 @@ because they are behavioural, not visual, so nothing inherits from them.
 | 4 | Titlebar / stat tiles / activity / scene preview — #6–9 | **done** — `dcaa88f` |
 | 5 | Customise mode rebuild — #11, #12 | **done** — `ee277d9` |
 | 6 | `sessions.jsonl` event log (7g step 1) | **done** — landed with step 4 |
-| 7 | 7a Instant replay | todo |
-| 8 | 7f Thumbnails + Length (ffmpeg) | todo |
+| 7 | 7a Instant replay | **done** — `5a20994` |
+| 8 | 7f Thumbnails + Length (ffmpeg) | **done** — `3c42068` |
 | 9 | 7b Session ribbon | todo |
 | 10 | 7c Storage forecast | todo |
 | 11 | 7e Command palette | todo |
