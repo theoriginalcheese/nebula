@@ -41,7 +41,7 @@ because they are behavioural, not visual, so nothing inherits from them.
 |---|---|---|
 | 1 | Functional bugs: pause, reclassification, reachability, tray | **done** — `9da66b5` |
 | 2 | Living background — 6.7 #1–4 | **done** — `ca4ad8b` |
-| 3 | Two-layer cards + fading dividers — #5, #10 | todo |
+| 3 | Two-layer cards + fading dividers — #5, #10 | **done** — `a415df9` |
 | 4 | Titlebar / stat tiles / activity / scene preview — #6–9 | todo |
 | 5 | Customise mode rebuild — #11, #12 | todo |
 | 6 | `sessions.jsonl` event log (7g step 1) | todo |
