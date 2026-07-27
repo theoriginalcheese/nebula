@@ -49,9 +49,21 @@ because they are behavioural, not visual, so nothing inherits from them.
 | 8 | 7f Thumbnails + Length (ffmpeg) | **done** — `3c42068` |
 | 9 | 7b Session ribbon | **done** — `056bf6b` |
 | 10 | 7c Storage forecast | **done** — `056bf6b` (cull action still to wire) |
-| 11 | 7e Command palette | todo |
-| 12 | 7d Per-game profiles | todo |
-| 13 | Mini overlay buttons, exe rebuild, docs | todo |
+| 11 | 7e Command palette | **done** — `41097d4` |
+| 12 | 7d Per-game profiles | **done** — `b34583c` |
+| 13 | Mini overlay buttons, exe rebuild, docs | **done** |
+
+## What is deliberately not built
+
+Written down so nobody has to rediscover why.
+
+| Thing | Why |
+|---|---|
+| The **cull button** | `forecast.cull_candidates()` is built and tested; the action that moves files to the Recycle Bin is not wired to a control yet. Everything it needs is there — count, total, exclusions — and the spec's own safety rules are already encoded. |
+| The 486×286 **Storage card** | 7c's full card in Settings → Storage. The rail summary is done and states a date; the card is the same numbers laid out larger, plus the cull and offload rows. |
+| The **Macropad** (2e) | Still no HID layer. Unchanged from pass 1: honest-empty until input → scan-code bindings → pane, in that order. |
+| Per-frame motion | Every animation the spec asks for that would repaint the canvas: aurora drift, star drift, pointer spotlight, the pulsing armed badge, the pulsing live ribbon block, 6.8's 260ms sibling reflow. All recorded in `design_v3.py`, all quarantined. |
+| **Marks on the timeline seek** | 7b says "click a mark → seeks". Nebula has no player, so a mark is recorded and drawn but clicking the block opens the detail row instead. |
 
 Steps 9, 10 and 11 all read `sessions.jsonl`. Build step 6 before any of them or
 you will rebuild them.
@@ -116,10 +128,28 @@ also seeds `_composite`, which widgets sample for their corner blend.
 6. User data via `APP_DIR` (`obsauto/paths.py`), never `os.path.dirname(__file__)`.
 7. Anything async must be tested under a real `mainloop()`.
 
+## New modules in this pass
+
+| Module | What it owns |
+|---|---|
+| `session_log.py` | `sessions.jsonl` — the five event types, plus `spans()` and `today()`. Read by the stat tiles, the ribbon and the forecast. |
+| `replay.py` | 7a. Arms OBS's buffer, files what it saves. Never holds a frame itself. |
+| `thumbs.py` | 7f. ffmpeg as an optional soft-dep: four frames per clip, plus durations. |
+| `forecast.py` | 7c. The GB/h → days-left arithmetic, and what a cull would take. |
+| `palette.py` | 7e. Subsequence matching, word-anchored, ranked and grouped. |
+| `profiles.py` | 7d. Per-game encoder settings, with the scope guard on read *and* write. |
+
 ## Tests
 
-Everything under `tests/` should pass; there are 18 files and ~370 checks. New in
-this pass: `test_transport.py`, `test_games_pane.py`, `test_background.py`.
+Everything under `tests/` should pass; there are 25 files and ~780 checks. New in
+this pass: `test_transport`, `test_games_pane`, `test_background`, `test_chassis`,
+`test_customise`, `test_replay`, `test_thumbs`, `test_forecast`, `test_palette`,
+`test_profiles`.
+
+⚠️ Two known flakes, both pre-existing and both environmental:
+`test_toast` asserts against the *active* monitor's work area, so it can fail if
+the active screen changes mid-run; `test_settings_typing` measures event-loop
+beats per second and can dip under load. Both pass reliably on their own.
 
 ```
 for %t in (tests\test_*.py) do python %t

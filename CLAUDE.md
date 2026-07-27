@@ -42,7 +42,13 @@ and `RESOURCE_DIR` (`sys._MEIPASS` when frozen) only for bundled read-only asset
 | `obsauto/config.py` | `load_config()`, `save_config()` | Config persistence |
 | `obsauto/paths.py` | `APP_DIR`, `RESOURCE_DIR` | Dev vs. frozen-onefile path resolution |
 | `obsauto/app_log.py` | `setup_logging()`, `log_to_file()` | File logging (works under silent `pythonw`) |
-| `obsauto/design_v3.py` | `COLORS`, `CONFIG_MAP`, `over()` | UI **v3** design contract as code — see below. Not yet consumed by `gui.py` |
+| `obsauto/design_v3.py` | `COLORS`, `CARD_LAYERS`, `CONFIG_MAP`, `over()` | UI **v3** design contract as code — see below |
+| `obsauto/session_log.py` | `append()`, `spans()`, `today()` | Append-only `sessions.jsonl`: rec_start/rec_stop/idle_in/idle_out/mark. The stat tiles, ribbon and forecast all read it |
+| `obsauto/replay.py` | `ReplayBuffer` | Instant replay (7a) — arms OBS's RAM buffer, files what it saves. Never holds video itself |
+| `obsauto/thumbs.py` | `ThumbWorker`, `duration_of()` | Clip thumbnails + Length (7f). ffmpeg is an **optional** soft-dep |
+| `obsauto/forecast.py` | `forecast()`, `cull_candidates()` | Storage forecast (7c) — GB/h → days left, and what a cull would take |
+| `obsauto/palette.py` | `search()`, `subsequence()` | Command-palette matching + ranking (7e), no UI |
+| `obsauto/profiles.py` | `sanitise()`, `plan()`, `apply()` | Per-game encoder profiles (7d), with the scope guard on read *and* write |
 | `obsauto/tray_app.py`, `theme_art.py`, `icon_art.py` | — | Tray icon + generated icon/theme art |
 
 Most-connected hubs (start here when orienting): `AppWindow`, `OBSClient`, `Monitor`, `Classifier`.
@@ -83,6 +89,37 @@ and a mock keypad that does nothing would be a lie.
 
 ⚠️ Don't put fabricated numbers in the UI — the Games badge reads the classifier
 (`_game_count()`) and returns `None` (no badge) rather than inventing a count.
+
+## UI v3 pass 2 — the mockup grew (2026-07-27)
+
+The Claude Design mockup went from 151 KB to 347 KB. Sections 01–05 are
+unchanged; everything new is **§06** (a twelve-item fix list against the shipped
+build) and **§07** (six new features + their build order). All thirteen steps are
+done and on `main`. **`design/ui-v3/V3-PASS-2.md` is the record** — the plan, the
+decisions, what each step found, and what is deliberately not built.
+
+⚠️ **Re-importing the mockup:** the DesignSync MCP caps `get_file` at 256 KiB, so
+it returns the file truncated mid-tag and sections 7c–7g vanish with no error.
+The full copy is committed. Pull through the design RPC if you must re-fetch.
+
+Things this pass established that are easy to break again:
+
+- **The aurora measured literally zero.** `layer.paste(blob, pos, blob)` passes
+  the blob's alpha as its own mask, squaring it. `tests/test_background.py`
+  measures each layer against the one below rather than checking it renders.
+- **The background is two surfaces.** `generate_backdrop_v3` returns the painted
+  stack *and* a starless one; every panel composites over the starless copy, so
+  the aurora reads through a card but the dust never does. `_composite` (what
+  widgets sample for their corner blend) is seeded from it too.
+- **Cards come from one table.** `dv.CARD_LAYERS` — never choose radii at a call
+  site. `_card()` is the only thing that draws one.
+- **Hero visibility goes through `_hero_vis()`.** `_poll_obs_status` calls
+  `_set_hero_state` every second, so anything that un-hides a hero item without
+  asking "is the dashboard showing?" reappears over whatever pane you navigated
+  to. That was a real bug.
+- **A classification merge cannot be a plain union.** See the sync section below.
+- **ffprobe reports no duration for a file still being written** — Matroska
+  writes it on finalisation. That is correct, not a failure; don't paper over it.
 
 ## UI v3 — complete on `main` (2026-07-27)
 
@@ -197,6 +234,15 @@ in one is invisible to the other. When checking whether a build works, read
   (defaults per `obsauto/config.py`'s `DEFAULTS` — the live `config.json` may differ)
 
 ## Sync & offload invariants (don't weaken)
+- **A classification merge must express removals, not just additions.** The two
+  buckets are mutually exclusive, so a *reclassification* is a removal plus an
+  addition — and a plain union reads the removal straight back out of the base.
+  This ran in three places (local save, sync absorb, GitHub push), so promoting
+  an ignored app left it filed as both, and the next pull did it again;
+  `starrail.exe` was double-filed in two of the three real game lists here.
+  There is now one `classifier.merge_classifications()`: a key lives in exactly
+  one bucket, the newer view wins, other machines' additions still survive.
+  `Classifier._heal()` repairs existing damage on load.
 - **`GameSync.push()` must never PUT against an unknown remote.** If `fetch()` fails it
   returns None (refuse) rather than treating the remote as empty — otherwise a failed read
   overwrites and clobbers other devices' classifications (the stress test caught 156/160 lost).
@@ -285,7 +331,21 @@ three static icons swapped on state change.
   python tests/test_step7.py           # Games, Macropad honesty, mini overlay (2d/2e/2k)
   python tests/test_fidelity.py        # fine-detail conformance to BUILD-SPEC.md
   python tests/test_obs_meta.py        # GetVersion / GetVideoSettings string formatters
+  python tests/test_transport.py       # start/stop/pause read OBS, not a stale flag
+  python tests/test_games_pane.py      # promotion is reachable; the merge heals
+  python tests/test_background.py      # each background layer, measured (6.1)
+  python tests/test_chassis.py         # titlebar / stat tiles / activity / preview (6.3-6.6)
+  python tests/test_customise.py       # the 12-column edit mode (6.8)
+  python tests/test_replay.py          # instant replay (7a)
+  python tests/test_thumbs.py          # thumbnails + Length, with and without ffmpeg (7f)
+  python tests/test_forecast.py        # the ribbon model (7b) + forecast maths (7c)
+  python tests/test_palette.py         # command palette matching + the no-destructive rule (7e)
+  python tests/test_profiles.py        # per-game profiles + the scope guard (7d)
   ```
+  Two known flakes, both environmental: `test_toast` asserts against the *active*
+  monitor's work area and can fail if the active screen changes mid-run, and
+  `test_settings_typing` measures event-loop beats and can dip under load. Both
+  pass reliably run on their own.
   ⚠️ Anything async **must** be tested under a real `mainloop()`. Tk refuses a cross-thread
   `root.after()` when driven by `update()`-pumping, and `_ui()` swallows that — so an
   `update()`-pumped test sees worker results never arrive. That has hidden real behaviour twice.

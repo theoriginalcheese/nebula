@@ -5350,14 +5350,44 @@ class AppWindow:
             w - 18, h / 2, text=ICON_GLYPHS[dv.ICONS["collapse_mini"]],
             fill=FAINT, font=(ICON_FONT, -13))
 
+        # --- transport buttons: a deliberate deviation from 2k --------------
+        # The frame draws timer + game + collapse and nothing else. Anthony
+        # asked for it "nicer and more fleshed out with buttons", which is a
+        # change to the spec rather than an implementation of it, so it is
+        # recorded as such: the shell keeps every rule 2k does state (296x54,
+        # frameless, always-on-top, drag anywhere, corner snap, 55% fade after
+        # 3s, never while idle) and gains the three actions that are otherwise
+        # unreachable without restoring the whole window - which is the thing
+        # the overlay exists to avoid.
+        actions = []
+        bx = w - 40
+        for role, glyph_role, command in (
+                ("mark", "mark_clip", self._mark_clip),
+                ("stop", "square", self._toggle_record),
+                ("pause", "pause", self._toggle_pause)):
+            glyph = ICON_GLYPHS.get(glyph_role) or ICON_GLYPHS[dv.ICONS[glyph_role]]
+            item = canvas.create_text(bx, h / 2, text=glyph, fill=MUTED,
+                                      font=(ICON_FONT, -12))
+            canvas.tag_bind(item, "<Button-1>", lambda _e, c=command: c())
+            canvas.tag_bind(item, "<Enter>",
+                            lambda _e, i=item: canvas._c.itemconfigure(i, fill=TEXT))
+            canvas.tag_bind(item, "<Leave>",
+                            lambda _e, i=item: canvas._c.itemconfigure(i, fill=MUTED))
+            actions.append((role, item))
+            bx -= 26
+
         mini = {"popup": popup, "canvas": canvas, "dot": dot, "timer": timer,
-                "game": game, "faded": False, "fade_job": None, "drag": None}
+                "game": game, "faded": False, "fade_job": None, "drag": None,
+                "actions": dict(actions), "collapse": collapse}
 
         canvas.tag_bind(collapse, "<Button-1>", lambda _e: self.hide_mini(restore=True))
 
+        controls = {collapse, *mini["actions"].values()}
+
         def press(event):
-            # Ignore a press on the collapse glyph so dragging can't eat the click.
-            if collapse in canvas.find_withtag("current"):
+            # Ignore a press on any control, so "drag anywhere on the body"
+            # doesn't swallow the click that was meant for a button.
+            if controls & set(canvas.find_withtag("current")):
                 return
             mini["drag"] = (event.x_root - popup.winfo_x(), event.y_root - popup.winfo_y())
 
@@ -5489,6 +5519,13 @@ class AppWindow:
                                      text=self._tray_elapsed or "00:00:00")
         mini["canvas"].itemconfigure(mini["game"], text=self._current_game or "Recording")
         mini["canvas"].itemconfigure(mini["dot"], fill=ACCENT if paused else EMBER)
+        # The pause button says which way it goes, like the hero's does.
+        pause_item = mini.get("actions", {}).get("pause")
+        if pause_item is not None:
+            role = "resume" if paused else "pause"
+            mini["canvas"].itemconfigure(
+                pause_item,
+                text=ICON_GLYPHS.get(role) or ICON_GLYPHS[dv.ICONS[role]])
 
     def _on_state(self, **kwargs):
         def apply():
@@ -5831,6 +5868,33 @@ class AppWindow:
             hotkey.register(palette_key,
                             lambda: self.root.after(0, self.show_palette),
                             suppress=False, on_log=self._log)
+
+    def _mark_clip(self):
+        """Drop a mark on the running recording.
+
+        Two things happen, and only one of them needs OBS. The mark is written
+        to sessions.jsonl unconditionally - that is what 7b's ember ticks
+        render and what the ribbon's "N marks" counts - and OBS is *also* asked
+        for a real chapter, which only newer builds with a supported container
+        accept. A refusal is logged, not surfaced: the mark still exists.
+        """
+        if not self._is_recording:
+            self._toast_replace("error", "Nothing to mark — no recording running")
+            return
+        session_log.append("mark", game=self._current_game)
+        self._log(f"[Manual] Marked {self._current_game or 'the recording'}.")
+        self._refresh_ribbon()
+
+        def worker():
+            try:
+                self.obs.call("CreateRecordChapter", {"chapterName": time.strftime("%H:%M:%S")})
+            except Exception as exc:
+                # Bind before the closure - `exc` dies with the block.
+                reason = str(exc)
+                self.root.after(0, lambda: self._log(
+                    f"[OBS] Chapter not created ({reason}). The mark is still recorded."))
+
+        threading.Thread(target=worker, daemon=True).start()
 
     def _save_replay(self):
         """Save the last N seconds. Wired to the hotkey, tray and overlay."""

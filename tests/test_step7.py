@@ -24,6 +24,7 @@ gui.ensure_obs_running = lambda *a, **k: None
 from obsauto import classifier as classifier_module
 from obsauto import config as config_module
 from obsauto import design_v3 as dv
+from obsauto import session_log
 from obsauto.classifier import Classifier
 from obsauto.config import load_config
 from obsauto.gui import AppWindow
@@ -182,6 +183,38 @@ check("overlay shows the elapsed time",
       app._mini["canvas"].itemcget(app._mini["timer"], "text"))
 check("overlay shows the game",
       app._mini["canvas"].itemcget(app._mini["game"], "text") == "Helldivers 2")
+
+# --- transport buttons: a deliberate deviation from 2k ----------------------
+# The frame draws timer + game + collapse only. Anthony asked for buttons, so
+# the shell keeps every rule 2k states and gains the three actions that are
+# otherwise unreachable without restoring the whole window.
+actions = app._mini.get("actions") or {}
+check("the overlay carries transport buttons",
+      set(actions) == {"pause", "stop", "mark"}, sorted(actions))
+check("...inside the spec's shell, unchanged",
+      (dv.MINI_W, dv.MINI_H) == (296, 54), (dv.MINI_W, dv.MINI_H))
+
+# Scratch log, for the same reason the classifier gets one: a mark written here
+# would otherwise land in the real sessions.jsonl and show up on the ribbon.
+session_log.log_path = lambda: os.path.join(_scratch, "sessions.jsonl")
+app._is_recording = True          # _mark_clip refuses when nothing is recording
+marks_before = len([r for r in session_log.read() if r.get("type") == "mark"])
+app._mark_clip()
+app.root.update()
+check("Mark clip records a mark",
+      len([r for r in session_log.read() if r.get("type") == "mark"])
+      == marks_before + 1)
+
+app._hero_state = "paused"
+app._mini_update()
+app.root.update()
+paused_glyph = app._mini["canvas"].itemcget(actions["pause"], "text")
+app._hero_state = "recording"
+app._mini_update()
+app.root.update()
+check("the pause button flips to resume while paused",
+      paused_glyph != app._mini["canvas"].itemcget(actions["pause"], "text"),
+      paused_glyph)
 
 # geometry is the spec's size, scaled
 app.root.update()
