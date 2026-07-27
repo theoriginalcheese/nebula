@@ -42,8 +42,23 @@ def build_tray_icon(app_window, icon_path):
                 pass  # window already torn down
         return handler
 
+    # Every label below is a callable, re-evaluated by Windows each time the
+    # menu opens. If one of them raises, the shell gets nothing back and the
+    # menu simply never appears - a failure with no console, no traceback and
+    # no log line, which is indistinguishable from "the tray is broken".
+    # Fall back to a static label instead, and leave a breadcrumb.
+    _fallback = {"state": "idle", "heading": "Nebula", "detail": "",
+                 "monitoring": False}
+
     def status():
-        return app_window.tray_status()
+        try:
+            return app_window.tray_status()
+        except Exception as exc:
+            try:
+                app_window._log(f"[Tray] Couldn't read status: {exc}")
+            except Exception:
+                pass
+            return _fallback
 
     def recording(_item=None):
         return status()["state"] in ("recording", "paused")
@@ -78,5 +93,28 @@ def build_tray_icon(app_window, icon_path):
 
     icon = pystray.Icon("nebula", icons["idle"], "Nebula", menu)
     icon._nebula_icons = icons          # so gui.py can swap without regenerating
-    threading.Thread(target=icon.run, daemon=True).start()
+
+    def _log(message):
+        try:
+            app_window._log(message)
+        except Exception:
+            pass
+
+    def _ready(tray):
+        # pystray calls setup once the icon is actually registered with the
+        # shell. Without this the only evidence that the tray exists is
+        # whether you can see it - and on Windows 11 a newly-registered icon
+        # goes into the hidden overflow by default, so "no menu" and "no icon
+        # I could find" look exactly the same. Say so in the log.
+        tray.visible = True
+        _log("[Tray] Icon registered. If you can't see it, check the "
+             "overflow arrow next to the clock and drag Nebula onto the bar.")
+
+    def _run():
+        try:
+            icon.run(setup=_ready)
+        except Exception as exc:
+            _log(f"[Tray] The tray icon failed to start: {exc}")
+
+    threading.Thread(target=_run, daemon=True).start()
     return icon

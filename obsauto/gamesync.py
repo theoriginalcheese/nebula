@@ -25,6 +25,8 @@ Config keys (all optional; absent = feature off):
 import base64
 import json
 
+from .classifier import merge_classifications
+
 try:
     import requests
 except Exception:  # pragma: no cover - requests is a declared dependency
@@ -114,10 +116,11 @@ class GameSync:
                 # in the local games.json meanwhile). This was the concurrency
                 # data-loss the stress test caught.
                 return None
-            merged = {
-                "games": {**remote.get("games", {}), **local_data.get("games", {})},
-                "non_games": {**remote.get("non_games", {}), **local_data.get("non_games", {})},
-            }
+            # Local wins per key, including moving an exe out of the bucket the
+            # remote still has it in - otherwise the remote copy would undo a
+            # reclassification on the very next pull. Additions made on other
+            # machines still survive; that's the whole point of merging.
+            merged = merge_classifications(remote, local_data)
             # Remote already has everything - no empty commit.
             if merged == remote and self._sha is not None:
                 return merged

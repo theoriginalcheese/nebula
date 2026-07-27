@@ -96,6 +96,42 @@ def run():
     sync.push(merged)
     check("no PUT when already in sync", fake.puts == puts_before, f"{fake.puts} vs {puts_before}")
 
+    # ---- a reclassification survives the round trip ----
+    # The merge used to be a plain union, which cannot express a *removal*: the
+    # remote's copy of the old bucket was read straight back in, so promoting
+    # an ignored app left it in both lists and the next pull put it back where
+    # it started. Local wins per key, in both directions.
+    remote_says_tool = {"games": {}, "non_games": {"tool.exe": True}}
+    fake2 = FakeGitHub(remote_says_tool)
+    gamesync_module.requests = fake2
+    sync4 = GameSync(CFG, on_log=lambda m: None)
+    promoted = {"games": {"tool.exe": {"display_name": "Tool"}}, "non_games": {}}
+    out = sync4.push(promoted)
+    check("promotion reaches the remote", "tool.exe" in out["games"], out)
+    check("promotion clears the old bucket",
+          "tool.exe" not in out["non_games"], out["non_games"])
+    stored = json.loads(fake2.body)
+    check("the remote file itself lists it once",
+          "tool.exe" in stored["games"] and "tool.exe" not in stored["non_games"],
+          stored)
+
+    # And the other way: demoting a game the remote still lists as one.
+    fake3 = FakeGitHub({"games": {"setup.exe": {"display_name": "Setup"}}, "non_games": {}})
+    gamesync_module.requests = fake3
+    sync5 = GameSync(CFG, on_log=lambda m: None)
+    out = sync5.push({"games": {}, "non_games": {"setup.exe": True}})
+    check("demotion clears the games bucket",
+          "setup.exe" not in out["games"] and "setup.exe" in out["non_games"], out)
+
+    # Additions made elsewhere still survive - that is what merging is for.
+    fake4 = FakeGitHub({"games": {"other.exe": {"display_name": "Other"}},
+                        "non_games": {"tool.exe": True}})
+    gamesync_module.requests = fake4
+    sync6 = GameSync(CFG, on_log=lambda m: None)
+    out = sync6.push({"games": {"tool.exe": {"display_name": "Tool"}}, "non_games": {}})
+    check("another machine's game is not lost by a local reclassification",
+          "other.exe" in out["games"], out["games"])
+
     # ---- 404 (empty repo) treated as empty, not an error ----
     class Fake404(FakeGitHub):
         def get(self, url, headers=None, timeout=None):

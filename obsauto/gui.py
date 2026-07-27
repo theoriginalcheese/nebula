@@ -18,7 +18,7 @@ from . import classifier as classifier_module
 from . import design_v3 as dv
 from . import settings_spec
 from .obs_client import OBSClient, OBSError
-from .monitor import Monitor, ensure_obs_running, is_obs_running
+from .monitor import Monitor, ensure_obs_running, is_obs_running, list_visible_windows
 from .app_log import log_to_file
 from .theme_art import (
     generate_backdrop_v3, make_glass_tile, make_solid_tile, to_photo,
@@ -459,6 +459,8 @@ class AppWindow:
         self._tray_icon_state = None  # last icon pushed, so we only swap on change
         self._is_recording = False  # tracked from OBS's own GetRecordStatus, not a client-side timestamp
         self._is_paused = False
+        self._poll_job = None         # the single _poll_obs_status timer, so it can be pulled forward
+        self._transport_busy = False  # a start/stop/pause round-trip is in flight
         self._images = []  # keeps PhotoImage refs alive - Tk GCs them otherwise
         self._glass_cache = {}  # (size, tint, alpha, radius, border...) -> PhotoImage
         self._dragging = False
@@ -1310,7 +1312,9 @@ class AppWindow:
         self._persist_grid(self._grid_layout)
         self._set_hero_state(self._hero_state)
         self._set_customise(self._customising)
-        self._log("[Manual] Dashboard layout changed.")
+        # Deliberately silent. This runs on every reflow during a drag, and
+        # logging it there wrote 19 identical lines in 40 seconds - the log is
+        # meant to be readable. The commit path logs once instead.
 
     def _persist_grid(self, layout):
         self.config["dashboard_grid"] = [dict(it) for it in layout]
@@ -1366,7 +1370,11 @@ class AppWindow:
                 text_color=ACCENT_LIGHT if on else MUTED)
 
     def _toggle_customise(self):
+        leaving = self._customising
         self._set_customise(not self._customising)
+        if leaving:
+            order = " · ".join(item["id"] for item in self._grid_layout)
+            self._log(f"[Manual] Dashboard layout saved: {order}")
 
     def _toggle_block_span(self, name):
         if name == "hero" or not self._customising:
@@ -1461,7 +1469,7 @@ class AppWindow:
         frame.pack(fill="both", expand=True)
         return frame
 
-    def _list_row(self, parent, title, detail, meta, command=None):
+    def _list_row(self, parent, title, detail, meta, command=None, action=None):
         row = ctk.CTkFrame(parent, fg_color=CARD_TINT, corner_radius=9)
         row.pack(fill="x", padx=2, pady=3)
         ctk.CTkLabel(row, text=title, text_color=TEXT, anchor="w",
@@ -1469,7 +1477,19 @@ class AppWindow:
             anchor="w", padx=12, pady=(8, 0))
         ctk.CTkLabel(row, text=detail, text_color=MUTED, anchor="w",
                      font=ctk.CTkFont(size=11)).pack(anchor="w", padx=12, pady=(0, 8))
-        if meta:
+        if action:
+            # A row action has to be visible. The promote path used to be
+            # right-click only, which is the same as not existing: it worked
+            # perfectly and still read as "I can't change non-games into
+            # games", because nothing on screen said it was there.
+            label, callback = action
+            ctk.CTkButton(row, text=label, command=callback, width=96, height=26,
+                          fg_color=SURFACE, hover_color=SURFACE_HOVER,
+                          text_color=ACCENT_LIGHT, border_width=1,
+                          border_color=EDGE, corner_radius=8,
+                          font=ctk.CTkFont(size=11)).place(
+                relx=1.0, rely=0.5, anchor="e", x=-10)
+        elif meta:
             ctk.CTkLabel(row, text=meta, text_color=FAINT,
                          font=ctk.CTkFont(size=11)).place(relx=1.0, rely=0.5,
                                                           anchor="e", x=-12)
@@ -1770,8 +1790,12 @@ class AppWindow:
     def _build_games(self):
         (x, y, w, h), sub = self._view_panel("Games", "What the classifier has learned.")
         self._games_sub = sub
-        self._view_button(x + w - 150, y + 20, 130, "Rescan library", self._rescan_steam)
-        self._view_button(x + w - 276, y + 20, 116, "Game data", self._open_game_data)
+        # "Add a game" leads, because it is the button that works. Rescan can
+        # only ever import Steam, and a library fed by HoYoPlay / Roblox /
+        # CurseForge has nothing for it to find.
+        self._view_button(x + w - 150, y + 20, 130, "Add a game", self._add_running_game)
+        self._view_button(x + w - 292, y + 20, 132, "Rescan Steam", self._rescan_steam)
+        self._view_button(x + w - 414, y + 20, 112, "Game data", self._open_game_data)
 
         col_w = (w - 48) / 2
         top_h = 96
@@ -1793,7 +1817,7 @@ class AppWindow:
             x + 16, y + h - 14, anchor="w", text="", fill=FAINT,
             font=dv.type_font("meta"))
         self.bg.create_text(x + 32 + col_w, y + h - 14, anchor="w",
-                            text="Right-click a row to move it back to Games.",
+                            text="Make a game moves an app back  ·  right-click works too.",
                             fill=FAINT, font=dv.type_font("meta"))
 
     def _refresh_games(self):
@@ -1866,7 +1890,9 @@ class AppWindow:
         for basename in sorted(non_games, key=str.lower):
             row = self._list_row(
                 self._nongames_list, basename,
-                "keep-alive" if basename.lower() in keep_alive else "", "ignored")
+                "keep-alive" if basename.lower() in keep_alive else "", "ignored",
+                action=("Make a game",
+                        lambda b=basename: self._promote_non_game(b)))
             self._bind_promote(row, basename)
 
     def _bind_promote(self, row, basename):
@@ -1894,6 +1920,117 @@ class AppWindow:
         self._refresh_games()
         self._push_game_data()
         return True
+
+    # Windows the picker should never offer: the shell, Nebula itself, OBS,
+    # and the browsers/editors people have open behind a game. Anything not
+    # listed here still shows - the point is to shorten the list, not to guess
+    # what is or isn't a game.
+    PICKER_SKIP = {
+        "explorer.exe", "searchhost.exe", "shellexperiencehost.exe",
+        "startmenuexperiencehost.exe", "textinputhost.exe", "applicationframehost.exe",
+        "systemsettings.exe", "taskmgr.exe", "widgets.exe", "lockapp.exe",
+        "python.exe", "pythonw.exe", "nebula.exe", "obs64.exe", "obs32.exe",
+        "cmd.exe", "powershell.exe", "windowsterminal.exe", "conhost.exe",
+    }
+
+    def _running_candidates(self):
+        """Apps with a visible window that the classifier hasn't judged yet.
+
+        One row per executable, keeping the longest window title seen for it -
+        a game usually titles its window with its own name ("Zenless Zone
+        Zero"), which is a far better folder name than the exe stem.
+        """
+        try:
+            known = set(self.classifier._data.get("games", {}))
+            known |= set(self.classifier._data.get("non_games", {}))
+        except Exception:
+            known = set()
+        known = {k.lower() for k in known}
+
+        found = {}
+        for _pid, _path, proc_name, title, _cls in list_visible_windows():
+            if not proc_name or not title:
+                continue
+            key = proc_name.lower()
+            if key in known or key in self.PICKER_SKIP:
+                continue
+            if len(title) > len(found.get(key, ("", ""))[1]):
+                found[key] = (proc_name, title)
+        return sorted(found.values(), key=lambda pair: pair[1].lower())
+
+    def _add_running_game(self):
+        """Pick a game out of what's currently running.
+
+        Rescan only imports Steam, and this machine's Steam library is empty -
+        the games come from HoYoPlay, Roblox and CurseForge, so the scan
+        correctly reports "0 Steam game(s)" and there was no other way into
+        the game list from this pane. The path that always works for a
+        launcher game is: have it running, then point at it.
+        """
+        candidates = self._running_candidates()
+        width = 520
+        height = min(150 + 56 * max(len(candidates), 1), 520)
+        dialog = ctk.CTkToplevel(self.root)
+        dialog.title("Add a game")
+        dialog.overrideredirect(True)
+        dialog.geometry(f"{self._S(width)}x{self._S(height)}")
+        dialog.attributes("-topmost", True)
+        apply_rounded_corners(dialog)
+        canvas = self._dialog_bg(dialog, width, height)
+
+        canvas.create_text(width / 2, 34, anchor="center", text="Add a game",
+                           fill=TEXT, font=dv.type_font("pane_title"))
+        canvas.create_text(
+            width / 2, 60, anchor="center", fill=MUTED,
+            font=dv.type_font("row_small"), width=width - 60, justify="center",
+            text=("Anything with a window that Nebula hasn't judged yet. "
+                  "Launcher games only appear once they're running."))
+
+        # Built here rather than through _scroll_list: that helper paints onto
+        # the main window's canvas and composite, which this dialog isn't.
+        list_h = height - 150
+        holder = ctk.CTkFrame(dialog, fg_color=LOG_BG, bg_color=LOG_BG, corner_radius=0)
+        canvas.create_window(24, 84, anchor="nw", window=holder,
+                             width=width - 48, height=list_h)
+        holder = ctk.CTkScrollableFrame(
+            holder, fg_color=LOG_BG, corner_radius=0,
+            scrollbar_button_color=SURFACE, scrollbar_button_hover_color=SURFACE_HOVER)
+        holder.pack(fill="both", expand=True)
+
+        def pick(basename, title):
+            dialog.destroy()
+            name = self._ask_display_name(basename, suggestion=title.strip())
+            if not name:
+                return
+            self.classifier.mark_game(basename, name)
+            self._log(f"[Manual] {basename} -> game ({name})")
+            self._refresh_games()
+            self._push_game_data()
+
+        if candidates:
+            for proc_name, title in candidates:
+                self._list_row(holder, title, proc_name, "",
+                               command=lambda b=proc_name, t=title: pick(b, t))
+        else:
+            self._empty_note(
+                holder,
+                "Nothing new is running.\n\nEverything with a window is already "
+                "classified. Start the game first, then come back here.")
+
+        close = ctk.CTkButton(
+            dialog, text="Close", command=dialog.destroy,
+            fg_color=SURFACE, hover_color=SURFACE_HOVER, text_color=MUTED,
+            bg_color=self._bg_at(width / 2 / width * WIDTH,
+                                 (height - 36) / height * HEIGHT, CARD_TINT, 225),
+            border_width=1, border_color=EDGE, corner_radius=10,
+            font=ctk.CTkFont(size=12))
+        canvas.create_window(width - 130, height - 52, anchor="nw",
+                             window=close, width=106, height=34)
+
+        dialog.lift()
+        dialog.focus_force()
+        dialog.grab_set()
+        self.root.wait_window(dialog)
 
     def _push_game_data(self):
         """Mirror a manual reclassification to the shared game list."""
@@ -2955,40 +3092,108 @@ class AppWindow:
         # A second is right when you're watching the timer tick; while hidden in
         # the tray nothing renders it, so back off. The monitor thread drives the
         # actual recording independently of this poll.
-        self.root.after(1000 if self._visible else 5000, self._poll_obs_status)
+        self._poll_job = self.root.after(
+            1000 if self._visible else 5000, self._poll_obs_status)
 
+    def _poll_now(self):
+        """Bring the next status poll forward without starting a second chain.
+
+        _poll_obs_status reschedules itself, so calling it directly would leave
+        two self-perpetuating timers running - the same mistake that once made
+        the toast drain at double speed. Cancel the pending one first.
+        """
+        job = getattr(self, "_poll_job", None)
+        if job is not None:
+            try:
+                self.root.after_cancel(job)
+            except Exception:
+                pass
+            self._poll_job = None
+        self._poll_obs_status()
+
+    # ---- transport: the hero buttons, the tray menu and the mini overlay ----
+    #
+    # These used to branch on self._is_recording / self._is_paused. Those flags
+    # come from a poll that runs once a second (once every five while the
+    # window is hidden), so they are stale for up to a second - long enough to
+    # press Stop and then Pause before the state catches up. Not hypothetical:
+    #
+    #     23:05:07 [Manual] Recording stopped.
+    #     23:05:08 [Manual] Recording paused.
+    #     23:05:24 [OBS] Failed to resume: ResumeRecord failed: unknown error
+    #
+    # That is PauseRecord sent to a recording which had already ended, logged
+    # as a success, leaving the card offering a Resume that OBS then refused.
+    #
+    # So every transport command re-reads GetRecordStatus and decides from
+    # that, and the log line says what actually happened rather than what was
+    # asked for. It runs on a worker because each call is a blocking socket
+    # round-trip; OBSClient serialises them against the poll internally.
 
     def _toggle_record(self):
-        """Manual override, independent of auto-detection. Note: if
-        monitoring is active and a game is still running, the auto-detector
-        may start a new recording again within a couple of seconds after a
-        manual stop, since keeping it recording is its whole job - stop
-        monitoring first if you want a manual stop to stick."""
-        try:
-            if self._is_recording:
-                self.obs.stop_record()
-                self.monitor._recording_target = None
-                self._log("[Manual] Recording stopped.")
-            else:
-                self.obs.start_record()
-                self._log("[Manual] Recording started.")
-        except OBSError as e:
-            tkinter.messagebox.showerror("OBS Error", f"Could not toggle recording: {e}")
+        """Manual override, independent of auto-detection. Note: if monitoring
+        is active and a game is still running, the auto-detector may start a
+        new recording again within a couple of seconds after a manual stop,
+        since keeping it recording is its whole job."""
+        self._transport("record")
 
     def _toggle_pause(self):
         """Pause/resume the in-progress recording. The monitor also pauses on
         idle by itself; this is the manual equivalent from the hero card."""
-        if not self._is_recording:
+        self._transport("pause")
+
+    def _transport(self, action):
+        if getattr(self, "_transport_busy", False):
             return
-        try:
-            if self._is_paused:
-                self.obs.resume_record()
-                self._log("[Manual] Recording resumed.")
-            else:
-                self.obs.pause_record()
-                self._log("[Manual] Recording paused.")
-        except OBSError as e:
-            tkinter.messagebox.showerror("OBS Error", f"Could not pause recording: {e}")
+        self._transport_busy = True
+
+        def worker():
+            result = {"action": action, "stopped": False,
+                      "event": None, "outcome": None, "problem": None}
+            try:
+                status = self.obs.get_record_status()
+                recording = bool(status.get("outputActive"))
+                paused = bool(status.get("outputPaused"))
+                if action == "record":
+                    if recording:
+                        self.obs.stop_record()
+                        result.update(stopped=True, event="stop",
+                                      outcome="Recording stopped.")
+                    else:
+                        self.obs.start_record()
+                        result.update(event="start", outcome="Recording started.")
+                elif not recording:
+                    # Nothing to pause. Say so, rather than sending PauseRecord
+                    # into the void and reporting it as a success.
+                    result["outcome"] = "Nothing is recording - nothing to pause."
+                elif paused:
+                    self.obs.resume_record()
+                    result.update(event="resume", outcome="Recording resumed.")
+                else:
+                    self.obs.pause_record()
+                    result.update(event="pause", outcome="Recording paused.")
+            except OBSError as exc:
+                # Bind before the closure: `exc` is unbound the moment this
+                # except block exits, so a lambda that captured it would die
+                # with NameError inside the Tk callback (CLAUDE.md).
+                result["problem"] = str(exc)
+            self.root.after(0, lambda: self._transport_done(result))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _transport_done(self, result):
+        self._transport_busy = False
+        if result["problem"]:
+            verb = "start/stop" if result["action"] == "record" else "pause/resume"
+            self._log(f"[Manual] Could not {verb} recording: {result['problem']}")
+            self._toast_replace("error", f"OBS refused the {verb} command")
+        else:
+            self._log(f"[Manual] {result['outcome']}")
+            if result["stopped"]:
+                self.monitor._recording_target = None
+        # Don't make the card wait up to a second to catch up with a button the
+        # user just pressed - that lag is what made double-presses possible.
+        self._poll_now()
 
     def _flash_status_card(self):
         """A brief brighter-border pulse on the status card glass panel
@@ -3989,8 +4194,10 @@ class AppWindow:
         self.root.wait_window(dialog)
         return result["value"]
 
-    def _ask_display_name(self, basename):
-        suggestion = suggest_display_name(basename)
+    def _ask_display_name(self, basename, suggestion=None):
+        # The picker passes the app's own window title, which names the game
+        # far better than the exe stem does ("Zenless Zone Zero" vs "ZZZ").
+        suggestion = suggestion or suggest_display_name(basename)
         result = {"value": suggestion}
         width, height = 400, 184
         dialog = ctk.CTkToplevel(self.root)

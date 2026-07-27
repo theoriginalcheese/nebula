@@ -61,6 +61,34 @@ def _looks_like_installer_helper(basename):
     return any(pattern in b for pattern in INSTALLER_HELPER_PATTERNS)
 
 
+def merge_classifications(base, overlay):
+    """Union two classification sets, with `overlay` winning.
+
+    A plain union is not enough, and getting this wrong is what made
+    "I can't change non games into games" true. The two buckets are mutually
+    exclusive - an exe is a game or it isn't - so a *reclassification* is a
+    removal from one bucket plus an addition to the other. A merge that only
+    ever adds reads the removal straight back out of `base`, so promoting an
+    ignored app landed it in `games` while leaving it in `non_games`, and the
+    Games pane went on listing it under "Not games" as though nothing had
+    happened. The same shape of merge runs in three places - the local save,
+    the sync absorb and the GitHub push - so the app undid the promotion
+    locally and then again on the next sync.
+
+    `overlay` is always the more recent view (this machine's live state, or
+    the local file weighed against a remote), so anything it has classified
+    wins outright and is dropped from the opposite bucket. Additions made
+    elsewhere still survive, which is the property the merge existed for.
+    """
+    games = {**base.get("games", {}), **overlay.get("games", {})}
+    non_games = {**base.get("non_games", {}), **overlay.get("non_games", {})}
+    for key in overlay.get("games", {}):
+        non_games.pop(key, None)
+    for key in overlay.get("non_games", {}):
+        games.pop(key, None)
+    return {"games": games, "non_games": non_games}
+
+
 class Classifier:
     def __init__(self, on_log=None, on_saved=None):
         self.on_log = on_log or (lambda msg: None)
@@ -86,10 +114,33 @@ class Classifier:
                     data = json.load(f)
                     data.setdefault("games", {})
                     data.setdefault("non_games", {})
-                    return data
+                    return self._heal(data)
             except (OSError, json.JSONDecodeError):
                 self.log(f"[Classifier] {DATA_FILE} was corrupt, starting fresh.")
         return {"games": {}, "non_games": {}}
+
+    def _heal(self, data):
+        """Repair entries the old union merge left in both buckets.
+
+        Until merge_classifications existed, a reclassification added to one
+        bucket without ever removing from the other, so a promoted app ended up
+        filed as both a game and a non-game - starrail.exe really was, in two
+        of the three game lists on this machine. The Games pane then listed it
+        on both sides, which is what "I can't change non games into games"
+        looked like from the outside.
+
+        `games` wins: its entry carries a display name and a source, so it is a
+        deliberate decision, where a non_games entry is a bare True. Healing on
+        load means every machine and the synced copy fix themselves without
+        anyone editing JSON by hand.
+        """
+        both = set(data["games"]) & set(data["non_games"])
+        for basename in both:
+            data["non_games"].pop(basename, None)
+        if both:
+            self.log(f"[Classifier] Repaired {len(both)} app(s) filed as both "
+                     f"game and non-game: {', '.join(sorted(both))}.")
+        return data
 
     def _save(self):
         # Merge with what's currently on disk before writing, rather than
@@ -104,10 +155,7 @@ class Classifier:
                     on_disk = json.load(f)
             except (OSError, json.JSONDecodeError):
                 pass
-        self._data = {
-            "games": {**on_disk.get("games", {}), **self._data["games"]},
-            "non_games": {**on_disk.get("non_games", {}), **self._data["non_games"]},
-        }
+        self._data = merge_classifications(on_disk, self._data)
         with open(DATA_FILE, "w", encoding="utf-8") as f:
             json.dump(self._data, f, indent=2, sort_keys=True)
         try:
@@ -132,14 +180,15 @@ class Classifier:
         if not external:
             return 0
         with self._lock:
-            before = len(self._data.get("games", {})) + len(self._data.get("non_games", {}))
-            self._data = {
-                "games": {**external.get("games", {}), **self._data.get("games", {})},
-                "non_games": {**external.get("non_games", {}), **self._data.get("non_games", {})},
-            }
-            after = len(self._data["games"]) + len(self._data["non_games"])
-        added = after - before
-        if added:
+            known = set(self._data.get("games", {})) | set(self._data.get("non_games", {}))
+            self._data = merge_classifications(external, self._data)
+            # Count keys this machine had never seen, not the change in total.
+            # A remote reclassification moves an entry between buckets and
+            # leaves the total identical, and a local one shrinks it - both
+            # would otherwise report a nonsense "pulled N".
+            merged = set(self._data["games"]) | set(self._data["non_games"])
+            added = len(merged - known)
+        if merged != known:
             self._save()
         return added
 
