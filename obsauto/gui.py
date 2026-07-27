@@ -476,7 +476,7 @@ class AppWindow:
         self._hero_state = "disconnected"  # disconnected | watching | recording | paused
         self._bitrate_sample = None   # (duration_ms, bytes) from the previous poll
         self._current_game = None
-        self._eq_bars = []            # scene-preview equaliser bar canvas ids
+        self._eq_bars = ()            # removed in 6.6 - see _build_hero's preview
         self._log_lines = []          # replayed into the dashboard activity panel
         self._log_pending = []        # buffered lines awaiting a coalesced flush
         self._log_flush_scheduled = False
@@ -1151,15 +1151,14 @@ class AppWindow:
                                  ICON_GLYPHS["x"], self._hide, font=(ICON_FONT, -9))
         self._make_circle_button(WIDTH - pad_r - 53, cy, 15, SURFACE, SURFACE_HOVER,
                                  ICON_GLYPHS["minus"], self._hide, font=(ICON_FONT, -9))
-        # Collapse to the mini overlay (2k). It refuses while idle, which is why
-        # this is a normal button rather than one that gets hidden - the refusal
-        # says why, where a vanishing control would just be confusing.
-        self._make_circle_button(
-            WIDTH - pad_r - 89, cy, 15, SURFACE, SURFACE_HOVER,
-            ICON_GLYPHS[dv.ICONS["collapse_mini"]], self.show_mini,
-            font=(ICON_FONT, -9))
+        # There is no third window control. 6.5 lists the bar's contents as
+        # exactly eight elements and says so twice: "The current build added a
+        # globe icon, a Customise button and a third window control... Not in
+        # the titlebar: Customise, globes, settings gears, maximise, help, or
+        # anything else." Collapsing to the mini overlay moved to the dashboard
+        # pane header, where pane-level actions belong.
 
-        ox = WIDTH - pad_r - 120   # clears the three 30px circle buttons
+        ox = WIDTH - pad_r - 84    # clears the two 30px circle buttons
         # Frame 2a: one readout `OBS 30.2 · localhost:4455`. Host:port stays
         # visible even while disconnected so you can see what we're aiming at.
         hostport = (f"{self.config.get('obs_host', 'localhost')}:"
@@ -1167,9 +1166,11 @@ class AppWindow:
         self._obs_card_title = self.bg.create_text(
             ox, cy, anchor="e", text=f"OBS offline \u00b7 {hostport}",
             fill=MUTED, font=dv.type_font("meta"))
+        # "dot 7px, one line" - a status dot, which is one of the two roles the
+        # spec sanctions a Fill glyph for (ph-circle at 6-8px).
         self._obs_card_dot = self.bg.create_text(
-            ox - 210, cy, anchor="e", text=ICON_GLYPHS["plugs"],
-            fill=EMBER, font=(ICON_FONT, -13))
+            ox - 210, cy, anchor="e", text=ICON_GLYPHS["record"],
+            fill=EMBER, font=(ICON_FONT, -7))
 
         # The rule under the titlebar, fading at both ends like every other.
         self._fading_rule(0, TITLEBAR_HEIGHT, WIDTH)
@@ -1216,6 +1217,21 @@ class AppWindow:
         self._customise_win = self.bg.create_window(
             WIDTH - dv.PANE_HEADER_PAD_X - 352, cy - 15, anchor="nw",
             window=self.customise_btn, width=100, height=30)
+
+        # Collapse to the mini overlay (2k). This was a third circle in the
+        # titlebar, which 6.5 forbids - the bar is exactly eight elements. It
+        # is a pane-level action, so it lives in the 62px pane header with the
+        # rest of them. It refuses while idle rather than disappearing, because
+        # a refusal that says why beats a control that silently isn't there.
+        self.mini_btn = ctk.CTkButton(
+            self.root, text="Mini overlay", command=self.show_mini,
+            fg_color="transparent", hover_color=SURFACE_HOVER, text_color=MUTED,
+            bg_color=self._bg_at(WIDTH - 500, cy), border_width=1, border_color=EDGE,
+            corner_radius=dv.RADIUS_CONTROL, font=ctk.CTkFont(size=12),
+        )
+        self._mini_win = self.bg.create_window(
+            WIDTH - dv.PANE_HEADER_PAD_X - 464, cy - 15, anchor="nw",
+            window=self.mini_btn, width=104, height=30)
 
     def _draw_keycap(self, cx, cy, label):
         """A small rounded keycap chip on the canvas - the sampled-corner
@@ -1286,8 +1302,8 @@ class AppWindow:
         self.bg.itemconfigure(self._topbar_title, text=VIEW_TITLES[name])
         # Customise only means anything on the dashboard; leaving it on while
         # navigating away would strand the grips over another view.
-        self.bg.itemconfigure(self._customise_win,
-                              state="normal" if name == "dashboard" else "hidden")
+        for win in (self._customise_win, self._mini_win):
+            self.bg.itemconfigure(win, state="normal" if name == "dashboard" else "hidden")
         if name != "dashboard" and getattr(self, "_customising", False):
             self._set_customise(False)
         for nav_name, parts in self._nav.items():
@@ -2262,6 +2278,7 @@ class AppWindow:
             child.destroy()
         self._settings_fields = {}
         self._settings_obs_footer_label = None
+        self._settings_sync_label = None
 
         blurb = next((b for k, _t, b in settings_spec.GROUPS if k == self._settings_group), "")
         if blurb:
@@ -2272,6 +2289,15 @@ class AppWindow:
             self._settings_field(field)
         if self._settings_group == "obs":
             self._build_settings_obs_footer()
+        elif self._settings_group in ("gamesync", "offload"):
+            # 6.3: "Sync status belongs in Settings -> Sync." It used to be a
+            # stat tile on the dashboard, where a live queue depth had no
+            # business sitting in a read-only display row.
+            self._settings_sync_label = ctk.CTkLabel(
+                self._settings_host, text=self._sync_status_text(), anchor="w",
+                justify="left", wraplength=520, text_color=ACCENT_LIGHT,
+                font=ctk.CTkFont(size=12))
+            self._settings_sync_label.pack(anchor="w", padx=12, pady=(16, 12))
 
     def _build_settings_obs_footer(self):
         """Frame 2c: ``Connected to OBS 30.2 — handshake 41 ms`` + Test again.
@@ -2485,16 +2511,9 @@ class AppWindow:
             left_x, y + 98, anchor="w", text="", fill=FAINT,
             font=dv.font(11, mono=True), width=left_w)
 
-        # --- folder chip ---
-        self._glass(left_x, y + 116, left_w, 28, tint=dv.GROUND, radius=dv.RADIUS_CONTROL,
-                    tint_alpha=170, border_hex=CARD_BORDER, border_alpha=24)
-        self.bg.create_text(left_x + 11, y + 130, anchor="w",
-                            text=ICON_GLYPHS[dv.ICONS["reveal"]],
-                            fill=ACCENT, font=(ICON_FONT, -11))
-        self.folder_label_id = self.bg.create_text(
-            left_x + 30, y + 130, anchor="w", text=self.config["recording_root"],
-            fill=MUTED, font=dv.font(11, mono=True), width=left_w - 42,
-        )
+        # No folder chip. 6.6's idle-hero table is explicit - "Path field: rail
+        # footer only, not in the hero" - and the rail footer already carries
+        # the recording root with its fill bar, as 2a draws it.
 
         # --- the three readouts: Elapsed / File size / Bitrate ---
         # Every one is real. Elapsed and File size come straight from OBS's
@@ -2600,37 +2619,32 @@ class AppWindow:
             x + w - 12, y + h - 14, anchor="se", text="",
             fill=ACCENT_LIGHT, font=dv.font(10, mono=True))
 
-        # Equaliser bars along the bottom. Drawn once, in a fixed waveform - they
-        # used to animate, but every canvas mutation costs a full window
-        # composite (see the note above _glass), so a 12fps equaliser cost about
-        # as much as the entire rest of the UI put together.
-        self._eq_bars = []
-        n = 11
-        bar_w = 5
-        span = w - 28
-        gap = (span - n * bar_w) / (n - 1)
-        base_x = x + 14
-        floor_y = y + h - 14
-        for i in range(n):
-            bx = base_x + i * (bar_w + gap)
-            height = 6 + (math.sin(i * 0.8) + 1) * 9
-            bar = self.bg.create_rectangle(bx, floor_y - height, bx + bar_w, floor_y,
-                                           fill="#EDEAFF", outline="")
-            self._eq_bars.append((bar, bx, floor_y, bar_w))
+        # 6.6: "The build filled the preview with a bright violet gradient and
+        # invented audio bars." The eleven-bar equaliser that used to sit here
+        # was a fixed sine waveform - it looked like a level meter and metered
+        # nothing. There is no audio source behind it, so it is gone rather
+        # than faked. The equaliser list stays as an empty tuple because
+        # _set_hero_state still iterates it.
+        self._eq_bars = ()
 
     def _make_preview_tile(self, w, h):
+        """The scene placeholder: a dark tile, not a lit one.
+
+        6.6 again - "When there is no frame to show, it is a dark placeholder
+        with a label. Bright flat fills fight the aurora and blow out the only
+        ember cue." A live frame would mean polling GetSourceScreenshot on a
+        timer, which is one full window composite per tick and therefore fatal
+        here, so the placeholder is what the pane shows.
+        """
         sw, sh = self._S(w), self._S(h)
         img = Image.new("RGBA", (sw, sh), (0, 0, 0, 0))
         draw = ImageDraw.Draw(img)
+        # A shallow ramp inside the ground range, so it reads as an unlit panel
+        # sunk into the card rather than a violet light source.
         for i in range(sh):
-            col = _blend_hex("#2A1C4D", "#7C3AED", i / max(1, sh - 1))
+            col = _blend_hex(dv.GROUND_DEEP, dv.PANEL, i / max(1, sh - 1))
             r, g, b = int(col[1:3], 16), int(col[3:5], 16), int(col[5:7], 16)
             draw.line([(0, i), (sw, i)], fill=(r, g, b, 255))
-        # Soft top-left light bloom for a touch of depth.
-        bloom = Image.new("RGBA", (sw, sh), (0, 0, 0, 0))
-        ImageDraw.Draw(bloom).ellipse(
-            [-sw * 0.2, -sh * 0.4, sw * 0.7, sh * 0.6], fill=(255, 255, 255, 26))
-        img = Image.alpha_composite(img, bloom.filter(ImageFilter.GaussianBlur(self._S(30))))
         mask = Image.new("L", (sw, sh), 0)
         ImageDraw.Draw(mask).rounded_rectangle(
             [0, 0, sw - 1, sh - 1], radius=self._S(13), fill=255)
@@ -2706,6 +2720,21 @@ class AppWindow:
                 "watching": "Standing by — recording starts by itself the moment a game launches.",
             }.get(state, ""),
         )
+
+        # 6.6's idle-hero row: "Foreground exe - 'chrome.exe - not a game'".
+        # Only while watching, and only once the monitor has actually told us
+        # what has focus - before then there is nothing true to say.
+        foreground = getattr(self, "_foreground_exe", None)
+        if state == "watching" and foreground:
+            name, verdict = foreground
+            self.bg.itemconfigure(
+                self._hero_source_id, state="normal",
+                text=f"Foreground: {name} — " + {
+                    "non_game": "classified as not a game.",
+                    "unknown": "not classified yet.",
+                }.get(verdict, "not a game Nebula records."))
+        else:
+            self.bg.itemconfigure(self._hero_source_id, text="", state="hidden")
 
         # Scene-preview caption follows the capture, so the right column isn't
         # claiming "idle" while a recording is plainly running. Scene name is
@@ -2802,63 +2831,102 @@ class AppWindow:
             tx + 15, ty + 71, anchor="w", text="scanning…", fill=MUTED,
             font=dv.type_font("meta"))
 
-        # 2) Disk free
+        # 2) Recorded
         tx, ty = cell(1)
-        self._stat_tile(tx, ty, tw, h, "hard-drives", ACCENT, "Disk free")
-        self._stat_disk_val = self.bg.create_text(
+        self._stat_tile(tx, ty, tw, h, "record", ACCENT, "Recorded")
+        self._stat_recorded_val = self.bg.create_text(
             tx + 15, ty + 48, anchor="w", text="–", fill=TEXT,
             font=dv.font(21, 500))
-        self._stat_disk_sub = self.bg.create_text(
-            tx + 15, ty + 71, anchor="w", text="", fill=MUTED,
+        self._stat_recorded_sub = self.bg.create_text(
+            tx + 15, ty + 71, anchor="w", text="today", fill=MUTED,
             font=dv.type_font("meta"))
 
-        # 3) Idle timeout - value + live slider (keeps the old control alive)
+        # 3) Auto-culled
         tx, ty = cell(2)
-        self._stat_tile(tx, ty, tw, h, "timer", ACCENT, "Idle timeout")
-        self.timeout_value_id = self.bg.create_text(
-            tx + 15, ty + 48, anchor="w",
-            text=f"{self.config['idle_timeout_seconds']}s", fill=TEXT,
+        self._stat_tile(tx, ty, tw, h, "scissors", ACCENT, "Auto-culled")
+        self._stat_culled_val = self.bg.create_text(
+            tx + 15, ty + 48, anchor="w", text="–", fill=TEXT,
             font=dv.font(21, 500))
-        slider_bg = self._bg_at(tx + tw / 2, ty + 74)
-        slider = ctk.CTkSlider(
-            self.root, from_=1, to=60, number_of_steps=59, command=self._on_timeout_change,
-            fg_color=SURFACE, progress_color=ACCENT, button_color=ACCENT,
-            button_hover_color=ACCENT_LIGHT, bg_color=slider_bg, height=14,
-        )
-        slider.set(self.config["idle_timeout_seconds"])
-        self.bg.create_window(tx + 15, ty + 70, anchor="w", window=slider,
-                              width=int(tw - 30), height=14)
-        self._dashboard_widgets.append(slider)
-
-        # 4) Sync + offload status. Top line: game-list sync (GitHub). Sub line:
-        # NAS offload state, updated live by on_offload_state().
-        tx, ty = cell(3)
-        self._stat_tile(tx, ty, tw, h, "steam-logo", ACCENT, "Sync")
-        gh_on = bool(self.gamesync and self.gamesync.enabled)
-        offload_on = bool(self.offloader and self.offloader.enabled)
-        self.bg.create_text(tx + 15, ty + 48, anchor="w",
-                            text="GitHub" if gh_on else "Local",
-                            fill=TEXT if gh_on else MUTED,
-                            font=dv.font(21, 500))
-        self._stat_sync_sub = self.bg.create_text(
+        self._stat_culled_sub = self.bg.create_text(
             tx + 15, ty + 71, anchor="w",
-            text=("NAS offload on" if offload_on else "game list") if gh_on
-                 else "local only",
+            text=f"under {self.config.get('min_clip_seconds', 10)}s",
             fill=MUTED, font=dv.type_font("meta"))
 
+        # 4) Idle pauses
+        tx, ty = cell(3)
+        self._stat_tile(tx, ty, tw, h, "moon", ACCENT, "Idle pauses")
+        self._stat_idle_val = self.bg.create_text(
+            tx + 15, ty + 48, anchor="w", text="–", fill=TEXT,
+            font=dv.font(21, 500))
+        self._stat_idle_sub = self.bg.create_text(
+            tx + 15, ty + 71, anchor="w",
+            text=f"after {self.config.get('idle_timeout_seconds', 4)}s idle",
+            fill=MUTED, font=dv.type_font("meta"))
+
+        self._refresh_stat_tiles()
+
+    def _refresh_stat_tiles(self):
+        """Fill the four tiles from the session log.
+
+        6.3: "A stat tile shows one number and one caption. It never contains a
+        control." The Idle timeout tile held a live slider and the Sync tile
+        held a queue readout, so two of the four were controls wearing a tile's
+        clothes. The slider moved to Settings, where every other setting lives,
+        and sync moved to Settings -> Sync. Disk free was a duplicate: the rail
+        footer already carries it with its bar, which is where 2a puts it.
+
+        The replacements are counted from sessions.jsonl, so a fresh install
+        reads zero because zero is true - not because the source is missing.
+        """
+        if not hasattr(self, "_stat_culled_val"):
+            return
+        try:
+            stats = session_log.today()
+        except Exception:
+            return
+        seconds = int(stats["recorded_seconds"])
+        hours, rem = divmod(seconds, 3600)
+        minutes = rem // 60
+        self.bg.itemconfigure(
+            self._stat_recorded_val,
+            text=f"{hours}h {minutes:02d}m" if hours else f"{minutes}m")
+        self.bg.itemconfigure(self._stat_culled_val, text=str(stats["culled"]))
+        self.bg.itemconfigure(self._stat_idle_val, text=str(stats["idle_pauses"]))
+        if getattr(self, "_stat_today_val", None) is not None and stats["clips"]:
+            # The disk scan also fills this one; the log is the faster answer
+            # and agrees with it for anything recorded since midnight.
+            self.bg.itemconfigure(self._stat_today_val, text=str(stats["clips"]))
+
     def on_offload_state(self, pending):
-        """Called (from the offloader's thread) as the NAS queue drains."""
-        def apply():
-            if not hasattr(self, "_stat_sync_sub"):
-                return
-            if pending > 0:
-                text = f"NAS: {pending} queued"
-            elif self.offloader and self.offloader.enabled:
-                text = "NAS: up to date"
-            else:
-                text = "game list"
-            self.bg.itemconfigure(self._stat_sync_sub, text=text)
-        self._ui(apply)
+        """Called (from the offloader's thread) as the NAS queue drains.
+
+        6.3 moved this off the dashboard - "Sync status belongs in Settings ->
+        Sync" - so the queue depth is held here and rendered by the Settings
+        pane rather than by a stat tile.
+        """
+        self._offload_pending = pending
+        self._ui(self._refresh_sync_status)
+
+    def _sync_status_text(self):
+        pending = getattr(self, "_offload_pending", 0)
+        if pending > 0:
+            text = f"{pending} clip{'' if pending == 1 else 's'} queued for the NAS"
+        elif self.offloader and self.offloader.enabled:
+            text = "NAS offload up to date"
+        else:
+            text = "NAS offload off"
+        if self.gamesync and self.gamesync.enabled:
+            return text + "  ·  game list synced with GitHub"
+        return text + "  ·  game list is local to this machine"
+
+    def _refresh_sync_status(self):
+        label = getattr(self, "_settings_sync_label", None)
+        if label is None:
+            return
+        try:
+            label.configure(text=self._sync_status_text())
+        except Exception:
+            self._settings_sync_label = None   # the group was navigated away from
 
     def _stat_tile(self, x, y, w, h, role, color, label):
         """One stat tile - 16 / 4 / 12, per 6.2's nesting table."""
@@ -2868,20 +2936,50 @@ class AppWindow:
         self.bg.create_text(x + 34, y + 20, anchor="w", text=self._track(label),
                             fill=FAINT, font=dv.type_font("eyebrow"))
 
-    # ---- activity log ----
+    # ---- activity log (6.4) ----
+    # "Currently a tall empty box with the text clipped at the top and a
+    # scrollbar. It is a fixed-height panel with a header bar, newest entry
+    # first, and three aligned columns."
+    ACTIVITY_HEADER_H = 34          # the header bar inside the panel
+    ACTIVITY_COL_TIME = 58          # "Columns: time 58 · tag 74 · message flex"
+    ACTIVITY_COL_TAG = 74
+    ACTIVITY_FULL_ROWS = 5          # "Older rows opacity .5 past the 5th entry"
+
     def _build_activity(self, x0, y, w, h):
-        # h is the whole footprint (header + panel). Header sits on top; the log
-        # panel fills the rest, so the block works at any grid height/width.
-        self.bg.create_text(x0, y, anchor="nw", text=self._track("Activity"),
-                            fill=FAINT, font=dv.type_font("eyebrow"))
+        # No eyebrow above the panel: the panel has its own header bar now, and
+        # 6.8 is explicit that a module must not show its name twice ("the
+        # module's own eyebrow must be replaced by the handle-strip name, not
+        # shown alongside it"). In customise mode the handle strip names it.
         py = y + 22
         panel_h = h - 22
         self._card(x0, py, w, panel_h, kind="panel")
 
+        # The header bar, inside the panel and above the rows: the label on the
+        # left, the two actions on the right, a fading rule underneath.
+        hy = py + self.ACTIVITY_HEADER_H / 2
+        self.bg.create_text(x0 + 16, hy, anchor="w", text=self._track("Activity"),
+                            fill=FAINT, font=dv.type_font("eyebrow"))
+        self._activity_filter_btn = ctk.CTkButton(
+            self.root, text="All tags", command=self._cycle_log_filter,
+            fg_color="transparent", hover_color=SURFACE_HOVER, text_color=MUTED,
+            bg_color=self._bg_at(x0 + w - 150, hy), border_width=1, border_color=EDGE,
+            corner_radius=8, font=ctk.CTkFont(size=11))
+        self.bg.create_window(x0 + w - 178, hy - 12, anchor="nw",
+                              window=self._activity_filter_btn, width=84, height=24)
+        copy_btn = ctk.CTkButton(
+            self.root, text="Copy log", command=self._copy_log,
+            fg_color="transparent", hover_color=SURFACE_HOVER, text_color=MUTED,
+            bg_color=self._bg_at(x0 + w - 60, hy), border_width=1, border_color=EDGE,
+            corner_radius=8, font=ctk.CTkFont(size=11))
+        self.bg.create_window(x0 + w - 88, hy - 12, anchor="nw",
+                              window=copy_btn, width=76, height=24)
+        self._dashboard_widgets.extend([self._activity_filter_btn, copy_btn])
+        self._fading_rule(x0 + 12, py + self.ACTIVITY_HEADER_H, w - 24)
+
         # Rounded plate + a flat square textbox inset inside it (see the note in
         # the old build - a tall widget can't match a sheen gradient's corners).
-        box_x, box_y = x0 + 10, py + 10
-        box_w, box_h = w - 20, panel_h - 20
+        box_x, box_y = x0 + 10, py + self.ACTIVITY_HEADER_H + 6
+        box_w, box_h = w - 20, panel_h - self.ACTIVITY_HEADER_H - 16
         box_r = 10
         backing = make_solid_tile(self._S(box_w), self._S(box_h), LOG_BG, radius=self._S(box_r))
         backing_photo = to_photo(backing)
@@ -2896,11 +2994,21 @@ class AppWindow:
         )
         self.bg.create_window(box_x + box_r, box_y + box_r, anchor="nw", window=self.console,
                               width=box_w - box_r * 2, height=box_h - box_r * 2)
+        # 6.4 lists the scrollbar among the defects ("a tall empty box with the
+        # text clipped at the top and a scrollbar"). It is a fixed-height panel
+        # showing the newest entries; anything older is in the log file, and
+        # Copy log is right there in the header.
+        try:
+            self.console.configure(activate_scrollbars=False)
+        except Exception:
+            pass
         self._prepare_log_tags(self.console)
         self._dashboard_widgets.append(self.console)
         # Replay history so switching layouts (which rebuilds this) doesn't wipe
         # the visible log.
-        self._append_log_batch(self.console, list(self._log_lines[-LOG_HISTORY:]))
+        # Oldest-first history into a newest-first panel, so replay reversed.
+        self._append_log_batch(self.console,
+                               list(reversed(self._log_lines[-LOG_HISTORY:])))
 
     # ---- disk / clip stats ----
     def _poll_disk_stats(self):
@@ -2966,9 +3074,9 @@ class AppWindow:
                               text=f"{clips} clip" + ("" if clips == 1 else "s"))
         self.bg.itemconfigure(self._stat_today_sub,
                               text=f"{_format_bytes(total)} recorded" if clips else "nothing yet")
-        if free_txt:
-            self.bg.itemconfigure(self._stat_disk_val, text=free_txt)
-            self.bg.itemconfigure(self._stat_disk_sub, text=f"on {drive}" if drive else "free")
+        # Disk free is not a tile any more - 6.3: "Disk free belongs in the rail
+        # footer with its bar, not in this row - it is already there in 2a."
+        # The rail card is filled from usage_pair just below.
 
         # The rail storage card. Left blank until a real reading arrives - an
         # empty bar beats a bar sitting at zero, which would read as "disk full".
@@ -3071,46 +3179,116 @@ class AppWindow:
                 self._append_log_batch(box, pending)
 
     def _prepare_log_tags(self, box):
-        """Colour-code the [Subsystem] prefix and give lines breathing room.
+        """Colour-code the [Subsystem] prefix and set up 6.4's three columns.
+
         Reaches into CTkTextbox's underlying tk.Text (private but stable across
         ctk 5.x) since CTkTextbox doesn't proxy tag configuration - guarded so a
-        ctk update can't crash the app."""
+        ctk update can't crash the app.
+        """
         try:
             tb = box._textbox
             for tag, color in LOG_TAG_COLORS.items():
                 tb.tag_config(f"t_{tag}", foreground=color)
-            tb.configure(spacing1=2, spacing3=2)
+            tb.tag_config("t_time", foreground=dv.TEXT_EYEBROW)
+            # "Older rows opacity .5 past the 5th entry." Canvas and Tk text
+            # have no alpha, so the row is composited at .5 against the panel
+            # instead - the same thing the browser would end up painting.
+            tb.tag_config("t_old", foreground=dv.over(MUTED, 0.5, dv.PANEL))
+            # "Columns: time 58 · tag 74 · message flex", as tab stops. Aligning
+            # by tab means a long game name can't push the message column out.
+            tb.configure(
+                spacing1=5, spacing3=5,            # "Row pad-y 5"
+                tabs=(f"{self._S(self.ACTIVITY_COL_TIME)}",
+                      f"{self._S(self.ACTIVITY_COL_TIME + self.ACTIVITY_COL_TAG)}"),
+                wrap="none")
         except Exception:
             pass
 
+    def _log_row(self, message):
+        """(time, tag, message) for one log line, whatever shape it arrives in."""
+        stamp = time.strftime("%H:%M:%S")
+        m = re.match(r"\[(\w+)\]\s*", message)
+        if m:
+            return stamp, m.group(1), message[m.end():]
+        return stamp, "", message
+
     def _append_log_batch(self, box, messages):
-        """Write many log lines with a single state toggle + one scroll, so the
-        cost is per-flush, not per-line."""
+        """Write many log lines with a single state toggle, newest at the top.
+
+        6.4: "Order: newest at top, no auto-scroll jump." Inserting at 1.0
+        rather than appending is also what removes the jump - there is nothing
+        to scroll to, so a burst of lines can't yank the view while you are
+        reading it.
+        """
         box.configure(state="normal")
-        for message in messages:
-            tagged = False
-            try:
-                m = re.match(r"\[(\w+)\]", message)
-                if m and m.group(1) in LOG_TAG_COLORS:
-                    tb = box._textbox
-                    tb.insert("end", m.group(0), (f"t_{m.group(1)}",))
-                    tb.insert("end", message[m.end():] + "\n")
-                    tagged = True
-            except Exception:
-                tagged = False
-            if not tagged:
-                box.insert("end", message + "\n")
-        # Keep the widget bounded too, or a long session's textbox grows without
-        # limit and every insert gets slower. Trim from the top to LOG_HISTORY.
         try:
             tb = box._textbox
-            line_count = int(tb.index("end-1c").split(".")[0])
-            if line_count > LOG_HISTORY:
-                tb.delete("1.0", f"{line_count - LOG_HISTORY + 1}.0")
         except Exception:
-            pass
-        box.see("end")
+            tb = None
+        active = getattr(self, "_log_filter", None)
+        for message in messages:
+            stamp, tag, rest = self._log_row(message)
+            if active and tag != active:
+                continue
+            # One insert for the whole row, then tag by column offset. Inserting
+            # the three parts separately at "1.0"/"1.0 lineend" looks right and
+            # isn't: "1.0" prepends *into* the existing first line, so every
+            # entry after the first merged into the one above it.
+            cell = f"[{tag}]" if tag else ""
+            row = f"{stamp}\t{cell}\t{rest}\n"
+            if tb is None:
+                box.insert("1.0", row)
+                continue
+            tb.insert("1.0", row)
+            tb.tag_add("t_time", "1.0", f"1.{len(stamp)}")
+            if tag in LOG_TAG_COLORS:
+                start = len(stamp) + 1
+                tb.tag_add(f"t_{tag}", f"1.{start}", f"1.{start + len(cell)}")
+        # Dim everything past the fifth row, and keep the widget bounded - a
+        # long session's textbox otherwise grows without limit and every insert
+        # gets slower. Newest-first means the trim is from the *bottom*.
+        if tb is not None:
+            try:
+                tb.tag_remove("t_old", "1.0", "end")
+                tb.tag_add("t_old", f"{self.ACTIVITY_FULL_ROWS + 1}.0", "end")
+                line_count = int(tb.index("end-1c").split(".")[0])
+                if line_count > LOG_HISTORY:
+                    tb.delete(f"{LOG_HISTORY + 1}.0", "end")
+            except Exception:
+                pass
         box.configure(state="disabled")
+
+    def _cycle_log_filter(self):
+        """Step through the tags actually present, then back to all of them.
+
+        The frame draws a dropdown labelled "All tags"; a canvas-hosted menu is
+        a lot of machinery for a five-item list, so this cycles in place and
+        the button always says which filter is live.
+        """
+        tags = [t for t in LOG_TAG_COLORS
+                if any(self._log_row(m)[1] == t for m in self._log_lines)]
+        order = [None] + sorted(tags)
+        current = getattr(self, "_log_filter", None)
+        nxt = order[(order.index(current) + 1) % len(order)] if current in order else None
+        self._log_filter = nxt
+        self._activity_filter_btn.configure(text=nxt or "All tags")
+        try:
+            self.console.configure(state="normal")
+            self.console.delete("1.0", "end")
+            self.console.configure(state="disabled")
+        except Exception:
+            return
+        # History is oldest-first; the panel is newest-first, so replay reversed.
+        self._append_log_batch(self.console,
+                               list(reversed(self._log_lines[-LOG_HISTORY:])))
+
+    def _copy_log(self):
+        try:
+            self.root.clipboard_clear()
+            self.root.clipboard_append("\n".join(self._log_lines))
+            self._log("[Nebula] Activity log copied to the clipboard.")
+        except Exception as exc:
+            self._log(f"[Nebula] Couldn't copy the log: {exc}")
 
     # ---- recording indicator (pulsing dot + elapsed timer + live storage) ----
     def _update_bitrate(self, duration_ms, written_bytes):
@@ -3840,8 +4018,12 @@ class AppWindow:
                 # from OBS's own GetRecordStatus, not from this event - that
                 # way they reflect whether OBS is *actually* recording, not
                 # just whether the monitor decided a game should be recorded.
-            if "folder" in kwargs:
-                self.bg.itemconfigure(self.folder_label_id, text=kwargs["folder"] or self.config["recording_root"])
+            if "foreground" in kwargs:
+                # 6.6: the watching hero names what it is looking at -
+                # "Foreground: chrome.exe - classified as not a game."
+                self._foreground_exe = kwargs["foreground"]
+                if self._hero_state == "watching":
+                    self._set_hero_state("watching")
             if "idle" in kwargs:
                 # Idle no longer has its own pill - it reads as the hero card's
                 # "PAUSED" state, which _poll_obs_status derives from OBS itself.
@@ -3916,8 +4098,18 @@ class AppWindow:
             pass
 
     def _on_timeout_change(self, value):
+        """Kept for the hotkey/tray paths; the dashboard slider is gone.
+
+        6.3: "The current build put a live slider inside the Idle timeout tile.
+        A stat tile shows one number and one caption. It never contains a
+        control - those live in Settings." idle_timeout_seconds is already a
+        declared field in settings_spec, so nothing was lost by removing it
+        from the dashboard.
+        """
         self.config["idle_timeout_seconds"] = int(value)
-        self.bg.itemconfigure(self.timeout_value_id, text=f"{int(value)}s")
+        if getattr(self, "_stat_idle_sub", None) is not None:
+            self.bg.itemconfigure(self._stat_idle_sub,
+                                  text=f"after {int(value)}s idle")
         from .config import save_config
         save_config(self.config)
 

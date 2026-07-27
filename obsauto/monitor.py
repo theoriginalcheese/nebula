@@ -23,6 +23,8 @@ import time
 
 import psutil
 
+from . import session_log
+
 try:
     import win32gui
     import win32process
@@ -213,6 +215,7 @@ class Monitor:
         self._last_reconnect_attempt = 0.0
         self._was_disconnected = False
         self._auto_paused = False
+        self._last_foreground = None   # so the hero's foreground line only fires on change
         self._audio_keep_alive = AudioKeepAlive(
             config.get("keep_alive_audio_processes", ["discord.exe"]), on_log=self.log,
         )
@@ -298,7 +301,14 @@ class Monitor:
                 self.log(f"[Monitor] Discarded clip under {min_seconds}s: {output_path}")
             else:
                 self.log(f"[Monitor] Failed to discard tiny clip {output_path}: {last_error}")
-        elif output_path and self.offloader is not None:
+        # One rec_stop either way, flagged with whether the clip survived. The
+        # dashboard's "Auto-culled" tile counts the flagged ones (6.3), and 7c's
+        # forecast needs the sizes of the ones that didn't get culled.
+        session_log.append("rec_stop", game=prev_name, path=output_path,
+                           duration=elapsed, size=file_size,
+                           culled=True if too_short else None)
+
+        if not too_short and output_path and self.offloader is not None:
             # A real clip that we're keeping: hand it to the NAS offloader (a
             # no-op unless nas_offload_root is configured). This only queues -
             # the copy/verify/delete happens on the offloader's own thread, so
@@ -348,6 +358,12 @@ class Monitor:
             result, display_name = self.classifier.classify(exe_path, proc_name)
             if result == "game" and self._recording_gate_open(os.path.basename(exe_path).lower()):
                 return self._make_target(pid, exe_path, display_name)
+            # Nothing to record here, but the idle hero says what it is looking
+            # at rather than a bare "no game detected" (6.6). Reported only when
+            # it changes - this loop runs once a second.
+            if proc_name and proc_name != self._last_foreground:
+                self._last_foreground = proc_name
+                self.on_state(foreground=(proc_name, result))
 
         for pid, exe_path, proc_name, title, cls in list_visible_windows():
             result, display_name = self.classifier.classify(exe_path, proc_name)
@@ -376,6 +392,7 @@ class Monitor:
                 detail = "idle" if reason == "idle" else "session ended"
                 self.log(f"[OBS] Paused recording ({name}) - {detail}.")
                 self.on_notify("pause", name)
+                session_log.append("idle_in", game=name, reason=reason)
         except OBSError as e:
             self.log(f"[OBS] Failed to pause: {e}")
 
@@ -390,6 +407,7 @@ class Monitor:
                 name = self._recording_target[2] if self._recording_target else "unknown"
                 self.log(f"[OBS] Resumed recording ({name}).")
                 self.on_notify("resume", name)
+                session_log.append("idle_out", game=name)
         except OBSError as e:
             self.log(f"[OBS] Failed to resume: {e}")
 
@@ -442,6 +460,11 @@ class Monitor:
                 self.log(f"[OBS] Recording started: {display_name} -> {folder}")
                 self.on_state(game=display_name, folder=folder)
                 self.on_notify("start", display_name)
+                # No appid field: the classifier has no lookup from an exe back
+                # to a Steam AppID yet. The event shape allows one, and 7d adds
+                # the source; writing a guess in the meantime would be exactly
+                # the fabricated data the spec forbids.
+                session_log.append("rec_start", game=display_name)
             else:
                 self.log(f"[OBS] Giving up on start after retries: {last_error}")
                 target = None
