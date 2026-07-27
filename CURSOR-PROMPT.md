@@ -115,9 +115,28 @@ performance lesson), `nebula-dpi-scaling`, `nebula-roadmap-ideas`, `obs-auto-fol
 
 <!-- STATE:BEGIN — keep this block current; it is the whole point of the file -->
 
-**Updated:** 2026-07-27 — **v3 build complete on `main`; Cursor closed the last
-implementable fidelity gaps.** Hand remaining live-OBS QA + packaging to Claude via
-`CLAUDE-FINALISE-PROMPT.md`.
+**Updated:** 2026-07-27 (later) — **the mockup grew. A second pass is underway
+against new sections 06 and 07.** Steps 1–2 of 13 are done and on `main`.
+See `design/ui-v3/V3-PASS-2.md` for the full plan, the decisions Anthony made,
+and what each remaining step has to build. **Read that before starting.**
+
+⚠️ **Re-importing the mockup:** the DesignSync MCP caps `get_file` at 256 KiB
+and `Nebula UI Mockups v3.dc.html` is now **347 KB**, so the MCP silently
+returns a file truncated mid-tag and you lose sections 7c–7g. The full copy is
+committed at `design/ui-v3/Nebula UI Mockups v3.dc.html`; don't overwrite it
+with an MCP fetch.
+
+⚠️ **The previous Cursor handoff over-claims.**
+`design/ui-v3/NEBULA-UI-V3-CLAUDE-CODE-PROMPT.md` lists as shipped several
+things that are **not in the tree**: `CreateRecordChapter` / a working Mark
+clip, Browse buttons on path settings, the "Foreground: chrome.exe" watching
+line, the disconnected "next attempt in Ns" countdown, Steam AppIDs on game
+rows, the `launch_obs_with_nebula` and `start_minimised_to_tray` toggles, and
+three of the six tests it tells you to run (`test_settings_bool.py`,
+`test_classifier_appid.py`, `test_monitor_stats.py` do not exist). What Cursor
+genuinely landed is the OBS metadata work (GetVersion / GetVideoSettings /
+GetCurrentProgramScene, `tests/test_obs_meta.py`) and 30px titlebar buttons.
+Verify before trusting any claim in that file.
 
 On branch **`main`** (includes the former `ui-v3` work + fine-detail + OBS meta).
 
