@@ -205,6 +205,22 @@ check("the chrome sits at the spec's .72",
 check("widgets sample a dust-free surface",
       app._composite.size == app.aurora.size, "composite/aurora size mismatch")
 
+# 6.2: "A flat single-border card is a bug." Every card goes through _card(),
+# which is the only place the nesting is chosen - so the check is that nothing
+# builds a card-sized panel by calling _glass directly with a card radius.
+card_radii = {str(shell) for shell, _p, _c in dv.CARD_LAYERS.values()}
+direct = re.findall(r"_glass\([^)]*radius=(?:dv\.)?(RADIUS_TRAY|RADIUS_CORE)\b", GUI_SRC)
+check("no card-sized panel bypasses the two-layer helper", not direct, direct)
+check("_card is what draws cards", "def _card(" in GUI_SRC and "_card(" in GUI_SRC)
+check("every nested kind is reachable from gui.py",
+      all(f'"{k}"' in GUI_SRC for k in ("hero", "panel", "tile")),
+      [k for k in ("hero", "panel", "tile") if f'"{k}"' not in GUI_SRC])
+
+# "Rules and dividers fade at both ends over 32-48px. No hard-stopped 1px greys."
+rules = GUI_SRC.count("_fading_rule(")
+check("dividers all go through the fading helper", rules >= 4, f"{rules} call sites")
+check("the fade distance is the spec's", dv.RULE_FADE == (32, 48), dv.RULE_FADE)
+
 check("no callback exceptions", not callback_errors,
       callback_errors[0].strip().splitlines()[-1] if callback_errors else "clean")
 

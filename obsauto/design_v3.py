@@ -119,6 +119,30 @@ RADIUS_CARD = 17
 RADIUS_TILE = 12
 RADIUS_CONTROL = 9
 
+# 6.2 - "A flat single-border card is a bug. Each card is a tinted outer shell
+# with 4-6px of padding wrapping a darker inner core, and the inner radius
+# equals the outer radius minus that padding."
+#
+# The whole nesting table, so a card can never be built with a geometry nobody
+# chose. Every row satisfies core == shell - padding; test_design_v3 asserts it.
+#
+#   kind  -> (shell radius, padding, core radius)
+CARD_LAYERS = {
+    "tray":  (RADIUS_TRAY, 6, RADIUS_CORE),     # 28 / 6 / 22 - the window itself
+    "hero":  (RADIUS_CORE, 5, RADIUS_CARD),     # 22 / 5 / 17
+    "panel": (18, 4, 14),                       # activity, lists
+    "tile":  (16, 4, RADIUS_TILE),              # 16 / 4 / 12 - stat tiles
+}
+# "Control / field 9-10, single layer - the one exception."
+SINGLE_LAYER_RADIUS = (9, 10)
+
+# The shell is a neutral wash, not an accent tint: rgba(245,243,255,.035) with a
+# rgba(245,243,255,.06) border. The core is rgba(24,20,40,.82).
+SHELL_HEX = "#f5f3ff"
+SHELL_FILL_ALPHA = 0.035
+SHELL_BORDER_ALPHA = 0.06
+CORE_ALPHA = 0.82
+
 TITLEBAR_H = 46
 TITLEBAR_PAD_LEFT = 18
 TITLEBAR_PAD_RIGHT = 8

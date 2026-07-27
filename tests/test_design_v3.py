@@ -103,6 +103,38 @@ check("radii descend tray > core > card > tile > control",
 check("tray inset reconciles tray and core radii",
       d.RADIUS_TRAY - d.TRAY_INSET == d.RADIUS_CORE)
 
+# 6.2's nesting table, read back off the deep-dive section of the mockup rather
+# than retyped here. Every row must satisfy the stated rule; the stat tiles were
+# built as a 12px shell around an 8px core when the spec asks for 16 around 12,
+# which is the kind of drift this catches.
+for kind, (shell, pad, core) in d.CARD_LAYERS.items():
+    check(f"card nesting holds for {kind}: {shell} - {pad} == {core}",
+          shell - pad == core, f"{shell} - {pad} = {shell - pad}, declared {core}")
+    check(f"{kind} padding is in the spec's 4-6px band", 4 <= pad <= 6, pad)
+check("the four nested kinds from 6.2 are all present",
+      set(d.CARD_LAYERS) == {"tray", "hero", "panel", "tile"}, sorted(d.CARD_LAYERS))
+check("the nesting table agrees with the named radii",
+      d.CARD_LAYERS["tray"][0] == d.RADIUS_TRAY
+      and d.CARD_LAYERS["hero"] == (d.RADIUS_CORE, 5, d.RADIUS_CARD)
+      and d.CARD_LAYERS["tile"][2] == d.RADIUS_TILE, d.CARD_LAYERS)
+# "Control / field 9-10, single layer - the one exception."
+check("controls stay single-layer at 9-10",
+      d.SINGLE_LAYER_RADIUS == (9, 10)
+      and d.RADIUS_CONTROL == d.SINGLE_LAYER_RADIUS[0], d.SINGLE_LAYER_RADIUS)
+
+# "In-window cores are translucent so the aurora reads through: .72 for the rail
+# and titlebar, .82-.92 for content cards. Fully opaque over the aurora is a bug."
+lo, hi = d.PANEL_OVER_BACKDROP_ALPHA
+check("the chrome alpha is the spec's .72",
+      d.CHROME_ALPHA == int(round(lo * 255)), d.CHROME_ALPHA)
+check("card cores land inside .82-.92",
+      int(round(0.82 * 255)) <= d.CARD_ALPHA <= int(round(hi * 255)), d.CARD_ALPHA)
+check("no card core is opaque", d.CARD_ALPHA < 255 and d.CHROME_ALPHA < 255)
+check("the shell is the neutral wash, not an accent tint",
+      d.SHELL_HEX.lower() == "#f5f3ff" and d.SHELL_FILL_ALPHA == 0.035
+      and d.SHELL_BORDER_ALPHA == 0.06,
+      (d.SHELL_HEX, d.SHELL_FILL_ALPHA, d.SHELL_BORDER_ALPHA))
+
 # ---- alpha ranges --------------------------------------------------------
 for name, rng in [("hairline", d.HAIRLINE_ALPHA), ("tint", d.TINT_ALPHA),
                   ("panel-over-backdrop", d.PANEL_OVER_BACKDROP_ALPHA)]:

@@ -711,6 +711,50 @@ class AppWindow:
         self._images.append(photo)
         return self.bg.create_image(x, y, anchor="nw", image=photo)
 
+    def _card(self, x, y, w, h, kind="panel", core_tint=CARD_CORE,
+              core_alpha=None, border_hex=None, border_alpha=None):
+        """A card, which is always two layers (6.2).
+
+        "A flat single-border card is a bug. Each card is a tinted outer shell
+        with 4-6px of padding wrapping a darker inner core, and the inner
+        radius equals the outer radius minus that padding."
+
+        Every radius comes out of dv.CARD_LAYERS rather than being chosen at
+        the call site, which is how the stat tiles ended up as a 12px shell
+        around an 8px core when the spec asks for 16 around 12. Controls and
+        fields are the one exception and stay single-layer - those call _glass
+        directly.
+
+        Returns (shell_item, core_item, (x, y, w, h) of the core) so callers
+        lay their contents out against the core rather than the shell.
+        """
+        shell_r, pad, core_r = dv.CARD_LAYERS[kind]
+        shell = self._glass(
+            x, y, w, h, tint=dv.SHELL_HEX, radius=shell_r,
+            tint_alpha=int(round(dv.SHELL_FILL_ALPHA * 255)),
+            border_hex=border_hex or dv.SHELL_HEX,
+            border_alpha=int(round(
+                (dv.SHELL_BORDER_ALPHA if border_alpha is None else border_alpha) * 255)))
+        inner = (x + pad, y + pad, w - pad * 2, h - pad * 2)
+        core = self._glass(
+            *inner, tint=core_tint, radius=core_r,
+            tint_alpha=int(round((core_alpha or dv.CORE_ALPHA) * 255)),
+            border_alpha=0)
+        return shell, core, inner
+
+    def _regen_hero_shell(self, x, y, w, h, border_hex, border_alpha):
+        """Repaint the hero's outer shell with a state-tinted border.
+
+        The fill stays 6.2's neutral rgba(245,243,255,.035); only the border
+        carries the state hue. That is what 2f-2h mean by "accent tint" and
+        "ember tint" - the card doesn't change colour, its edge does.
+        """
+        self._regen_glass(
+            self._status_card_item, x, y, w, h,
+            radius=dv.CARD_LAYERS["hero"][0], tint=dv.SHELL_HEX,
+            tint_alpha=int(round(dv.SHELL_FILL_ALPHA * 255)),
+            border_hex=border_hex, border_alpha=border_alpha)
+
     def _regen_glass(self, item_id, x, y, w, h, tint=CARD_TINT, radius=18, tint_alpha=150, border_hex=None, border_alpha=55):
         """Swap an existing glass panel's image (e.g. for a brief highlight
         flash, or a hero state change) without creating a duplicate canvas item.
@@ -950,8 +994,7 @@ class AppWindow:
         """
         cx, cw = dv.RAIL_PAD_Y, SIDEBAR_W - dv.RAIL_PAD_Y * 2
         oy = HEIGHT - 92
-        self._glass(cx, oy, cw, 74, tint=CARD_TINT, radius=dv.RADIUS_TILE,
-                    tint_alpha=110, border_hex=CARD_BORDER, border_alpha=26)
+        self._card(cx, oy, cw, 74, kind="tile")
 
         self.bg.create_text(cx + 14, oy + 18, anchor="w",
                             text=ICON_GLYPHS[dv.ICONS["storage"]],
@@ -1492,7 +1535,7 @@ class AppWindow:
         plus the canvas id of the subtitle so it can be updated live."""
         x0, y = self._content_x0(), self._content_y0()
         w, h = WIDTH - MARGIN - x0, HEIGHT - MARGIN - y
-        self._glass(x0, y, w, h, tint=LOG_TINT, radius=16, tint_alpha=170)
+        self._card(x0, y, w, h, kind="panel")
         self.bg.create_text(x0 + 20, y + 26, anchor="w", text=title,
                             fill=TEXT, font=dv.type_font("pane_title"))
         sub = self.bg.create_text(x0 + 20, y + 48, anchor="w", text=subtitle,
@@ -1615,6 +1658,11 @@ class AppWindow:
         for label, dx in (("Size", w - 300), ("Recorded", w - 210), ("Actions", w - 96)):
             self.bg.create_text(x + dx, y + 82, anchor="w", text=self._track(label),
                                 fill=FAINT, font=dv.type_font("eyebrow"))
+        # The frame draws a hairline under the column head. It fades like every
+        # other rule here - "no hard-stopped 1px greys" outranks the frame's
+        # plain CSS border (BUILD-SPEC line 175).
+        head_x = x + 16 + side_w + 16
+        self._fading_rule(head_x, y + 92, w - 32 - side_w - 16)
 
         self._clip_games = self._scroll_list(x + 16, body_y, side_w, body_h)
         self._rec_list = self._scroll_list(x + 16 + side_w + 16, body_y,
@@ -2400,16 +2448,13 @@ class AppWindow:
         # the grid only ever varies its y. h is fixed.
         h = HERO_H
         pad = dv.HERO_PAD
-        bezel = 5
+        bezel = dv.CARD_LAYERS["hero"][1]
 
-        # The double bezel: "tray 5 · r22 / r17", and "Every card is two layers:
+        # 22 / 5 / 17 out of the nesting table. "Every card is two layers:
         # tinted outer shell, darker inner core. A flat card is a bug."
         self._status_card_geom = (x, y, w, h)   # reused by _flash_status_card
-        self._status_card_item = self._glass(x, y, w, h, radius=dv.RADIUS_CORE,
-                                             tint=CARD_TINT, tint_alpha=110)
-        self._hero_core_geom = (x + bezel, y + bezel, w - bezel * 2, h - bezel * 2)
-        self._glass(*self._hero_core_geom, radius=dv.RADIUS_CARD, tint=CARD_CORE,
-                    tint_alpha=196, border_alpha=0)
+        self._status_card_item, _core, self._hero_core_geom = self._card(
+            x, y, w, h, kind="hero")
 
         left_x = x + bezel + pad
         preview_w = 340
@@ -2636,9 +2681,7 @@ class AppWindow:
         self.bg.coords(self._hero_sub_id, bx + bw + 12, by + bh / 2)
 
         hx, hy, hw, hh = self._status_card_geom
-        self._regen_glass(self._status_card_item, hx, hy, hw, hh, radius=dv.RADIUS_CORE,
-                          tint=CARD_TINT, tint_alpha=110,
-                          border_hex=tint, border_alpha=70)
+        self._regen_hero_shell(hx, hy, hw, hh, tint, 70)
 
         # Readouts only carry meaning while a recording exists. 2f is explicit:
         # "Idle - neutral tint, no timer, no scene preview."
@@ -2818,11 +2861,8 @@ class AppWindow:
         self._ui(apply)
 
     def _stat_tile(self, x, y, w, h, role, color, label):
-        """One stat tile - two layers, per "a flat card is a bug"."""
-        self._glass(x, y, w, h, tint=CARD_TINT, radius=dv.RADIUS_TILE, tint_alpha=120,
-                    border_hex=CARD_BORDER, border_alpha=26)
-        self._glass(x + 4, y + 4, w - 8, h - 8, tint=CARD_CORE,
-                    radius=dv.RADIUS_TILE - 4, tint_alpha=150, border_alpha=0)
+        """One stat tile - 16 / 4 / 12, per 6.2's nesting table."""
+        self._card(x, y, w, h, kind="tile")
         self.bg.create_text(x + 15, y + 20, anchor="w", text=ICON_GLYPHS[role],
                             fill=color, font=(ICON_FONT, -13))
         self.bg.create_text(x + 34, y + 20, anchor="w", text=self._track(label),
@@ -2836,8 +2876,7 @@ class AppWindow:
                             fill=FAINT, font=dv.type_font("eyebrow"))
         py = y + 22
         panel_h = h - 22
-        self._glass(x0, py, w, panel_h, tint=CARD_TINT, radius=dv.RADIUS_TILE, tint_alpha=120,
-                    border_hex=CARD_BORDER, border_alpha=26)
+        self._card(x0, py, w, panel_h, kind="panel")
 
         # Rounded plate + a flat square textbox inset inside it (see the note in
         # the old build - a tall widget can't match a sheen gradient's corners).
@@ -3272,14 +3311,10 @@ class AppWindow:
             if i >= len(steps):
                 # Settle back on the border the current hero state owns, not the
                 # generic default - otherwise a flash would wash out the state tint.
-                self._regen_glass(self._status_card_item, x, y, w, h,
-                                  radius=dv.RADIUS_CORE, tint=CARD_TINT, tint_alpha=110,
-                                  border_hex=border, border_alpha=70)
+                self._regen_hero_shell(x, y, w, h, border, 70)
                 return
             border_alpha = int(70 + (230 - 70) * steps[i])
-            self._regen_glass(self._status_card_item, x, y, w, h,
-                              radius=dv.RADIUS_CORE, tint=CARD_TINT, tint_alpha=110,
-                              border_hex=border, border_alpha=min(border_alpha, 255))
+            self._regen_hero_shell(x, y, w, h, border, min(border_alpha, 255))
             self.root.after(110, lambda: step(i + 1))
 
         step()
