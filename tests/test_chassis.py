@@ -189,10 +189,25 @@ check("the equaliser bars are gone", not app._eq_bars, app._eq_bars)
 check("nothing still draws them", "_eq_bars.append" not in GUI_SRC)
 tile = app._make_preview_tile(320, 180)
 mid = tile.getpixel((tile.width // 2, tile.height // 2))[:3]
-check("the preview is a dark placeholder, not a violet fill",
-      sum(mid) < 3 * 40, f"centre {mid}")
-check("it stays inside the ground range",
-      max(mid) <= max(int(dv.PANEL[i:i + 2], 16) for i in (1, 3, 5)) + 4, mid)
+accent = tuple(int(dv.ACCENT[i:i + 2], 16) for i in (1, 3, 5))
+# What 6.6 rejects is a *bright flat* fill: the build's old
+# `linear-gradient(150deg,#8B7CF6,#B9AEF9)` at accent brightness and above,
+# which "blow[s] out the only ember cue". It is measured against the accent
+# rather than against the ground range, because the frame's own accepted half
+# (mockup line 1116) is `linear-gradient(140deg,#241E44,#2E2358,#5340A8)` - a
+# ramp that ends on a raised surface tone and therefore leaves the ground range
+# by design. Pinning this to PANEL+4 was stricter than the mockup it came from,
+# and what it actually enforced was an empty black box.
+check("the preview is a placeholder, not a lit violet fill",
+      sum(mid) < sum(accent) * 0.55, f"centre {mid} vs accent {accent}")
+check("it never approaches accent brightness",
+      max(mid) < max(accent) * 0.75, f"centre {mid} vs accent {accent}")
+# "Bright FLAT fills" - the other half of the complaint. A ramp has corners
+# that differ; a flat fill does not.
+near = tile.getpixel((6, 6))[:3]
+far = tile.getpixel((tile.width - 7, tile.height - 7))[:3]
+check("and it is a ramp, not a flat fill", sum(far) - sum(near) > 30,
+      f"{near} -> {far}")
 
 # "Path field: rail footer only, not in the hero."
 check("the hero carries no path field", "folder_label_id" not in GUI_SRC)

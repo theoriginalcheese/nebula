@@ -73,6 +73,9 @@ class ReplayBuffer:
         self._game = None
         self._lock = threading.Lock()
         self._last_error = None
+        # Set by handle_event when OBS announces a finished file. save() waits
+        # on it before restoring a lifted recording pause - see _save_around_pause.
+        self._saved_event = threading.Event()
 
     # ---- configuration -----------------------------------------------------
     @property
@@ -206,6 +209,12 @@ class ReplayBuffer:
         self._game = game
 
     # ---- saving ------------------------------------------------------------
+    # How long to wait for OBS to announce the written file before restoring a
+    # pause we lifted. The ReplayBufferSaved event is the expected route; this
+    # is the fallback for when it never comes, so the recording can't be left
+    # running because one event went missing.
+    SAVE_FLUSH_S = 5.0
+
     def save(self):
         """One key, one clip. Returns True if OBS accepted the request.
 
@@ -215,6 +224,31 @@ class ReplayBuffer:
         if not self.armed:
             self.log("[Replay] Nothing to save - the buffer isn't armed.")
             return False
+        # OBS refuses SaveReplayBuffer outright while the recording is paused:
+        # in Simple output mode the buffer shares the recording's encoder, and a
+        # paused encoder has nothing to hand it. That is exactly when you want a
+        # replay, though - you pressed the key, and 7a calls replays
+        # "intentional by definition" - so the pause is lifted for the write and
+        # then put back exactly as it was.
+        #
+        # Restoring it is what keeps this honest with the monitor: an idle
+        # auto-pause leaves `Monitor._auto_paused` set, and if the recording
+        # came back unpaused behind its back, _ensure_paused() would see the
+        # flag already true and never pause again for the rest of the session.
+        if self._recording_paused():
+            threading.Thread(target=self._save_around_pause, daemon=True).start()
+            return True
+        return self._request_save()
+
+    def _recording_paused(self):
+        """True only if a recording is live AND paused."""
+        try:
+            status = self.obs.get_record_status()
+        except OBSError:
+            return False
+        return bool(status.get("outputActive") and status.get("outputPaused"))
+
+    def _request_save(self):
         try:
             self.obs.save_replay_buffer()
             return True
@@ -223,9 +257,36 @@ class ReplayBuffer:
             self.log(f"[Replay] Save failed: {error}")
             return False
 
+    def _save_around_pause(self):
+        """Resume, save, wait for the file, re-pause.
+
+        On a worker thread rather than inline: the callers are the hotkey, the
+        tray and the mini overlay, all on the Tk thread, and this deliberately
+        blocks for as long as OBS takes to write the clip.
+        """
+        self._saved_event.clear()
+        try:
+            self.obs.resume_record()
+        except OBSError as exc:
+            error = str(exc)
+            self.log(f"[Replay] Couldn't lift the recording pause to save: {error}")
+            return
+        self.log("[Replay] Recording was paused - resumed to write the buffer.")
+        saved = self._request_save()
+        if saved:
+            self._saved_event.wait(self.SAVE_FLUSH_S)
+        try:
+            self.obs.pause_record()
+            self.log("[Replay] Recording paused again.")
+        except OBSError as exc:
+            error = str(exc)
+            self.log(f"[Replay] Saved, but couldn't restore the recording pause: {error}")
+
     def handle_event(self, event_type, data):
         """OBS event hook. Only ReplayBufferSaved is interesting."""
         if event_type == "ReplayBufferSaved":
+            # Before _file(), so a slow move can't hold the pause open.
+            self._saved_event.set()
             self._file(data.get("savedReplayPath"))
         elif event_type == "ReplayBufferStateChanged":
             active = bool(data.get("outputActive"))

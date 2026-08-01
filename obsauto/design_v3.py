@@ -494,18 +494,56 @@ BACKGROUND = {
     "blob_size_h": (0.56, 0.88),
     "blob_blur_px": (54, 110),
     "blob_fade_at": 0.68,               # rgba(...) -> transparent 68%
-    "blob_alpha": {"accent": 0.22, "deep": 0.22, "ember": 0.07},
+    # Above the spec's .22/.22/.07. Those alphas were written for a surface
+    # where the blobs also MOVE - drift is most of what makes a faint wash
+    # register, and without it .22 measured as a peak delta of 61 over the
+    # ground, which is present-but-barely. Motion is not coming back (the
+    # composite cost is in gui.py's note), so the amplitude has to carry the
+    # aurora on its own. Ratios are the spec's: accent leads, indigo matches
+    # it, ember stays roughly a third of them.
+    "blob_alpha": {"accent": 0.34, "deep": 0.30, "ember": 0.13},
+    # 1b - aurora filaments. NOT a fourth blob: `blobs_per_surface` stays 3,
+    # because these are a different thing. The three blobs give the surface its
+    # colour; three soft ellipses is also exactly why the old backdrop read as
+    # three soft ellipses. A nebula has structure - lanes of brighter gas
+    # curling through the wash - and that is what these are. Same trick as the
+    # blobs (baked once, no motion), so they cost nothing per frame.
+    "wisp_count": 7,
+    "wisp_size_w": (0.30, 0.62),        # fraction of the surface
+    "wisp_size_h": (0.10, 0.20),
+    "wisp_alpha": {"accent": 0.20, "deep": 0.16, "ember": 0.09},
+    # Blur as a fraction of the wisp's OWN height, not an absolute px figure.
+    # A lane is thin, so the blobs' 54px would not soften it, it would erase it.
+    "wisp_blur_frac": 0.24,
+    "wisp_angle": (-38, 38),            # degrees
     # 2/3 - star dust. "Near layer N = star density (default 34). Far layer =
     # 0.75xN, max size 1.3px, max alpha .5, wrapper opacity .7."
+    #
+    # Density is above the spec's default 34. That number was written for an
+    # animated sky, where parallax drift carries the depth on its own; static,
+    # 34 dots over this window area is a thin scatter rather than a field, so
+    # the depth has to come from count and variance instead.
     "star_layers": 2,
-    "star_density": 34,
+    "star_density": 52,
     "star_size_near": (1.0, 1.9),
     "star_alpha_near": (0.24, 0.85),
     "star_size_far_max": 1.3,
     "star_alpha_far_max": 0.5,
     "star_far_opacity": 0.7,
+    # A few near stars are brighter and carry a faint cross glint. Uniform dust
+    # reads as sensor noise; a sky needs a handful of things to actually look
+    # at. Still STAR_RGB - "never #fff" holds at every alpha.
+    "star_bright_every": 13,            # 1 in N of the near layer
+    "star_bright_alpha": 0.95,
+    # Short arms, low alpha. Long even arms drew a literal "+" - a diffraction
+    # spike is a hint that the dot is too bright for its size, not a symbol.
+    "star_glint_px": 3.2,               # arm length of the cross, base px
+    "star_glint_alpha": 0.20,           # x star_bright_alpha
     # 4 - vignette
-    "vignette": {"transparent_to": 0.46, "black_alpha": 0.55},
+    # Eased off the spec's .55: at that strength the ramp reached the corners
+    # before the aurora did, so the outer third of the window was flat black
+    # whatever layer 1 put there. .45 still sits the rounded corners in shadow.
+    "vignette": {"transparent_to": 0.46, "black_alpha": 0.45},
 }
 
 # Recorded, not used - see the note above.

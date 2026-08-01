@@ -195,6 +195,55 @@ def _radial_blob(size, colour, alpha, fade_at=0.68):
     return layer
 
 
+def _aurora_wisp(size, colour, alpha, rng):
+    """One aurora filament: a soft, tapered lane of light.
+
+    Built as a chain of overlapping soft discs walked along a gently bowed
+    path, then blurred. Two details make it read as a filament rather than a
+    smear: the discs taper to nothing at both ends (a lane that stops dead
+    looks like a scratch), and they are drawn wider than tall so the lane has
+    a direction before it is ever rotated.
+
+    Each step is drawn as nested rings, outer first, rather than as one flat
+    ellipse. This is `_radial_blob`'s lesson turned inside out: a single filled
+    ellipse has a flat plateau AND a hard rim, and because ImageDraw *sets*
+    pixels instead of compositing, the rim survives into the chain's envelope
+    as a crease down the length of the lane. On a near-black ground that crease
+    lands on an 8-bit quantisation step and reads as a straight edge - a solid
+    bar, not gas. Rings give the cross-section a real falloff, so the blur that
+    follows is finishing, not rescuing.
+
+    Note the loop order: rings OUTSIDE, steps inside. Per-step rings would let
+    step i+1's dim rim overwrite step i's bright core - "sets, not composites"
+    cuts both ways - and the lane would fade to whichever end was drawn last.
+    Sweeping each ring level across the whole lane keeps brighter always after
+    dimmer, so the profile survives.
+    """
+    w, h = size
+    layer = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(layer)
+    rgb = _hex_to_rgb(colour)
+    steps, rings = 44, 7
+    bow = rng.uniform(-0.34, 0.34)      # how far the lane curves off straight
+    thick = h * rng.uniform(0.26, 0.42)
+    for j in range(rings, 0, -1):
+        f = j / float(rings)            # 1.0 at the rim -> 0 at the centreline
+        for i in range(steps):
+            t = i / (steps - 1.0)       # 0 -> 1 along the lane
+            # Thin towards both ends: a lane that stops dead is a scratch.
+            taper = (4.0 * t * (1.0 - t)) ** 0.7
+            a = alpha * taper * (1.0 - f ** 1.6)
+            r = thick * taper
+            if a <= 0 or r * f < 0.5:
+                continue
+            cx = w * (0.06 + 0.88 * t)
+            cy = h * (0.5 + bow * (t - 0.5) * 2.0 * (1.0 - abs(t - 0.5)))
+            rx, ry = r * 2.1 * f, r * f
+            draw.ellipse([cx - rx, cy - ry, cx + rx, cy + ry],
+                         fill=(*rgb, int(round(a * 255))))
+    return layer
+
+
 def generate_backdrop_v3(width, height, seed=None):
     """The v3 living background, rendered once from `seed` (random per launch
     when None).
@@ -209,12 +258,13 @@ def generate_backdrop_v3(width, height, seed=None):
     the aurora is a broad wash that survives glass, a 1.9px star at .85 alpha
     punches through it as a speck of dirt.
 
-    The five layers, back to front:
-      0  ground gradient
-      1  aurora blobs x3 (accent .22, deep indigo .22, ember .07)
-      2  star dust, near
-      3  star dust, far
-      4  vignette
+    The layers, back to front:
+      0   ground gradient
+      1   aurora blobs x3 (accent .22, deep indigo .22, ember .07)
+      1b  aurora filaments x5 - structure through the wash
+      2   star dust, near (every 13th is bright, with a glint)
+      3   star dust, far
+      4   vignette
     """
     from . import design_v3 as d  # local: keeps this module importable alone
 
@@ -253,6 +303,29 @@ def generate_backdrop_v3(width, height, seed=None):
                            int(rng.uniform(-0.28, 0.72) * height)))
         img = Image.alpha_composite(img, layer)
 
+    # --- 1b: aurora filaments ------------------------------------------------
+    # Structure on top of the wash. These are part of the aurora, so they land
+    # BEFORE the aurora_only snapshot below - a broad soft lane survives glass
+    # and reads as depth inside a card, which is exactly what layer 1 is for.
+    wisp_tones = ("accent", "deep", "ember")
+    ww_lo, ww_hi = spec["wisp_size_w"]
+    wh_lo, wh_hi = spec["wisp_size_h"]
+    for i in range(spec["wisp_count"]):
+        tone = wisp_tones[i % len(wisp_tones)]
+        hex_color = {"accent": d.ACCENT, "deep": AURORA_DEEP, "ember": d.EMBER}[tone]
+        ww = max(8, int(rng.uniform(ww_lo, ww_hi) * width))
+        wh = max(8, int(rng.uniform(wh_lo, wh_hi) * height))
+        wisp = _aurora_wisp((ww, wh), hex_color, spec["wisp_alpha"][tone], rng)
+        # Blurred at full size, not through _blur_downscaled: that helper's 4x
+        # downscale is fine for a 600px blob and destroys a 40px-thick lane.
+        wisp = wisp.filter(ImageFilter.GaussianBlur(wh * spec["wisp_blur_frac"]))
+        lo, hi = spec["wisp_angle"]
+        wisp = wisp.rotate(rng.uniform(lo, hi), expand=True, resample=Image.BILINEAR)
+        layer = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+        layer.paste(wisp, (int(rng.uniform(-0.12, 0.88) * width),
+                           int(rng.uniform(-0.10, 0.90) * height)))
+        img = Image.alpha_composite(img, layer)
+
     # This is the surface the chrome sits on: everything above is dust, which
     # must not appear inside a card.
     aurora_only = img.copy()
@@ -271,10 +344,24 @@ def generate_backdrop_v3(width, height, seed=None):
         alpha_hi = spec["star_alpha_far_max"] if far else near_a_hi
         # "wrapper opacity .7" on the far layer, on top of its lower ceiling.
         dim = spec["star_far_opacity"] if far else 1.0
-        for _ in range(count):
+        for i in range(count):
             x, y = rng.uniform(0, width), rng.uniform(0, height)
             radius = rng.uniform(near_size_lo, size_hi) * unit / 2.0
             alpha = rng.uniform(near_a_lo, alpha_hi) * dim
+            # Every Nth near star is a bright one with a faint cross glint.
+            # Only the near layer: a "far" star that outshines the near ones
+            # would invert the only depth cue a static sky has.
+            bright = not far and spec["star_bright_every"] and \
+                i % spec["star_bright_every"] == 0
+            if bright:
+                alpha = spec["star_bright_alpha"]
+                radius *= 1.35
+                arm = spec["star_glint_px"] * unit
+                # Still STAR_RGB, just faint - the glint is the shape of the
+                # highlight, not a second, whiter colour.
+                glint = (*STAR_RGB, int(round(alpha * spec["star_glint_alpha"] * 255)))
+                draw.line([(x - arm, y), (x + arm, y)], fill=glint)
+                draw.line([(x, y - arm), (x, y + arm)], fill=glint)
             draw.ellipse([x - radius, y - radius, x + radius, y + radius],
                          fill=(*STAR_RGB, int(round(alpha * 255))))
 

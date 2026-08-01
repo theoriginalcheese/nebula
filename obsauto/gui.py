@@ -2857,16 +2857,35 @@ class AppWindow:
         dialog.grab_set()
         self.root.wait_window(dialog)
 
+    # 7d's editor sheet, mockup lines 1692-1717. Base design units.
+    PROFILE_SHEET = (452, 386)
+    PROFILE_PAD = 20            # sheet padding
+    PROFILE_FIELD_H = 34        # control height
+    PROFILE_LABEL_H = 22        # label band above each control
+    PROFILE_COL_GAP = 14
+
     def _edit_profile(self, basename, display_name):
-        """7d's editor sheet - 440x356, modal over the pane.
+        """7d's editor sheet - 452x386, modal over the pane.
 
         Exactly five fields. "Scope guard: resolution, fps, encoder, bitrate,
         scene. That is the whole feature. No audio tracks, no filters, no
         output paths, no encoder presets - those stay in OBS, and Nebula must
         never silently overwrite settings the user changed there."
+
+        Laid out as the mockup draws it: a 2x2 grid of stacked label-over-field
+        blocks, the scene field full width beneath, then the bitrate estimate as
+        its own tinted strip, then pills. The old version stacked five
+        label-left rows inside a `fg_color="transparent"` CTkFrame and packed
+        them, and that is exactly the trap _ask_yes_no_cancel documents: a CTk
+        widget's "transparent" doesn't composite against arbitrary canvas art,
+        and here the packed rows came out staircased down and across the sheet
+        with half the controls clipped out of the host frame entirely. So
+        everything static is drawn straight onto the canvas and only the five
+        real controls are embedded, each at explicit coordinates.
         """
         current = profiles.for_game(self.classifier, basename) or {}
-        width, height = 440, 356
+        width, height = self.PROFILE_SHEET
+        pad = self.PROFILE_PAD
         dialog = ctk.CTkToplevel(self.root)
         dialog.title(f"{display_name} profile")
         dialog.overrideredirect(True)
@@ -2875,81 +2894,155 @@ class AppWindow:
         apply_rounded_corners(dialog)
         canvas = self._dialog_bg(dialog, width, height)
 
-        canvas.create_text(24, 30, anchor="w", text=display_name, fill=TEXT,
-                           font=dv.type_font("pane_title"))
-        canvas.create_text(24, 52, anchor="w", fill=FAINT,
-                           font=dv.type_font("meta"),
-                           text="Applied to OBS just before this game records.")
+        def plate(x, y, w, h, radius, tint, tint_alpha, border_hex, border_alpha):
+            """A glass tile on THIS canvas. _glass() paints onto the main
+            window's canvas and composite, neither of which a dialog is."""
+            tile = make_glass_tile(self._S(w), self._S(h), tint,
+                                   tint_alpha=tint_alpha, radius=self._S(radius),
+                                   border_hex=border_hex, border_alpha=border_alpha)
+            photo = to_photo(tile)
+            self._keep_image(photo)
+            canvas.create_image(x, y, anchor="nw", image=photo)
 
-        host = ctk.CTkFrame(dialog, fg_color="transparent")
-        canvas.create_window(20, 72, anchor="nw", window=host,
-                             width=width - 40, height=height - 148)
+        def sheet_bg(x, y):
+            """The composited sheet colour under (x, y), for a widget's
+            bg_color so its rounded corners don't cut a square out."""
+            return self._bg_at(x / width * WIDTH, y / height * HEIGHT,
+                               CARD_TINT, 225)
 
-        fields = {}
+        # ---- header: art tile, name, close ----------------------------------
+        plate(pad, pad, 30, 30, 9, SURFACE, 255, EDGE, 40)
+        canvas.create_text(pad + 15, pad + 15, anchor="center",
+                           text=ICON_GLYPHS[dv.ICONS["games"]],
+                           fill=FAINT, font=(ICON_FONT, -13))
+        canvas.create_text(pad + 41, pad + 15, anchor="w", text=display_name,
+                           fill=TEXT, font=dv.font(14, 500))
+        # The X is the sheet's cancel - the mockup's footer has no Cancel button
+        # because this is it. Escape does the same thing.
+        close = canvas.create_text(
+            width - pad - 6, pad + 15, anchor="center", text=ICON_GLYPHS["x"],
+            fill=FAINT, font=(ICON_FONT, -10))
+        canvas.tag_bind(close, "<Button-1>", lambda _e: dialog.destroy())
+        canvas.tag_bind(close, "<Enter>",
+                        lambda _e: canvas.itemconfigure(close, fill=TEXT))
+        canvas.tag_bind(close, "<Leave>",
+                        lambda _e: canvas.itemconfigure(close, fill=FAINT))
+        dialog.bind("<Escape>", lambda _e: dialog.destroy())
 
-        def field_row(label, widget):
-            line = ctk.CTkFrame(host, fg_color="transparent")
-            line.pack(fill="x", pady=3)
-            ctk.CTkLabel(line, text=label, width=104, anchor="w",
-                         text_color=MUTED,
-                         font=ctk.CTkFont(size=12)).pack(side="left", padx=(4, 8))
-            widget.pack(side="left", fill="x", expand=True, padx=(0, 4))
-            return widget
+        # ---- the five fields -------------------------------------------------
+        inner = width - pad * 2
+        col_w = (inner - self.PROFILE_COL_GAP) // 2
+        field_h, label_h = self.PROFILE_FIELD_H, self.PROFILE_LABEL_H
+        block_h = label_h + field_h
 
-        res = ctk.CTkEntry(host, fg_color=dv.GROUND, border_color=EDGE,
-                           border_width=1, text_color=TEXT, height=30,
-                           corner_radius=dv.RADIUS_CONTROL,
-                           font=ctk.CTkFont(size=12),
-                           placeholder_text="2560x1440")
-        if current.get("res"):
-            res.insert(0, current["res"])
-        fields["res"] = field_row("Resolution", res)
+        def field_label(x, y, text, key):
+            """`Resolution  res` - the label with the stored key beside it, so
+            the sheet says which games.json field it is writing."""
+            canvas.create_text(x, y + 8, anchor="w", text=text, fill=MUTED,
+                               font=dv.font(10.5))
+            span = self._text_w(text, dv.font(10.5))
+            canvas.create_text(x + span + 7, y + 9, anchor="w", text=key,
+                               fill=FAINT, font=dv.font(9.5, mono=True))
 
-        fps = ctk.CTkOptionMenu(
-            host, values=[""] + [str(f) for f in profiles.FPS_CHOICES],
-            fg_color=dv.GROUND, button_color=SURFACE, text_color=TEXT,
-            corner_radius=dv.RADIUS_CONTROL, font=ctk.CTkFont(size=12), height=30)
-        fps.set(str(current.get("fps", "")) if current.get("fps") else "")
-        fields["fps"] = field_row("Frame rate", fps)
+        def entry(x, y, w, value, placeholder):
+            box = ctk.CTkEntry(
+                dialog, fg_color=dv.over(dv.TEXT, 0.04, CARD_CORE),
+                border_color=EDGE, border_width=1, text_color=TEXT,
+                bg_color=sheet_bg(x + w / 2, y + field_h / 2),
+                height=field_h, corner_radius=dv.RADIUS_CONTROL,
+                font=ctk.CTkFont(size=12), placeholder_text=placeholder,
+                # Explicit, because CTk's default placeholder grey sits close
+                # enough to TEXT here that "2560x1440" read as a value this
+                # profile already had rather than as an example of one.
+                placeholder_text_color=FAINT)
+            if value:
+                box.insert(0, str(value))
+            self._focus_ring(box)
+            canvas.create_window(x, y, anchor="nw", window=box,
+                                 width=w, height=field_h)
+            return box
 
-        encoder = ctk.CTkOptionMenu(
-            host, values=[""] + list(profiles.ENCODERS),
-            fg_color=dv.GROUND, button_color=SURFACE, text_color=TEXT,
-            corner_radius=dv.RADIUS_CONTROL, font=ctk.CTkFont(size=12), height=30)
-        encoder.set(current.get("encoder", ""))
-        fields["encoder"] = field_row("Encoder", encoder)
+        # An unset dropdown has to say what unset MEANS. CTkOptionMenu has no
+        # placeholder, so "" rendered as an empty control that looked broken -
+        # the same "just blank" failure as the old scene preview. The sentinel
+        # is a real menu entry and maps back to "" on the way out.
+        INHERIT = "Inherit default"
 
-        bitrate = ctk.CTkEntry(host, fg_color=dv.GROUND, border_color=EDGE,
-                               border_width=1, text_color=TEXT, height=30,
-                               corner_radius=dv.RADIUS_CONTROL,
-                               font=ctk.CTkFont(size=12),
-                               placeholder_text="18000")
-        if current.get("bitrate_kbps"):
-            bitrate.insert(0, str(current["bitrate_kbps"]))
-        fields["bitrate_kbps"] = field_row("Bitrate kb/s", bitrate)
+        def dropdown(x, y, w, values, value):
+            field = dv.over(dv.TEXT, 0.04, CARD_CORE)
+            menu = ctk.CTkOptionMenu(
+                dialog, values=[INHERIT] + values,
+                fg_color=field,
+                # The caret sits IN the field in the mockup. A contrasting
+                # button colour turned it into a separate blocky chip.
+                button_color=field, button_hover_color=SURFACE_HOVER,
+                text_color=TEXT, dropdown_fg_color=CARD_CORE,
+                dropdown_text_color=TEXT, dropdown_hover_color=SURFACE,
+                bg_color=sheet_bg(x + w / 2, y + field_h / 2),
+                height=field_h, corner_radius=dv.RADIUS_CONTROL,
+                font=ctk.CTkFont(size=12), dropdown_font=ctk.CTkFont(size=12))
+            menu.set(value or INHERIT)
+            canvas.create_window(x, y, anchor="nw", window=menu,
+                                 width=w, height=field_h)
+            return menu
 
-        scene = ctk.CTkEntry(host, fg_color=dv.GROUND, border_color=EDGE,
-                             border_width=1, text_color=TEXT, height=30,
-                             corner_radius=dv.RADIUS_CONTROL,
-                             font=ctk.CTkFont(size=12),
-                             placeholder_text="leave blank to keep the current scene")
-        if current.get("scene"):
-            scene.insert(0, current["scene"])
-        fields["scene"] = field_row("OBS scene", scene)
+        def chosen(menu):
+            """The menu's value, with the inherit sentinel read back as unset."""
+            value = menu.get().strip()
+            return "" if value == INHERIT else value
 
-        estimate = ctk.CTkLabel(host, text="", anchor="w", text_color=FAINT,
-                                font=ctk.CTkFont(size=11))
-        estimate.pack(anchor="w", padx=8, pady=(10, 0))
+        left, right = pad, pad + col_w + self.PROFILE_COL_GAP
+        row1 = pad + 30 + 15
+        row2 = row1 + block_h + 12
+
+        field_label(left, row1, "Resolution", "res")
+        res = entry(left, row1 + label_h, col_w, current.get("res"), "2560x1440")
+
+        field_label(right, row1, "Frame rate", "fps")
+        fps = dropdown(right, row1 + label_h, col_w,
+                       [str(f) for f in profiles.FPS_CHOICES],
+                       str(current.get("fps") or ""))
+
+        # ENCODERS maps id -> label. The old sheet listed the ids, so the menu
+        # read "nvenc_h264"; the mockup shows "NVENC H.264". Pick by label,
+        # store the id.
+        by_label = {label: key for key, label in profiles.ENCODERS.items()}
+        field_label(left, row2, "Encoder", "encoder")
+        encoder = dropdown(left, row2 + label_h, col_w,
+                           list(profiles.ENCODERS.values()),
+                           profiles.ENCODERS.get(current.get("encoder"), ""))
+
+        field_label(right, row2, "Bitrate", "bitrate_kbps")
+        bitrate = entry(right, row2 + label_h, col_w,
+                        current.get("bitrate_kbps"), "18000")
+
+        scene_y = row2 + block_h + 15
+        field_label(left, scene_y, "OBS scene", "scene")
+        scene = entry(left, scene_y + label_h, inner, current.get("scene"),
+                      "leave blank to keep the current scene")
+
+        # ---- bitrate estimate, as its own strip ------------------------------
+        est_y = scene_y + block_h + 15
+        plate(pad, est_y, inner, 40, 11, ACCENT, 18, ACCENT, 46)
+        canvas.create_text(pad + 14, est_y + 20, anchor="w",
+                           text=ICON_GLYPHS[dv.ICONS["storage"]],
+                           fill=ACCENT_LIGHT, font=(ICON_FONT, -14))
+        estimate_id = canvas.create_text(
+            pad + 36, est_y + 20, anchor="w", text="", fill=ACCENT_LIGHT,
+            font=dv.type_font("meta"))
 
         def refresh_estimate(_event=None):
             try:
                 kbps = int(bitrate.get())
             except (TypeError, ValueError):
-                estimate.configure(text="")
+                canvas.itemconfigure(
+                    estimate_id, text="Set a bitrate to see the hourly cost.",
+                    fill=FAINT)
                 return
             gb = profiles.estimated_gb_per_hour(kbps)
-            estimate.configure(text=f"Estimated {gb:.1f} GB/h at this bitrate"
-                               if gb else "")
+            canvas.itemconfigure(
+                estimate_id, fill=ACCENT_LIGHT,
+                text=f"Estimated {gb:.1f} GB/h at this bitrate" if gb else "")
 
         bitrate.bind("<KeyRelease>", refresh_estimate)
         refresh_estimate()
@@ -2957,10 +3050,9 @@ class AppWindow:
         def collect():
             raw = {"enabled": True, "res": res.get().strip(),
                    "scene": scene.get().strip(),
-                   "encoder": encoder.get().strip()}
-            for key, widget in (("fps", fps), ("bitrate_kbps", bitrate)):
-                value = widget.get().strip()
-                raw[key] = value or None
+                   "encoder": by_label.get(chosen(encoder), "")}
+            raw["fps"] = chosen(fps) or None
+            raw["bitrate_kbps"] = bitrate.get().strip() or None
             return profiles.sanitise(raw)
 
         def do_save():
@@ -2978,22 +3070,30 @@ class AppWindow:
             self._refresh_games()
             self._push_game_data()
 
-        btn_y = height - 56
-        for label, command, dx, accent in (
-                ("Save profile", do_save, 24, True),
-                ("Remove", do_remove, 158, False),
-                ("Cancel", dialog.destroy, 258, False)):
-            button = ctk.CTkButton(
-                dialog, text=label, command=command,
-                fg_color=ACCENT_TINT if accent else SURFACE,
-                hover_color=SURFACE_HOVER,
-                text_color=ACCENT_LIGHT if accent else MUTED,
-                bg_color=self._bg_at(dx / width * WIDTH,
-                                     (btn_y + 17) / height * HEIGHT, CARD_TINT, 225),
-                border_width=1, border_color=EDGE, corner_radius=10,
-                font=ctk.CTkFont(size=12))
-            canvas.create_window(dx, btn_y, anchor="nw", window=button,
-                                 width=124 if accent else 90, height=34)
+        # ---- pills -----------------------------------------------------------
+        # Radius is half the height, which is what 999px resolves to. Remove is
+        # the one ember control on the sheet; it is also the only destructive one.
+        btn_y, btn_h = est_y + 40 + 15, 36
+        save_btn = ctk.CTkButton(
+            dialog, text="Save profile", command=do_save,
+            fg_color=ACCENT_TINT, hover_color=SURFACE_HOVER,
+            text_color=TEXT, bg_color=sheet_bg(pad + 62, btn_y + btn_h / 2),
+            border_width=1, border_color=ACCENT, corner_radius=btn_h // 2,
+            font=ctk.CTkFont(size=13))
+        self._focus_ring(save_btn, resting_border=ACCENT)
+        canvas.create_window(pad, btn_y, anchor="nw", window=save_btn,
+                             width=124, height=btn_h)
+
+        remove_btn = ctk.CTkButton(
+            dialog, text=f"{ICON_GLYPHS['trash']}  Remove", command=do_remove,
+            fg_color="transparent", hover_color=SURFACE_HOVER,
+            text_color=EMBER,
+            bg_color=sheet_bg(width - pad - 52, btn_y + btn_h / 2),
+            border_width=1, border_color=EDGE, corner_radius=btn_h // 2,
+            font=ctk.CTkFont(size=13))
+        self._focus_ring(remove_btn)
+        canvas.create_window(width - pad - 104, btn_y, anchor="nw",
+                             window=remove_btn, width=104, height=btn_h)
 
         dialog.lift()
         dialog.focus_force()
@@ -3497,6 +3597,16 @@ class AppWindow:
             x + 34, y + 24, anchor="w", text="OBS scene",
             fill=NAV_ACTIVE_TEXT, font=dv.font(10, 500))
 
+        # The centred placeholder label. 6.6's accepted version has one - "it is
+        # a dark placeholder WITH A LABEL" - and without it the tile is just an
+        # empty box with two chips floating in it. Tracked out by hand because
+        # Tk has no letter-spacing (see _track), against the ramp's mid stop.
+        self._preview_label_id = self.bg.create_text(
+            x + w / 2, y + h / 2, anchor="center",
+            text=self._track("Scene preview".upper()),
+            fill=dv.over(dv.TEXT, 0.45, self.PREVIEW_STOPS[1][1]),
+            font=dv.font(9.5, 500))
+
         # Res/fps chip (frame 2a: ``2560×1440 · 60 fps``). Blank until
         # GetVideoSettings arrives — never a placeholder resolution.
         self._preview_video_id = self.bg.create_text(
@@ -3511,6 +3621,13 @@ class AppWindow:
         # _set_hero_state still iterates it.
         self._eq_bars = ()
 
+    # mockup 6.6, the *good* half: linear-gradient(140deg, #241E44 0%,
+    # #2E2358 46%, #5340A8 100%) under radial-gradient(90% 80% at 30% 20%,
+    # rgba(245,243,255,0.10), transparent 70%), 1px rgba(245,243,255,0.09).
+    PREVIEW_STOPS = ((0.0, "#241E44"), (0.46, "#2E2358"), (1.0, "#5340A8"))
+    PREVIEW_ANGLE = 140
+    PREVIEW_SHEEN = (0.30, 0.20, 0.90, 0.80, 0.10, 0.70)  # cx cy rx ry alpha fade
+
     def _make_preview_tile(self, w, h):
         """The scene placeholder: a dark tile, not a lit one.
 
@@ -3519,19 +3636,59 @@ class AppWindow:
         ember cue." A live frame would mean polling GetSourceScreenshot on a
         timer, which is one full window composite per tick and therefore fatal
         here, so the placeholder is what the pane shows.
+
+        What 6.6 objects to is the *bright flat fill* and the invented audio
+        bars, not depth - its own accepted version is a diagonal ramp with a
+        soft highlight and a centred label. This had kept the darkness and
+        dropped all three, which is how the panel ended up an empty black box:
+        the other way to fail the same frame. The ramp tops out at #5340A8, a
+        raised surface tone, so nothing here outshines the ember cue.
+
+        Both gradients are the lowest-frequency thing in the pane, so they are
+        painted at 96x54 and upscaled - the ground gradient's trick.
         """
         sw, sh = self._S(w), self._S(h)
-        img = Image.new("RGBA", (sw, sh), (0, 0, 0, 0))
-        draw = ImageDraw.Draw(img)
-        # A shallow ramp inside the ground range, so it reads as an unlit panel
-        # sunk into the card rather than a violet light source.
-        for i in range(sh):
-            col = _blend_hex(dv.GROUND_DEEP, dv.PANEL, i / max(1, sh - 1))
-            r, g, b = int(col[1:3], 16), int(col[3:5], 16), int(col[5:7], 16)
-            draw.line([(0, i), (sw, i)], fill=(r, g, b, 255))
+        gw, gh = 96, 54
+        grad = Image.new("RGB", (gw, gh))
+        px = grad.load()
+        stops = [(at, (int(c[1:3], 16), int(c[3:5], 16), int(c[5:7], 16)))
+                 for at, c in self.PREVIEW_STOPS]
+        # CSS 0deg points up and turns clockwise, so 140deg runs down-and-right.
+        # Both components come out positive, which puts t=0 at the top-left
+        # corner and t=1 at the bottom-right - no origin offset needed.
+        ax = math.sin(math.radians(self.PREVIEW_ANGLE))
+        ay = -math.cos(math.radians(self.PREVIEW_ANGLE))
+        length = abs(gw * ax) + abs(gh * ay)
+        hx, hy, hrx, hry, ha, hfade = self.PREVIEW_SHEEN
+        for y in range(gh):
+            for x in range(gw):
+                t = min(1.0, max(0.0, ((x + 0.5) * ax + (y + 0.5) * ay) / length))
+                for i in range(len(stops) - 1):
+                    at0, c0 = stops[i]
+                    at1, c1 = stops[i + 1]
+                    if t <= at1 or i == len(stops) - 2:
+                        k = (t - at0) / (at1 - at0) if at1 > at0 else 0.0
+                        k = min(1.0, max(0.0, k))
+                        col = [c0[j] + (c1[j] - c0[j]) * k for j in range(3)]
+                        break
+                dx = ((x + 0.5) / gw - hx) / hrx
+                dy = ((y + 0.5) / gh - hy) / hry
+                lit = ha * max(0.0, 1.0 - (dx * dx + dy * dy) ** 0.5 / hfade)
+                sheen = (245, 243, 255)
+                px[x, y] = tuple(int(round(col[j] + (sheen[j] - col[j]) * lit))
+                                 for j in range(3))
+        img = grad.resize((sw, sh), Image.BICUBIC).convert("RGBA")
+        radius = self._S(13)
+        # The hairline, composited rather than stroked opaque - it has to read
+        # as an edge on glass, not as a drawn outline.
+        edge = Image.new("RGBA", (sw, sh), (0, 0, 0, 0))
+        ImageDraw.Draw(edge).rounded_rectangle(
+            [0, 0, sw - 1, sh - 1], radius=radius, fill=None,
+            outline=(245, 243, 255, int(round(0.09 * 255))), width=1)
+        img = Image.alpha_composite(img, edge)
         mask = Image.new("L", (sw, sh), 0)
         ImageDraw.Draw(mask).rounded_rectangle(
-            [0, 0, sw - 1, sh - 1], radius=self._S(13), fill=255)
+            [0, 0, sw - 1, sh - 1], radius=radius, fill=255)
         img.putalpha(mask)
         return img
 

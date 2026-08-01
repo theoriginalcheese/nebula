@@ -49,6 +49,9 @@ class FakeOBS:
         self.params = {}
         self.fail = None
         self.on_event = None
+        # Recording state, for the paused-save path.
+        self.rec_active = False
+        self.rec_paused = False
 
     def _maybe_fail(self):
         if self.fail:
@@ -71,6 +74,17 @@ class FakeOBS:
 
     def get_replay_buffer_status(self):
         return self.buffer_active
+
+    def get_record_status(self):
+        return {"outputActive": self.rec_active, "outputPaused": self.rec_paused}
+
+    def pause_record(self):
+        self.calls.append("pause")
+        self.rec_paused = True
+
+    def resume_record(self):
+        self.calls.append("resume")
+        self.rec_paused = False
 
     def set_profile_parameter(self, category, name, value):
         self.params[(category, name)] = value
@@ -179,6 +193,39 @@ check("it is flagged as a replay", rows and rows[-1].get("replay") is True,
 check("a replay counts as a kept clip",
       session_log.today()["clips"] == 1 and session_log.today()["culled"] == 0,
       session_log.today())
+
+# ---------------------------------------------------------------------------
+# Saving while the recording is paused
+# ---------------------------------------------------------------------------
+# OBS refuses SaveReplayBuffer while the recording is paused - the buffer shares
+# the recording's encoder in Simple output mode. Nebula lifts the pause for the
+# write and puts it back, and putting it back is the load-bearing half: an idle
+# auto-pause leaves Monitor._auto_paused set, so a recording left running here
+# would never be paused again for the rest of the session.
+rb.armed = True
+obs.rec_active, obs.rec_paused = True, True
+obs.calls.clear()
+check("a paused recording still accepts the save", rb.save() is True)
+# save() hands off to a worker; it waits SAVE_FLUSH_S for the saved event.
+for _ in range(100):
+    if "save" in obs.calls:
+        break
+    time.sleep(0.01)
+check("the pause is lifted before saving", obs.calls[:2] == ["resume", "save"], obs.calls)
+rb.handle_event("ReplayBufferSaved", {"savedReplayPath": None})
+for _ in range(200):
+    if "pause" in obs.calls:
+        break
+    time.sleep(0.01)
+check("the pause is restored afterwards", obs.calls == ["resume", "save", "pause"],
+      obs.calls)
+check("and OBS is paused again at the end", obs.rec_paused is True)
+
+# An unpaused recording must not be touched - no resume, no pause, just the save.
+obs.rec_paused = False
+obs.calls.clear()
+check("an unpaused recording saves directly", rb.save() is True)
+check("and its pause state is left alone", obs.calls == ["save"], obs.calls)
 
 # Saving with nothing armed must say so rather than pretending.
 rb.armed = False
