@@ -162,6 +162,19 @@ Settings live in `config.json` next to the executable (created on first run):
 | `nas_offload_root` | *(empty)* | Destination for finished clips, e.g. a mapped drive `Z:/OBS Recordings` or a UNC path. Blank = offload off. |
 | `nas_offload_mode` | `copy` | `copy` keeps both copies; `move` deletes the local original **after** the NAS copy is byte-verified |
 
+### Elevated OBS (Hoyoverse / fullscreen capture)
+
+Some games need OBS running as Administrator. Nebula stays non-elevated and launches OBS
+via a one-time scheduled task (`NebulaLaunchOBS`) so each start skips the UAC prompt.
+
+```powershell
+# Approve UAC once when this runs:
+powershell -ExecutionPolicy Bypass -File scripts\setup-obs-elevated-task.ps1
+```
+
+After that, Nebula's `ensure_obs_running` prefers `schtasks /run /tn NebulaLaunchOBS` and
+falls back to `obs_path` only if the task is missing.
+
 ### Cross-device sync setup
 
 - **Game list (GitHub):** create a private repo, set `github_gamedata_repo` and a `github_token`
