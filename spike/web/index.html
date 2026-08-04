@@ -308,6 +308,35 @@
       </div>
     </div>
 
+    <!-- 1l first run. Covers the body, not the titlebar: minimise and close
+         have to keep working before anything is configured. -->
+    <div class="setup" id="setup" hidden>
+      <aside class="setup-rail">
+        <div class="setup-brand"><span class="mark"></span><span class="wordmark">Nebula</span></div>
+        <h1 class="setup-lede">Set it once.<br>Never think about recording again.</h1>
+        <p class="setup-lede-sub">Nebula watches for your games, records them in OBS, and files
+          every clip in its own folder — automatically. Four quick steps and you're done.</p>
+        <ol class="setup-steps" id="setup-steps"></ol>
+      </aside>
+      <section class="setup-main">
+        <div class="card setup-card">
+          <div class="card-core setup-core">
+            <span class="eyebrow" id="setup-eyebrow">Step 1 of 4</span>
+            <h2 class="setup-title" id="setup-title"></h2>
+            <p class="setup-body" id="setup-body"></p>
+            <div class="setup-fields" id="setup-fields"></div>
+            <div class="setup-status" id="setup-status" hidden></div>
+            <div class="setup-actions" id="setup-actions">
+              <button class="pill ghost no-drag" id="setup-back" type="button">Back</button>
+              <span class="setup-spacer"></span>
+              <button class="pill ghost no-drag" id="setup-skip" type="button">Skip for now</button>
+              <button class="pill no-drag" id="setup-next" type="button">Continue</button>
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
+
     <!-- Perf HUD. The whole reason the spike exists. -->
     <div class="hud" id="hud">
       <div class="hud-row"><span>fps</span><b id="hud-fps">—</b></div>

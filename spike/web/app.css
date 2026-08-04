@@ -1784,6 +1784,154 @@ html, body {
 
 .is-hidden { display: none !important; }
 
+/* --- 1l first run ------------------------------------------------------ */
+/* Sits over the body only. The titlebar stays reachable, because "close it,
+   I'll do this later" has to be possible before anything is configured. */
+
+.setup {
+  position: absolute;
+  left: 0; right: 0;
+  top: var(--titlebar-h); bottom: 0;
+  z-index: 15;
+  display: grid;
+  grid-template-columns: minmax(320px, 42%) 1fr;
+  gap: var(--content-pad);
+  padding: var(--content-pad);
+  /* Opaque, not the chrome alpha. There is nothing behind this worth seeing -
+     an unconfigured dashboard reading through the copy is just noise, and at
+     .72 the log rows were legible straight through the step list. */
+  background: var(--ground);
+}
+.setup[hidden] { display: none; }
+
+.setup-rail {
+  display: flex; flex-direction: column;
+  padding: var(--content-pad);
+  min-width: 0;
+}
+.setup-brand {
+  display: flex; align-items: center; gap: 10px;
+  margin-bottom: 34px;
+}
+/* The step list sits at the bottom of the rail; the pitch sits under the
+   wordmark. Pushing both down left a hole where the brand should anchor. */
+.setup-steps { margin-top: auto; }
+.setup-lede {
+  margin: 0 0 14px;
+  font-size: var(--t-game-title-size);
+  font-weight: var(--t-game-title-weight);
+  letter-spacing: var(--t-game-title-track);
+  color: var(--text);
+  line-height: 1.25;
+}
+.setup-lede-sub {
+  margin: 0 0 28px;
+  max-width: 46ch;
+  font-size: var(--t-body-size);
+  color: var(--text-secondary);
+  line-height: 1.65;
+}
+.setup-steps {
+  list-style: none;
+  margin: 0; padding: 0;
+  display: flex; flex-direction: column; gap: 2px;
+}
+.setup-lede-sub { margin-bottom: 0; }
+.setup-step {
+  display: flex; align-items: center; gap: 12px;
+  height: var(--rail-item-h);
+  padding: 0 12px;
+  border-radius: var(--r-control);
+  font-size: var(--t-row-size);
+  color: var(--text-tertiary);
+  transition: background var(--hover-ms) var(--ease), color var(--hover-ms) var(--ease);
+}
+.setup-step .n {
+  width: 22px; height: 22px; flex: 0 0 auto;
+  display: grid; place-items: center;
+  border-radius: 50%;
+  border: 1px solid rgb(var(--hairline-rgb) / .16);
+  font-family: var(--font-mono); font-size: var(--t-mono-size);
+}
+.setup-step.is-current {
+  background: rgb(var(--accent-rgb) / .12);
+  color: var(--text);
+}
+.setup-step.is-current .n {
+  border-color: rgb(var(--accent-rgb) / .5);
+  color: var(--accent-text);
+}
+.setup-step.is-done { color: var(--text-secondary); }
+.setup-step.is-done .n {
+  background: rgb(var(--accent-rgb) / .2);
+  border-color: rgb(var(--accent-rgb) / .35);
+  color: var(--text);
+}
+
+.setup-main { display: flex; min-width: 0; }
+.setup-card { flex: 1; min-width: 0; align-self: center; }
+.setup-core {
+  display: flex; flex-direction: column;
+  gap: 14px;
+  padding: 30px 32px;
+}
+.setup-title {
+  margin: 0;
+  font-size: var(--t-pane-title-size);
+  font-weight: var(--t-pane-title-weight);
+  color: var(--text);
+}
+.setup-body {
+  margin: 0;
+  max-width: 62ch;
+  font-size: var(--t-body-size);
+  color: var(--text-secondary);
+  line-height: 1.65;
+}
+.setup-fields {
+  display: flex; flex-direction: column; gap: 14px;
+  margin-top: 4px;
+}
+.setup-fields:empty { display: none; }
+.setup-row { display: grid; grid-template-columns: 1fr 1fr; gap: var(--stack-gap); }
+.setup-row.is-path { grid-template-columns: 1fr auto; align-items: end; }
+
+.setup-status {
+  display: flex; align-items: center; gap: 10px;
+  padding: 11px 14px;
+  border-radius: var(--r-tile);
+  border: 1px solid rgb(var(--hairline-rgb) / .1);
+  background: rgb(var(--hairline-rgb) / .04);
+  font-size: var(--t-row-size);
+  color: var(--text-secondary);
+}
+.setup-status[hidden] { display: none; }
+.setup-status i {
+  width: 7px; height: 7px; border-radius: 50%; flex: 0 0 auto;
+  background: var(--text-tertiary);
+}
+.setup-status.is-ok {
+  border-color: rgb(var(--accent-rgb) / .3);
+  background: rgb(var(--accent-rgb) / .08);
+  color: var(--text);
+}
+.setup-status.is-ok i { background: var(--accent); }
+.setup-status.is-bad {
+  border-color: rgb(var(--ember-rgb) / .35);
+  background: rgb(var(--ember-rgb) / .07);
+  color: var(--text);
+}
+.setup-status.is-bad i { background: var(--ember); }
+.setup-status b { font-weight: 500; }
+.setup-status span { color: var(--text-secondary); }
+
+.setup-actions {
+  display: flex; align-items: center; gap: var(--sibling-gap);
+  margin-top: 6px;
+}
+.setup-spacer { flex: 1; }
+.setup-actions button[hidden] { display: none; }
+
 /* --- perf HUD ---------------------------------------------------------- */
 
 .hud {

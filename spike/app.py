@@ -40,6 +40,7 @@ from obsauto import session_log
 from obsauto import settings_spec
 from obsauto.app_log import LOG_FILE, log_to_file, setup_logging
 from obsauto.classifier import Classifier
+from obsauto.obs_client import OBSClient
 from obsauto.config import CONFIG_FILE, load_config, save_config
 from obsauto.paths import RESOURCE_DIR
 from obsauto import thumbs
@@ -132,8 +133,38 @@ def _sample(procs):
     return rss, cpu
 
 
+def _short_obs_version(raw):
+    """'30.1.2' out of whatever GetVersion returned."""
+    return str((raw or "")).strip()
+
+
+def _friendly_obs_error(exc):
+    """Say which of the three things went wrong, not just that one did.
+
+    Onboarding is the one place where the person reading this has never seen
+    OBS's WebSocket settings page, so 'ConnectionRefusedError(10061)' is worse
+    than useless - it reads as "the app is broken" rather than "tick a box".
+    """
+    text = str(exc) or exc.__class__.__name__
+    low = text.lower()
+    if "refused" in low or "10061" in low:
+        return ("OBS isn't accepting connections. In OBS: Tools -> WebSocket "
+                "Server Settings -> tick 'Enable WebSocket server'.")
+    if "auth" in low or "password" in low or "401" in low:
+        return "OBS rejected the password. Copy it from that same OBS panel."
+    if "timed out" in low or "timeout" in low:
+        return "No answer from that host and port. Is OBS running there?"
+    return text
+
+
 class Api:
     def __init__(self):
+        # Read before load_config(), which writes the file when it is missing -
+        # so "has this machine ever run Nebula" has to be asked first. A
+        # missing config.json is the only honest first-run signal: a flag
+        # inside the file cannot be false on a machine that has no file, and
+        # adding one would have re-run setup for every existing install.
+        self._fresh_install = not os.path.exists(CONFIG_FILE)
         self.cfg = load_config()
         # Underscore-prefixed on purpose. pywebview walks the api object's
         # public attributes to expose them to JS; a pywebview Window has a
@@ -206,6 +237,13 @@ class Api:
             # At boot too, not only in the snapshot: the chrome should already
             # be the user's accent and density on the first paint.
             "appearance": self.appearance(),
+            "setup": {
+                "needed": self.setup_needed(),
+                "values": {k: _settings_display(settings_spec.BY_KEY[k], self.cfg.get(k))
+                           for k in ("obs_host", "obs_port", "obs_password",
+                                     "recording_root", "toggle_hotkey")
+                           if k in settings_spec.BY_KEY},
+            },
             "dashboard": {
                 "blocks": list(SPIKE_DASH_BLOCKS),
                 "labels": dict(SPIKE_DASH_LABELS),
@@ -217,6 +255,103 @@ class Api:
                 "layout": self._saved_dashboard_layout(),
             },
         }
+
+    # --- first run (mockup 1l) -----------------------------------------
+
+    def setup_needed(self):
+        """Show onboarding only on a machine that has never run Nebula."""
+        return bool(self._fresh_install) and not self.cfg.get("setup_complete")
+
+    def setup_test_obs(self, host, port, password):
+        """Probe obs-websocket with the details typed in step 2.
+
+        Its own short-lived client, deliberately: the host's OBSClient may be
+        mid-reconnect against the *old* settings, and the point of this button
+        is to answer a question about what was just typed. Blocking is fine -
+        pywebview runs api calls off the GUI thread.
+        """
+        try:
+            port = int(str(port).strip() or 4455)
+        except ValueError:
+            return {"ok": False, "error": "Port needs to be a whole number."}
+        probe = OBSClient(str(host or "localhost").strip(), port,
+                          str(password or ""), on_log=lambda m: None)
+        try:
+            probe.connect(timeout=4)
+        except Exception as exc:
+            return {"ok": False, "error": _friendly_obs_error(exc)}
+        try:
+            version = _short_obs_version(probe.get_version())
+        except Exception:
+            version = ""
+        ms = probe.last_handshake_ms
+        try:
+            probe.disconnect()
+        except Exception:
+            pass
+        detail = []
+        if version:
+            detail.append("OBS %s" % version)
+        if ms is not None:
+            detail.append("responds in %d ms" % ms)
+        return {"ok": True, "text": "Connected", "detail": " · ".join(detail)}
+
+    def setup_choose_folder(self, current=""):
+        """Native folder picker for step 3."""
+        if not self._window:
+            return {"ok": False, "error": "no window"}
+        try:
+            picked = self._window.create_file_dialog(
+                webview.FOLDER_DIALOG, directory=current or "")
+        except Exception as exc:
+            return {"ok": False, "error": str(exc)}
+        if not picked:
+            return {"ok": False, "cancelled": True}
+        path = picked[0] if isinstance(picked, (list, tuple)) else picked
+        return {"ok": True, "path": str(path)}
+
+    def setup_scan_steam(self):
+        """Step 4's scan, synchronous so the step can report what it found."""
+        try:
+            self._classifier.refresh_steam_index()
+            self._classifier.register_all_steam_games()
+        except Exception as exc:
+            return {"ok": False, "error": str(exc)}
+        snap = self._classifier.snapshot()
+        return {"ok": True, "games": len(snap.get("games", {}))}
+
+    def setup_finish(self, values=None, skipped=False):
+        """Write what setup collected, then behave like a normal launch.
+
+        Every field goes through settings_spec.parse, so onboarding cannot
+        write a value the Settings pane would refuse - one validator, not two.
+        """
+        errors = []
+        for key, raw in (values or {}).items():
+            field = settings_spec.BY_KEY.get(key)
+            if field is None:
+                continue
+            value, error = settings_spec.parse(field, raw)
+            if error:
+                errors.append("%s: %s" % (field.label, error))
+            else:
+                self.cfg[key] = value
+        if errors:
+            return {"ok": False, "errors": errors}
+        self.cfg["setup_complete"] = True
+        save_config(self.cfg)
+        self._fresh_install = False
+        self._api_log("[Setup] First-run setup %s."
+                      % ("skipped" if skipped else "complete"))
+        if self._host:
+            # Rebind against whatever was just written, then start watching.
+            try:
+                self._host.config.update(self.cfg)
+                self._host.call_soon(self._host.start_hotkeys)
+                self._host.call_soon(self._host.autostart)
+            except Exception as exc:
+                self._api_log("[Setup] Couldn't start monitoring: %s" % exc)
+        return {"ok": True}
 
     def _saved_dashboard_layout(self):
         for key in ("dashboard_layout", "dashboard_grid"):

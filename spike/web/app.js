@@ -2058,6 +2058,211 @@ async function load() {
   ensureSpots();
 }
 
+/* --- 1l first run ------------------------------------------------------ */
+/* "A four-step setup that gets someone from install to auto-recording in
+   under a minute — with live connection feedback so there's no guesswork."
+   The feedback is the part that matters: step 2 is the only step that can
+   fail for a reason the reader cannot guess, so it says which of the three
+   things went wrong rather than showing a socket error. */
+
+const SETUP_STEPS = [
+  {
+    key: "welcome",
+    nav: "Welcome",
+    title: "Welcome to Nebula",
+    body: "Nebula sits in your tray and watches for games. When one starts it tells "
+        + "OBS to record, and when you stop playing it files the clip under that "
+        + "game's name. Nothing to press. This takes about a minute, and you can "
+        + "change any of it later in Settings.",
+    fields: [],
+  },
+  {
+    key: "obs",
+    nav: "Connect to OBS",
+    title: "Connect to OBS",
+    body: "Nebula drives OBS over its websocket. In OBS, open Tools → WebSocket Server "
+        + "Settings and tick “Enable WebSocket server”, then confirm the details below. "
+        + "Nebula can launch OBS for you afterwards.",
+    fields: [
+      { key: "obs_host", label: "Host", half: true },
+      { key: "obs_port", label: "Port", half: true },
+      { key: "obs_password", label: "Password", hint: "Blank unless you ticked authentication in OBS.", secret: true },
+    ],
+    test: "Test connection",
+  },
+  {
+    key: "folder",
+    nav: "Choose a recordings folder",
+    title: "Where should clips go?",
+    body: "Nebula creates one folder per game inside this one. Point it at the drive "
+        + "with room on it — a session can be several gigabytes.",
+    fields: [{ key: "recording_root", label: "Recording root", browse: true }],
+  },
+  {
+    key: "steam",
+    nav: "Scan Steam & set a hotkey",
+    title: "Find your games, pick a key",
+    body: "Scanning Steam teaches Nebula which of your installed apps are games, so it "
+        + "does not have to ask the first time you launch one. The hotkey toggles "
+        + "watching on and off from anywhere, even mid-game.",
+    fields: [{ key: "toggle_hotkey", label: "Toggle key", hint: "A key name, e.g. ` or f12 or ctrl+alt+r." }],
+    scan: "Scan Steam library",
+  },
+];
+
+let setupState = { step: 0, values: {}, active: false, busy: false };
+
+function setupFieldHtml(f, value) {
+  const secret = f.secret ? ` type="password"` : "";
+  const inner = `<div class="field" data-key="${esc(f.key)}">
+      <div class="field-head">
+        <span class="field-label">${esc(f.label)}</span>
+        <span class="field-key">${esc(f.key)}</span>
+      </div>
+      <input class="field-input no-drag" data-setup="${esc(f.key)}" value="${esc(value || "")}"${secret}>
+      ${f.hint ? `<div class="field-hint">${esc(f.hint)}</div>` : ""}
+    </div>`;
+  if (!f.browse) return inner;
+  return `<div class="setup-row is-path">${inner}
+    <button class="pill ghost no-drag" id="setup-browse" type="button">Browse…</button></div>`;
+}
+
+function renderSetup() {
+  const step = SETUP_STEPS[setupState.step];
+  $("setup-steps").innerHTML = SETUP_STEPS.map((s, i) => `
+    <li class="setup-step ${i === setupState.step ? "is-current" : (i < setupState.step ? "is-done" : "")}">
+      <span class="n">${i + 1}</span>${esc(s.nav)}
+    </li>`).join("");
+  $("setup-eyebrow").textContent = `Step ${setupState.step + 1} of ${SETUP_STEPS.length}`;
+  $("setup-title").textContent = step.title;
+  $("setup-body").textContent = step.body;
+
+  const halves = step.fields.filter((f) => f.half);
+  const rest = step.fields.filter((f) => !f.half);
+  $("setup-fields").innerHTML =
+    (halves.length
+      ? `<div class="setup-row">${halves.map((f) => setupFieldHtml(f, setupState.values[f.key])).join("")}</div>`
+      : "") +
+    rest.map((f) => setupFieldHtml(f, setupState.values[f.key])).join("");
+
+  const actions = $("setup-actions") || $("setup-next").parentElement;
+  let extra = actions.querySelector("#setup-action");
+  if (extra) extra.remove();
+  const label = step.test || step.scan;
+  if (label) {
+    extra = document.createElement("button");
+    extra.className = "pill ghost no-drag";
+    extra.id = "setup-action";
+    extra.type = "button";
+    extra.textContent = label;
+    actions.insertBefore(extra, $("setup-skip"));
+  }
+
+  $("setup-back").hidden = setupState.step === 0;
+  $("setup-next").textContent =
+    setupState.step === SETUP_STEPS.length - 1 ? "Finish" : "Continue";
+  setSetupStatus(null);
+}
+
+function setSetupStatus(kind, text, detail) {
+  const host = $("setup-status");
+  if (!kind) {
+    host.hidden = true;
+    host.className = "setup-status";
+    host.innerHTML = "";
+    return;
+  }
+  host.hidden = false;
+  host.className = "setup-status" + (kind === "ok" ? " is-ok" : kind === "bad" ? " is-bad" : "");
+  host.innerHTML = `<i></i><b>${esc(text)}</b>` + (detail ? `<span>${esc(detail)}</span>` : "");
+}
+
+function readSetupFields() {
+  document.querySelectorAll("[data-setup]").forEach((el) => {
+    setupState.values[el.dataset.setup] = el.value;
+  });
+}
+
+async function setupTestObs() {
+  readSetupFields();
+  setSetupStatus("busy", "Trying…");
+  const r = await window.pywebview.api.setup_test_obs(
+    setupState.values.obs_host, setupState.values.obs_port, setupState.values.obs_password);
+  if (r.ok) setSetupStatus("ok", r.text, r.detail);
+  else setSetupStatus("bad", "Not connected", r.error);
+}
+
+async function setupScanSteam() {
+  setSetupStatus("busy", "Scanning your Steam libraries…");
+  const r = await window.pywebview.api.setup_scan_steam();
+  if (r.ok) {
+    setSetupStatus("ok", `${r.games} game${r.games === 1 ? "" : "s"} known`,
+                   r.games ? "Nebula will record these without asking." : "Nothing found — it will ask the first time you play.");
+  } else {
+    setSetupStatus("bad", "Scan failed", r.error);
+  }
+}
+
+async function setupBrowse() {
+  readSetupFields();
+  const r = await window.pywebview.api.setup_choose_folder(setupState.values.recording_root || "");
+  if (r && r.ok) {
+    setupState.values.recording_root = r.path;
+    renderSetup();
+  }
+}
+
+async function finishSetup(skipped) {
+  if (setupState.busy) return;
+  setupState.busy = true;
+  readSetupFields();
+  const r = await window.pywebview.api.setup_finish(setupState.values, !!skipped);
+  setupState.busy = false;
+  if (!r.ok) {
+    setSetupStatus("bad", "Couldn't save", (r.errors || []).join(" · "));
+    return;
+  }
+  setupState.active = false;
+  $("setup").hidden = true;
+  await load();
+  showPane("dashboard");
+}
+
+function startSetup(cfg) {
+  setupState = { step: 0, values: Object.assign({}, cfg.setup.values), active: true, busy: false };
+  $("setup").hidden = false;
+  renderSetup();
+}
+
+function wireSetup() {
+  $("setup").addEventListener("click", async (e) => {
+    if (!setupState.active) return;
+    if (e.target.closest("#setup-back")) {
+      readSetupFields();
+      setupState.step = Math.max(0, setupState.step - 1);
+      renderSetup();
+      return;
+    }
+    if (e.target.closest("#setup-next")) {
+      readSetupFields();
+      if (setupState.step === SETUP_STEPS.length - 1) {
+        await finishSetup(false);
+      } else {
+        setupState.step += 1;
+        renderSetup();
+      }
+      return;
+    }
+    if (e.target.closest("#setup-skip")) { await finishSetup(true); return; }
+    if (e.target.closest("#setup-browse")) { await setupBrowse(); return; }
+    if (e.target.closest("#setup-action")) {
+      const step = SETUP_STEPS[setupState.step];
+      if (step.test) await setupTestObs();
+      else if (step.scan) await setupScanSteam();
+    }
+  });
+}
+
 /* --- perf HUD ---------------------------------------------------------- */
 
 function startHud() {
@@ -2167,6 +2372,8 @@ function fail(where, err) {
     buildBackdrop(bootCfg.background, bootCfg.seed);
     initDashboard(bootCfg);
     wireDashCustomise();
+    wireSetup();
+    if (bootCfg.setup && bootCfg.setup.needed) startSetup(bootCfg);
     ensureSpots();
     wirePointer(bootCfg.background.motion.pointer_lean_window_px);
   } catch (e) { fail("backdrop", e); }

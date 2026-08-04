@@ -39,6 +39,15 @@ hiddenimports = [
     "psutil",
     "keyboard",
     "websocket",
+    # app_icons.extract() imports these inside the function so a machine
+    # without pywin32 degrades to monogram tiles rather than failing. That
+    # also puts them out of reach of a casual static scan, and win32ui is a
+    # compiled extension - a missing one would silently cost every real icon
+    # in the Games pane in the packaged build only.
+    "win32api",
+    "win32con",
+    "win32gui",
+    "win32ui",
 ]
 hiddenimports += collect_submodules("webview.platforms")
 
