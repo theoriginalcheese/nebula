@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Nebula Toast</title>
+<link rel="stylesheet" href="tokens.css">
+<link rel="stylesheet" href="toast.css">
+</head>
+<body>
+<div class="toast" id="toast" aria-live="polite">
+  <div class="toast-shell">
+    <div class="toast-core">
+      <div class="toast-body">
+        <div class="toast-chip" id="chip"><span class="toast-icon" id="icon"></span></div>
+        <div class="toast-copy">
+          <div class="toast-title" id="title"></div>
+          <div class="toast-sub" id="sub"></div>
+          <div class="toast-detail" id="detail" hidden></div>
+        </div>
+      </div>
+      <div class="toast-track" aria-hidden="true">
+        <div class="toast-drain" id="drain"></div>
+      </div>
+    </div>
+  </div>
+</div>
+<script src="toast.js"></script>
+</body>
+</html>

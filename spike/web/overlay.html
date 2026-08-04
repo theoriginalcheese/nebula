@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Nebula Overlay</title>
+<link rel="stylesheet" href="tokens.css">
+<link rel="stylesheet" href="overlay.css">
+</head>
+<body>
+<div class="overlay" id="overlay">
+  <div class="overlay-shell">
+    <div class="overlay-core" id="body">
+      <span class="rec-dot" id="dot" aria-hidden="true"></span>
+      <div class="overlay-readouts">
+        <div class="overlay-timer" id="timer"></div>
+        <div class="overlay-game" id="game"></div>
+      </div>
+      <div class="overlay-actions">
+        <button type="button" class="act" id="act-mark" title="Mark clip"></button>
+        <button type="button" class="act" id="act-stop" title="Stop &amp; save"></button>
+        <button type="button" class="act" id="act-pause" title="Pause"></button>
+        <button type="button" class="act collapse" id="act-collapse" title="Restore window"></button>
+      </div>
+    </div>
+  </div>
+</div>
+<script src="overlay.js"></script>
+</body>
+</html>

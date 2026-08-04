@@ -1,0 +1,36 @@
+{"id": "t001", "title": "Clips pane: by-game, search, sort, actions, thumbs", "transport": "queue", "event": "sent", "at": "2026-08-03T00:24:34"}
+{"task": "step2", "event": "chat", "rc": 1, "model": "composer", "at": "2026-08-03T00:46:17"}
+{"task": "step2", "event": "gate", "ok": true, "at": "2026-08-03T00:46:18"}
+{"task": "step2", "event": "chat", "rc": 1, "model": "composer", "at": "2026-08-03T00:49:06"}
+{"task": "step2", "event": "chat", "rc": 1, "model": "composer", "at": "2026-08-03T00:50:33"}
+{"task": "smoke", "event": "chat", "rc": 0, "model": "composer", "at": "2026-08-03T00:51:42"}
+{"task": "smoke", "event": "gate", "ok": true, "at": "2026-08-03T00:51:43"}
+{"task": "smoke", "event": "chat", "rc": 0, "model": "composer", "at": "2026-08-03T00:52:41"}
+{"task": "smoke", "event": "gate", "ok": true, "at": "2026-08-03T00:52:42"}
+{"task": "smoke", "event": "chat", "rc": 0, "model": "composer", "at": "2026-08-03T00:52:52"}
+{"task": "smoke", "event": "gate", "ok": true, "at": "2026-08-03T00:52:54"}
+{"task": "probe", "event": "chat", "rc": 0, "model": "composer", "at": "2026-08-03T01:51:01"}
+{"task": "probe", "event": "gate", "ok": true, "at": "2026-08-03T01:51:02"}
+{"task": "step2", "event": "chat", "rc": 0, "model": "composer", "at": "2026-08-03T01:52:23"}
+{"task": "step2", "event": "gate", "ok": true, "at": "2026-08-03T01:52:25"}
+{"task": "t001", "event": "chat", "rc": 0, "model": "composer", "at": "2026-08-03T02:02:57"}
+{"task": "t001", "event": "gate", "ok": true, "at": "2026-08-03T02:03:01"}
+{"task": "t001", "event": "chat", "rc": 0, "model": "composer", "at": "2026-08-03T02:07:15"}
+{"task": "t001", "event": "gate", "ok": true, "at": "2026-08-03T02:07:18"}
+{"task": "t003", "event": "chat", "rc": 0, "model": "composer", "at": "2026-08-03T03:28:47"}
+{"task": "t003", "event": "gate", "ok": true, "at": "2026-08-03T03:28:51"}
+{"task": "t005", "event": "chat", "rc": 0, "model": "composer", "at": "2026-08-03T03:47:20"}
+{"task": "t005", "event": "gate", "ok": true, "at": "2026-08-03T03:47:25"}
+{"task": "t006", "event": "chat", "rc": 124, "model": "composer", "at": "2026-08-03T04:13:25"}
+{"task": "t006", "event": "chat", "rc": 0, "model": "composer", "at": "2026-08-03T11:23:47"}
+{"task": "t006", "event": "gate", "ok": true, "at": "2026-08-03T11:23:50"}
+{"task": "t007", "event": "chat", "rc": 0, "model": "composer", "at": "2026-08-03T12:02:19"}
+{"task": "t007", "event": "gate", "ok": false, "at": "2026-08-03T12:02:22"}
+{"task": "t009", "event": "chat", "rc": 0, "model": "composer", "at": "2026-08-03T12:41:11"}
+{"task": "t009", "event": "gate", "ok": true, "at": "2026-08-03T12:41:15"}
+{"task": "t010", "event": "chat", "rc": 0, "model": "composer", "at": "2026-08-03T20:26:28"}
+{"task": "t010", "event": "gate", "ok": true, "at": "2026-08-03T20:26:31"}
+{"task": "t011", "event": "chat", "rc": 0, "model": "composer", "at": "2026-08-04T01:16:27"}
+{"task": "t011", "event": "gate", "ok": true, "at": "2026-08-04T01:16:31"}
+{"task": "t012", "event": "chat", "rc": 0, "model": "composer", "at": "2026-08-04T01:21:15"}
+{"task": "t012", "event": "gate", "ok": true, "at": "2026-08-04T01:21:20"}

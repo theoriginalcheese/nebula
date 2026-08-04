@@ -1,0 +1,29 @@
+{
+  "_comment": [
+    "Project hooks for Nebula. These merge with the user-level settings in",
+    "~/.claude/settings.json (mempalace), they do not replace them.",
+    "",
+    "The distinction that matters: CLAUDE.md and skills are guidance the model",
+    "should consider; hooks are behaviour the system guarantees. The v4 chassis",
+    "had every motion value it needed sitting in design_v3.py and used '.16s",
+    "ease' anyway, because nothing failed when it didn't. This is the nothing",
+    "that now fails.",
+    "",
+    "Both hooks end in `exit 0` so a hook failure can never block an edit - the",
+    "lint output reaches the model as feedback, not as a wall."
+  ],
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cd \"$CLAUDE_PROJECT_DIR\" && case \"$CLAUDE_TOOL_FILE_PATH\" in *spike/web/*.css|*spike/web/*.js|*design_v3.py) python tools/lint_tokens.py ;; esac; exit 0",
+            "timeout": 30
+          }
+        ]
+      }
+    ]
+  }
+}

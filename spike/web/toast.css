@@ -1,0 +1,173 @@
+/* Toast — frame 2i. Separate surface; transform + opacity only. */
+
+*, *::before, *::after { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  width: var(--toast-w);
+  height: var(--toast-h);
+  overflow: hidden;
+  background: transparent;
+  font-family: var(--font-ui);
+  color: var(--text);
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.toast {
+  width: var(--toast-w);
+  height: var(--toast-h);
+  opacity: 0;
+  transform: translateY(var(--toast-in-rise));
+  transition: none;
+}
+
+.toast.is-visible {
+  opacity: 1;
+  transform: translateY(0);
+  transition:
+    opacity var(--toast-in-ms) var(--ease),
+    transform var(--toast-in-ms) var(--ease);
+}
+
+.toast.is-dismissing {
+  opacity: 0;
+  transform: translateY(0);
+  transition: opacity var(--toast-out-ms) var(--ease);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .toast.is-visible,
+  .toast.is-dismissing {
+    transition: none;
+  }
+}
+
+/* Squared to the window edge on purpose — DWM rounds the window itself.
+   ⚠️ Do not give this a radius. WebView2 draws through DirectComposition, so
+   anything the page leaves uncovered at the corners shows the window fill as a
+   box, and that box cannot be clipped away: SetWindowRgn does not apply to
+   composited content, and pywebview's transparency does not hold. The window
+   is rounded by DWM instead (see _make_transparent in windows.py), and DWM
+   picks the radius - so a 28px card inside an ~8px window just puts a dark
+   frame back in the gap between the two. */
+.toast-shell {
+  width: 100%;
+  height: 100%;
+  padding: var(--tray-pad);
+  border-radius: 0;
+  /* DELIBERATE DEVIATION, measured by eye against shots/t006-toast.png.
+     BUILD-SPEC's shell wash (.035) and core (.82) assume a card sitting on the
+     aurora, where the aurora shows through the shell and makes it the lighter
+     of the two. A toast is a separate window over the desktop with no aurora
+     behind it, so the same alphas invert the relationship: shell resolves to
+     ~#131117 and core to ~#141022 - the core comes out LIGHTER, and the card
+     reads as one flat panel.
+     Raising the shell restores the intended order (tinted shell outside,
+     darker core inside) without touching either token. */
+  background: rgb(var(--hairline-rgb) / .085);
+  border: 1px solid rgb(var(--hairline-rgb) / .11);
+}
+
+.toast-core {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  /* Rounded, unlike the shell. The shell has to stay square because anything
+     it leaves uncovered shows the window fill against the desktop - but the
+     core sits *inside* the shell, so its corners fall on the card, not on the
+     wallpaper, and cost nothing.
+     Not --tray-core-r (22): the outer corner is DWM's (~8px), and an inner
+     radius larger than the window's own reads wrong. --panel-core-r is the
+     closest token that sits comfortably inside it. */
+  border-radius: var(--panel-core-r);
+  /* Ground, not card-core: on this window card-core is the lighter colour.
+     See the note on .toast-shell. */
+  background: rgb(var(--ground-rgb) / .96);
+  overflow: hidden;
+}
+
+.toast-body {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: var(--stack-gap);
+  min-height: 0;
+  padding: var(--stack-gap) var(--stack-gap) var(--sibling-gap);
+}
+
+.toast-chip {
+  flex: 0 0 auto;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: rgb(var(--accent-rgb) / .14);
+  border: 1px solid rgb(var(--hairline-rgb) / var(--shell-border-a));
+}
+
+.toast-icon {
+  font-family: "Segoe Fluent Icons", sans-serif;
+  font-size: 13px;
+  line-height: 1;
+}
+
+.toast-copy {
+  flex: 1;
+  min-width: 0;
+}
+
+.toast-title {
+  font-size: var(--t-body-size);
+  font-weight: 500;
+  line-height: 1.25;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.toast-sub {
+  margin-top: 2px;
+  font-size: var(--t-meta-size);
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.toast-detail {
+  margin-top: 2px;
+  font-family: var(--font-mono);
+  font-size: var(--t-mono-size);
+  color: var(--text-tertiary);
+}
+
+.toast-track {
+  flex: 0 0 auto;
+  margin: 0 var(--stack-gap) var(--sibling-gap);
+  height: var(--toast-drain-h);
+  background: rgb(var(--hairline-rgb) / var(--hairline-a));
+  border-radius: var(--r-control);
+  overflow: hidden;
+  /* The fade lives on the TRACK, which never scales - not on the bar inside
+     it, which does. A gradient on the scaling element gets compressed with it:
+     at 25% remaining a 32px fade becomes 8px and reads hard, which is exactly
+     what the first attempt produced. */
+  -webkit-mask-image: linear-gradient(90deg, transparent 0, #000 var(--rule-fade), #000 calc(100% - var(--rule-fade)), transparent 100%);  /* lint-allow: #000 in a mask is an alpha stencil, not a colour - it never paints */
+  mask-image: linear-gradient(90deg, transparent 0, #000 var(--rule-fade), #000 calc(100% - var(--rule-fade)), transparent 100%);  /* lint-allow: as above */
+}
+
+.toast-drain {
+  width: 100%;
+  height: 100%;
+  background: var(--accent);
+  transform-origin: left center;
+  transform: scaleX(var(--drain-frac, 1));
+  will-change: transform;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .toast-drain { will-change: auto; }
+}

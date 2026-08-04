@@ -129,7 +129,14 @@ check("the footer count sees every match, not just the shown ones",
 # The window, and the safety rule
 # ---------------------------------------------------------------------------
 check("the palette is the spec's width", dv.PALETTE_W == 560, dv.PALETTE_W)
-check("it sits at a 22% top offset", dv.PALETTE_TOP_FRACTION == 0.22)
+# DELIBERATE DEVIATION from the mockup's 22%, at the user's request - the
+# palette sat "way too far down" with "so much room at the top". It was also
+# lower than 22% ever meant: the CSS used `padding-top: 22%`, and a percentage
+# padding resolves against the containing block's WIDTH, so on 1280x808 that
+# was ~281px rather than ~178px. The token is emitted in vh now, and this
+# asserts the value we actually intend rather than the one the mockup quotes.
+check("it sits at the user's 14% top offset", dv.PALETTE_TOP_FRACTION == 0.14,
+      dv.PALETTE_TOP_FRACTION)
 check("the backdrop is 55% black", dv.PALETTE_BACKDROP_ALPHA == 0.55)
 check("ctrl+k is the default global key",
       DEFAULTS.get("palette_hotkey") == "ctrl+k", DEFAULTS.get("palette_hotkey"))

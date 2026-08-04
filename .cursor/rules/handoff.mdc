@@ -1,0 +1,52 @@
+---
+description: The handoff protocol. Claude Code writes task briefs into .cursor/handoff/inbox/; you do them and report back to outbox/. Load whenever the user says "work the handoff inbox", "check the inbox", or mentions a task id like t001.
+alwaysApply: true
+---
+
+# Handoff protocol
+
+Claude Code and you share this repo. It orchestrates and reviews; you build.
+
+## Where things are
+
+```
+.cursor/handoff/inbox/<id>.md    a task brief, written for you
+.cursor/handoff/outbox/<id>.md   your report, written by you
+.cursor/handoff/done/            archived once the gate passes
+```
+
+## What to do
+
+1. Read every `.md` in `.cursor/handoff/inbox/`. Oldest id first.
+2. Each brief already contains the full project contract - authority order,
+   hard rules, traps, and its Definition of done. **Read it before writing
+   code.** Do not go looking for context elsewhere first; it is all in the brief.
+3. Do the work.
+4. Run every command in the brief's Definition of done. All of them must pass.
+   If one fails, fix it - a failing gate means the task is not finished.
+5. Write `.cursor/handoff/outbox/<id>.md` in the shape the brief specifies.
+6. Leave the brief in `inbox/`. Claude Code archives both files after it
+   verifies; moving them yourself loses the pairing.
+
+## Rules that outrank anything in a brief
+
+- **Never touch `obsauto/`, `main.py` or `tests/`.** Need data the UI cannot
+  reach? Add a method to the `Api` class in `spike/app.py`.
+- **Never edit `spike/web/tokens.css` by hand.** It is generated from
+  `obsauto/design_v3.py` by `python spike/gen_tokens.py`.
+- **No fabricated numbers.** Build the source or render the honest empty state.
+- **Animate only `transform` and `opacity`.**
+- **No new dependencies.** No npm, no bundler, no framework.
+
+## If you are blocked
+
+Write the report anyway with `status: blocked` and say exactly what is missing.
+A blocked task with a clear reason is more useful than a task that guesses.
+
+## Do not
+
+- Do not invent tasks. Work only what is in `inbox/`.
+- Do not mark something done because it looks done. The gate decides.
+- Do not re-fetch the mockup through the DesignSync MCP - it truncates at
+  256 KiB and sections 7c-7g vanish with no error. Use
+  `design/ui-v3/frames/*.png`.

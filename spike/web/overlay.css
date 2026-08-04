@@ -1,0 +1,140 @@
+/* Mini overlay — frame 2k (+ transport deviation). */
+
+*, *::before, *::after { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  width: var(--mini-w);
+  height: var(--mini-h);
+  overflow: hidden;
+  background: var(--ground-deep);
+  font-family: var(--font-ui);
+  color: var(--text);
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.overlay {
+  width: var(--mini-w);
+  height: var(--mini-h);
+  opacity: 1;
+  transition: opacity var(--hover-ms) var(--ease);
+}
+
+.overlay.is-faded {
+  opacity: var(--mini-faded-a);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .overlay { transition: none; }
+}
+
+.overlay-shell {
+  width: 100%;
+  height: 100%;
+  padding: var(--tile-pad);
+  /* Squared to the window edge, as toast.css - DWM rounds the window itself
+     and a card radius inside it only re-creates the dark frame. */
+  border-radius: 0;
+  background: rgb(var(--panel-rgb) / var(--shell-fill-a));
+  border: 1px solid rgb(var(--hairline-rgb) / var(--shell-border-a));
+}
+
+.overlay-core {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  height: 100%;
+  padding: 0 10px 0 12px;
+  /* As toast.css: the core sits inside the shell, so its corners fall on the
+     card rather than the desktop and cost nothing. */
+  border-radius: var(--panel-core-r);
+  background: rgb(var(--card-core-rgb) / var(--core-a));
+  border: 1px solid rgb(var(--hairline-rgb) / .06);
+  cursor: grab;
+}
+
+.overlay-core.is-dragging {
+  cursor: grabbing;
+}
+
+.rec-dot {
+  flex: 0 0 auto;
+  font-family: "Segoe Fluent Icons", sans-serif;
+  font-size: 9px;
+  line-height: 1;
+  color: var(--ember);
+}
+
+.rec-dot.is-paused { color: var(--accent); }
+
+.overlay-readouts {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.overlay-timer {
+  font-family: var(--font-mono);
+  font-size: 19px;
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+  line-height: 1.05;
+  min-width: 8.5ch;
+  letter-spacing: -0.02em;
+}
+
+.overlay-game {
+  margin-top: 1px;
+  font-size: var(--t-meta-size);
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 110px;
+}
+
+.overlay-actions {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.act {
+  width: 26px;
+  height: 26px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-family: "Segoe Fluent Icons", sans-serif;
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  transition:
+    background var(--hover-ms) var(--ease),
+    color var(--hover-ms) var(--ease),
+    transform var(--press-ms) var(--ease);
+}
+
+.act:hover {
+  background: rgb(var(--hairline-rgb) / .08);
+  color: var(--text);
+}
+
+.act:active {
+  transform: scale(var(--press-scale));
+}
+
+.act:focus { outline: none; }
+.act:focus-visible {
+  outline: var(--focus-ring-w) solid var(--accent);
+  outline-offset: var(--focus-ring-offset);
+}
+
+.act.collapse {
+  margin-left: 2px;
+  font-size: 13px;
+  color: var(--text-tertiary);
+}

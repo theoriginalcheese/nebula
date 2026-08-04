@@ -8,7 +8,6 @@ answer is remembered forever. No local/paid AI involved.
 
 import json
 import os
-import re
 import threading
 
 from . import steam_scanner

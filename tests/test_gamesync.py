@@ -49,7 +49,6 @@ class FakeGitHub:
         })
 
     def put(self, url, headers=None, json=None, timeout=None):
-        import json as _json
         self.puts += 1
         self.body = base64.b64decode(json["content"])
         self.sha = f"sha{self.puts}"

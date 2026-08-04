@@ -458,7 +458,16 @@ RIBBON_RANGES = ("Day", "12h", "Session")
 # 7e - command palette. "560xauto, centred with a 22% top offset, backdrop at
 # 55% black."
 PALETTE_W = 560
-PALETTE_TOP_FRACTION = 0.22
+# DELIBERATE DEVIATION from the mockup's 22%, requested by the user: the palette
+# "is way too far down" with "so much room at the top".
+#
+# It was also further down than 22% ever intended. The CSS was `padding-top: 22%`,
+# and a percentage padding - top included - resolves against the containing
+# block's *width*, not its height. On a 1280x808 window that is 0.22 x 1280 =
+# ~281px rather than the 0.22 x 808 = ~178px the spec meant: ~100px too low
+# before any question of taste. The token is emitted in vh so the fraction means
+# what it reads as.
+PALETTE_TOP_FRACTION = 0.14
 PALETTE_BACKDROP_ALPHA = 0.55
 PALETTE_ROW_H = 38
 PALETTE_GROUP_H = 24
@@ -556,7 +565,15 @@ BACKGROUND_MOTION_UNUSED = {
     "pointer_spotlight_px": 300,
     "pointer_spotlight_alpha": 0.22,
     "pointer_lean_page_px": 16,
-    "pointer_lean_window_px": 9,
+    "pointer_lean_window_px": 7,
+    # The lean was applied with no damping at all: every pointermove wrote the
+    # new offset straight onto the backdrop, so the lights tracked the cursor
+    # 1:1 with zero latency. Even at 9px that reads as jitter rather than
+    # parallax - "all over the place". The magnitude was never really the
+    # problem; the instantaneous response was. This eases the backdrop toward
+    # the pointer instead, which is also free: transform is compositor-only,
+    # so a CSS transition costs nothing the lean was not already costing.
+    "pointer_lean_ms": 900,
 }
 
 # ---------------------------------------------------------------------------

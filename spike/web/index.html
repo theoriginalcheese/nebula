@@ -1,0 +1,333 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Nebula</title>
+<link rel="stylesheet" href="tokens.css">
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+
+<!-- 6.2 tray/core nesting: 28 outer, 6px inset, 22 inner. -->
+<div class="tray">
+  <div class="core">
+
+    <!-- Layer 0-4. All of it is one composited stack that never repaints. -->
+    <div class="backdrop" aria-hidden="true">
+      <div class="ground"></div>
+      <div class="aurora" id="aurora"></div>
+      <div class="wisps" id="wisps"></div>
+      <div class="stars far" id="stars-far"></div>
+      <div class="stars near" id="stars-near"></div>
+      <div class="vignette"></div>
+    </div>
+
+    <div class="chrome">
+
+      <!-- Titlebar. pywebview-drag-region makes it move the window. -->
+      <header class="titlebar pywebview-drag-region">
+        <div class="brand">
+          <span class="mark"></span>
+          <span class="wordmark">Nebula</span>
+          <span class="build">spike</span>
+        </div>
+        <div class="titlebar-right">
+          <span class="conn" id="conn"><i></i><span id="conn-label">checking…</span></span>
+          <button class="icon-btn no-drag" id="btn-min" title="Minimise">&#x2013;</button>
+          <button class="icon-btn no-drag" id="btn-close" title="Close">&#x2715;</button>
+        </div>
+      </header>
+
+      <div class="body">
+
+        <nav class="rail">
+          <div class="rail-group">
+            <span class="eyebrow">Session</span>
+            <button class="rail-item is-active" data-pane="dashboard"><span class="ri"></span>Dashboard</button>
+            <button class="rail-item" data-pane="clips"><span class="ri"></span>Clips</button>
+            <button class="rail-item" data-pane="games"><span class="ri"></span>Games</button>
+            <button class="rail-item" data-pane="macropad"><span class="ri"></span>Macropad</button>
+            <button class="rail-item" data-pane="settings"><span class="ri"></span>Settings</button>
+            <button class="rail-item palette-trigger no-drag" id="btn-palette" type="button"
+                    title="Command palette"><span class="ri"></span>Search</button>
+          </div>
+          <div class="rail-foot">
+            <span class="eyebrow">Storage</span>
+            <div class="forecast" id="forecast">
+              <div class="forecast-line" id="fc-days">—</div>
+              <div class="forecast-meta" id="fc-rate">reading sessions.jsonl…</div>
+              <div class="meter"><span id="fc-meter"></span></div>
+            </div>
+          </div>
+        </nav>
+
+        <main class="pane">
+          <div class="pane-header">
+            <div>
+              <span class="eyebrow" id="pane-eyebrow">Live session</span>
+              <h1 class="pane-title" id="pane-title">Dashboard</h1>
+            </div>
+            <div class="pane-header-tools">
+              <div class="dash-add-row" id="dash-add-row" hidden></div>
+              <div class="pane-actions" id="pane-actions">
+                <button class="pill ghost no-drag" id="btn-open-folder">Open folder</button>
+                <button class="pill ghost no-drag" id="btn-rescan">Rescan Steam</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- One pane-body per rail destination. Chassis (rail/titlebar) stays. -->
+          <div class="pane-stack">
+
+            <!-- 2a Dashboard: hero + stat tiles + activity (6.8 grid) -->
+            <div class="pane-body is-active" data-pane="dashboard" id="pane-dashboard">
+              <div class="dash-grid-overlay" id="dash-grid-overlay" aria-hidden="true"></div>
+              <div class="dash-grid" id="dash-grid">
+                <article class="dash-block" data-block="hero" id="block-hero">
+                  <div class="dash-chrome" hidden>
+                    <div class="dash-strip" tabindex="0" data-strip="hero">
+                      <span class="dash-strip-label">Live session</span>
+                      <div class="dash-span-ctrl" hidden></div>
+                      <button class="dash-strip-close no-drag" type="button" title="Remove module" aria-label="Remove module">&#x2715;</button>
+                    </div>
+                  </div>
+                  <div class="dash-body-wrap">
+                    <div class="dash-scrim"></div>
+                    <div class="dash-body">
+                    <section class="card hero" id="hero">
+                      <div class="card-core hero-core">
+                        <div class="hero-cols">
+                          <div class="hero-left">
+                            <div class="hero-badge-row">
+                              <span class="hero-badge" id="hero-badge"><i class="dot"></i><span id="hero-eyebrow">OBS disconnected</span></span>
+                              <span class="hero-sub" id="hero-sub"></span>
+                            </div>
+                            <div class="hero-title" id="hero-title">Can't reach OBS</div>
+                            <div class="hero-source" id="hero-source"></div>
+                            <div class="hero-hint" id="hero-hint"></div>
+                            <div class="hero-readouts is-hidden" id="hero-readouts">
+                              <div class="ro"><span class="k">Elapsed</span><span class="v" id="hero-elapsed">—</span></div>
+                              <div class="ro"><span class="k">File size</span><span class="v" id="hero-size">—</span></div>
+                              <div class="ro"><span class="k">Bitrate</span><span class="v" id="hero-bitrate">—</span></div>
+                            </div>
+                            <div class="hero-actions" id="hero-actions"></div>
+                          </div>
+                          <div class="hero-right">
+                            <div class="preview" id="hero-preview">
+                              <span class="preview-chip" id="preview-chip">OBS scene</span>
+                              <span class="preview-label">SCENE PREVIEW</span>
+                              <span class="preview-video" id="preview-video"></span>
+                            </div>
+                            <div class="preview-info">
+                              <span class="pi-icon"></span>
+                              <span id="preview-info">No scene — OBS offline</span>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </section>
+                    </div>
+                  </div>
+                </article>
+
+                <article class="dash-block" data-block="stats" id="block-stats">
+                  <div class="dash-chrome" hidden>
+                    <div class="dash-strip" tabindex="0" data-strip="stats">
+                      <span class="dash-strip-label">Session stats</span>
+                      <div class="dash-span-ctrl">
+                        <button class="dash-span no-drag" type="button" data-span="6">½</button>
+                        <button class="dash-span no-drag" type="button" data-span="8">⅔</button>
+                        <button class="dash-span no-drag" type="button" data-span="12">Full</button>
+                      </div>
+                      <button class="dash-strip-close no-drag" type="button" title="Remove module" aria-label="Remove module">&#x2715;</button>
+                    </div>
+                  </div>
+                  <div class="dash-body-wrap">
+                    <div class="dash-scrim"></div>
+                    <div class="dash-body">
+                      <section class="tiles" id="tiles"></section>
+                    </div>
+                  </div>
+                </article>
+
+                <article class="dash-block" data-block="activity" id="block-activity">
+                  <div class="dash-chrome" hidden>
+                    <div class="dash-strip" tabindex="0" data-strip="activity">
+                      <span class="dash-strip-label">Activity</span>
+                      <div class="dash-span-ctrl">
+                        <button class="dash-span no-drag" type="button" data-span="6">½</button>
+                        <button class="dash-span no-drag" type="button" data-span="8">⅔</button>
+                        <button class="dash-span no-drag" type="button" data-span="12">Full</button>
+                      </div>
+                      <button class="dash-strip-close no-drag" type="button" title="Remove module" aria-label="Remove module">&#x2715;</button>
+                    </div>
+                  </div>
+                  <div class="dash-body-wrap">
+                    <div class="dash-scrim"></div>
+                    <div class="dash-body dash-body-grow">
+                    <section class="card grow" id="activity-card">
+                      <div class="card-core">
+                        <div class="card-head">
+                          <span class="eyebrow">Activity</span>
+                          <div class="activity-tools">
+                            <button class="chip-btn no-drag" id="btn-log-filter">All tags</button>
+                            <button class="chip-btn no-drag" id="btn-copy-log">Copy log</button>
+                          </div>
+                        </div>
+                        <div class="rule"></div>
+                        <div class="log" id="activity"></div>
+                      </div>
+                    </section>
+                    </div>
+                  </div>
+                </article>
+              </div>
+              <div class="dash-drop-marker" id="dash-drop-marker" hidden></div>
+              <div class="dash-drag-ghost" id="dash-drag-ghost" hidden></div>
+            </div>
+
+            <!-- 2b Clips -->
+            <div class="pane-body" data-pane="clips" id="pane-clips" hidden>
+              <section class="card">
+                <div class="card-core">
+                  <div class="card-head">
+                    <span class="eyebrow">Session ribbon</span>
+                    <span class="card-meta" id="ribbon-meta"></span>
+                  </div>
+                  <div class="ribbon" id="ribbon"></div>
+                  <div class="ribbon-axis" id="ribbon-axis"></div>
+                </div>
+              </section>
+              <section class="card grow clips-main">
+                <div class="card-core clips-layout">
+                  <aside class="clips-sidebar">
+                    <div class="card-head clips-side-head">
+                      <span class="eyebrow">By game</span>
+                    </div>
+                    <div class="clips-games" id="clip-games"></div>
+                    <button class="pill ghost no-drag clips-reveal-root" id="btn-reveal-root" type="button">Reveal recording root</button>
+                  </aside>
+                  <div class="clips-table-wrap">
+                    <div class="clips-table-head">
+                      <span>Clip</span>
+                      <span>Length</span>
+                      <span>Size</span>
+                      <span>Recorded</span>
+                      <span>Actions</span>
+                    </div>
+                    <div class="rows clips-rows" id="rows"></div>
+                    <div class="clips-foot" id="clips-foot"></div>
+                  </div>
+                </div>
+              </section>
+            </div>
+
+            <!-- 2d Games -->
+            <div class="pane-body" data-pane="games" id="pane-games" hidden>
+              <section class="card" id="pending-card">
+                <div class="card-core pending-core" id="pending-core"></div>
+              </section>
+              <div class="games-cols">
+                <section class="card grow">
+                  <div class="card-core">
+                    <div class="card-head">
+                      <span class="eyebrow" id="games-head">Games</span>
+                    </div>
+                    <div class="glist" id="games-list"></div>
+                    <div class="list-foot" id="games-foot"></div>
+                  </div>
+                </section>
+                <section class="card grow profile-panel" id="profile-panel">
+                  <div class="card-core">
+                    <div class="card-head">
+                      <span class="eyebrow">Profile</span>
+                      <span class="card-meta" id="profile-meta"></span>
+                    </div>
+                    <div class="profile-body" id="profile-body">
+                      <div class="empty profile-empty">Select a game to edit its encoder profile.</div>
+                    </div>
+                  </div>
+                </section>
+                <section class="card grow">
+                  <div class="card-core">
+                    <div class="card-head">
+                      <span class="eyebrow" id="nongames-head">Not games</span>
+                    </div>
+                    <div class="glist" id="nongames-list"></div>
+                    <div class="list-foot" id="nongames-foot"></div>
+                  </div>
+                </section>
+              </div>
+            </div>
+
+            <!-- 2e Macropad — honest empty -->
+            <div class="pane-body" data-pane="macropad" id="pane-macropad" hidden>
+              <section class="card grow">
+                <div class="card-core macropad-empty">
+                  <div class="empty-title" id="macropad-title">No device layer yet</div>
+                  <div class="empty-body" id="macropad-body"></div>
+                  <div class="empty-foot" id="macropad-foot"></div>
+                </div>
+              </section>
+            </div>
+
+            <!-- 2c Settings -->
+            <div class="pane-body" data-pane="settings" id="pane-settings" hidden>
+              <div class="settings-layout">
+                <aside class="settings-nav">
+                  <div class="settings-nav-list" id="settings-nav"></div>
+                  <div class="card settings-file">
+                    <div class="card-core">
+                      <span class="eyebrow">Config file</span>
+                      <div class="cfg-path" id="cfg-path"></div>
+                      <button class="chip-btn no-drag" id="btn-reveal-cfg">Reveal</button>
+                    </div>
+                  </div>
+                </aside>
+                <section class="card grow settings-main">
+                  <div class="card-core" id="settings-host">
+                    <div class="settings-blurb" id="settings-blurb"></div>
+                    <div class="settings-fields" id="settings-fields"></div>
+                    <div class="settings-footer" id="settings-footer"></div>
+                  </div>
+                </section>
+              </div>
+            </div>
+
+          </div>
+        </main>
+      </div>
+    </div>
+
+    <!-- Perf HUD. The whole reason the spike exists. -->
+    <div class="hud" id="hud">
+      <div class="hud-row"><span>fps</span><b id="hud-fps">—</b></div>
+      <div class="hud-row"><span>frame p50</span><b id="hud-p50">—</b></div>
+      <div class="hud-row"><span>rss</span><b id="hud-rss">—</b></div>
+      <div class="hud-row"><span>cpu</span><b id="hud-cpu">—</b></div>
+      <div class="hud-row"><span>state</span><b id="hud-vis">visible</b></div>
+    </div>
+
+  </div>
+</div>
+
+<!-- 7e command palette — modal over the chrome, not a second window -->
+<div class="palette-backdrop is-hidden" id="palette-backdrop" hidden aria-hidden="true">
+  <div class="palette card" id="palette" role="dialog" aria-modal="true" aria-label="Command palette">
+    <div class="card-core palette-core">
+      <div class="palette-search">
+        <span class="palette-glyph" aria-hidden="true">&#xE721;</span>
+        <input class="palette-input no-drag" id="palette-input" type="search"
+               placeholder="Search actions, games, clips and settings"
+               autocomplete="off" spellcheck="false">
+        <kbd class="palette-kbd" id="palette-kbd">Ctrl K</kbd>
+      </div>
+      <div class="palette-list" id="palette-list"></div>
+      <div class="palette-foot" id="palette-foot"></div>
+    </div>
+  </div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>

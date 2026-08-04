@@ -27,7 +27,6 @@ import json
 import os
 import shutil
 import threading
-import time
 
 _CHUNK = 4 * 1024 * 1024  # 4 MiB
 _RETRY_BACKOFF = 10       # seconds to wait before retrying a failed item

@@ -1,0 +1,60 @@
+# Ruff, deliberately narrow.
+#
+# Running Ruff's defaults over this repo reports 360 findings, and almost none
+# of them are defects:
+#
+#   130  printf-string-formatting  - the codebase uses % formatting throughout,
+#                                    consistently, on purpose
+#   113  blind-except              - deliberate. pystray callbacks, COM
+#                                    properties and the tray menu all have to
+#                                    swallow and log rather than propagate, and
+#                                    each site says so in a comment
+#    50  try-except-pass           - same
+#    27  unnecessary-cast-to-int   - explicit int() on values crossing into Tk
+#                                    and Win32, where the type genuinely matters
+#
+# Adopting the default set would mean 360 warnings nobody reads, which is worse
+# than no linter: it trains you to ignore the output.
+#
+# So this selects only rules that catch *defects* - and the honest result is
+# that on the existing code they find six unused imports and nothing else,
+# which is a statement about the codebase rather than about Ruff.
+#
+# Its real value is forward-looking: new code (mine, and Cursor's) gets checked
+# for the mistakes that are actually expensive here.
+#
+#     ruff check .
+#     ruff check . --fix
+
+target-version = "py312"
+line-length = 100
+
+exclude = ["build", "dist", "graphify-out", "__pycache__", "design/ui-v3/_ds",
+           # Legacy entry point, superseded by main.py (see CLAUDE.md).
+           "obs_auto_game_folder.py"]
+
+[lint]
+select = [
+    "F821",   # undefined name - catches a typo'd attribute before it ships
+    "F811",   # redefinition of an unused name
+    "F841",   # assigned but never used - usually a half-finished edit
+    "F401",   # unused import
+    "B023",   # function uses a loop variable - the closure-capture family that
+              # the deferred-callback trap in CLAUDE.md belongs to
+    "B006",   # mutable default argument
+    "B008",   # function call in a default argument
+    "E711",   # == None
+    "E712",   # == True / == False
+    "PLE",    # pylint errors: genuine mistakes only
+]
+
+ignore = [
+    # Read-only class constants (PICKER_SKIP, SELF_PROCESSES, RIBBON_RANGE_SECONDS).
+    # Ruff cannot see that they are never mutated; they are correct as they are.
+    "RUF012",
+]
+
+[lint.per-file-ignores]
+# The test files are scripts with a hand-rolled PASS/FAIL harness, not pytest.
+# They rebind module attributes to stub out Tk and OBS on purpose.
+"tests/*" = ["F811", "E402"]

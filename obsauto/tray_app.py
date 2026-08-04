@@ -34,10 +34,21 @@ def build_tray_icon(app_window, icon_path):
     icons = generate_state_icons(size=64)
 
     def on_tk(fn):
-        """Hand a callback back to the Tk thread."""
+        """Hand a callback back to the host's UI thread.
+
+        v3's host is a Tk window, so that means ``root.after(0, ...)``. v4's is
+        a webview with no Tk root, and exposes ``call_soon()`` instead. Prefer
+        that when it exists - the tray does not need to know which renderer it
+        is driving, and keeping one copy of this file means the two cannot
+        drift apart.
+        """
         def handler(icon=None, item=None):
             try:
-                app_window.root.after(0, fn)
+                marshal = getattr(app_window, "call_soon", None)
+                if marshal is not None:
+                    marshal(fn)
+                else:
+                    app_window.root.after(0, fn)
             except RuntimeError:
                 pass  # window already torn down
         return handler
@@ -90,10 +101,15 @@ def build_tray_icon(app_window, icon_path):
             on_tk(app_window._save_replay),
             visible=lambda _item: bool(getattr(app_window, "replay", None))
             and app_window.replay.armed),
+        # Hidden until there is a Monitor to toggle. Same reasoning as the
+        # replay item above: an entry that can only tell you it won't work is
+        # worse than no entry. v3's AppWindow always has one, so this is only
+        # ever false during the v4 port, before step 2 lands.
         pystray.MenuItem(
             lambda item: "Monitoring on" if status()["monitoring"] else "Monitoring off",
             on_tk(app_window._toggle_monitoring),
-            checked=lambda item: status()["monitoring"]),
+            checked=lambda item: status()["monitoring"],
+            visible=lambda _item: getattr(app_window, "monitor", True) is not None),
         pystray.MenuItem("Open recordings", on_tk(app_window._open_recording_root)),
         pystray.Menu.SEPARATOR,
         pystray.MenuItem("Quit Nebula", _quit),

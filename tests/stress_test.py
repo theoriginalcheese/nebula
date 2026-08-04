@@ -181,7 +181,6 @@ def phase_gamesync():
             self.lock = threading.Lock()
 
         def _resp(self, status, payload=None):
-            import base64, json as _j
             class R:
                 status_code = status
                 def __init__(self, p): self._p = p

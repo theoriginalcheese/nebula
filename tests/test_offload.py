@@ -13,7 +13,6 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from obsauto import offload as offload_module
 from obsauto import paths as paths_module
 from obsauto.offload import Offloader
 
@@ -71,7 +70,7 @@ def run():
     off.queue(clip, "Zenless Zone Zero")
 
     dest = os.path.join(nas, "Zenless Zone Zero", "clip1.mkv")
-    ok = wait_until(lambda: os.path.exists(dest) and not os.path.exists(clip))
+    wait_until(lambda: os.path.exists(dest) and not os.path.exists(clip))
     check("move: file arrived on NAS", os.path.exists(dest), dest)
     check("move: local deleted only after copy", not os.path.exists(clip))
     check("move: bytes identical", os.path.exists(dest) and open(dest, "rb").read() == src_bytes)
