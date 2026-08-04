@@ -48,7 +48,7 @@ Each step ends with a screenshot compared against its frame.
 | 6 | **Games** | 2d | `classifier.py` unchanged, including `merge_classifications()`. |
 | 7 | **Session ribbon, forecast, palette, profiles, replay** | 7a–7e | All pure-Python already. UI only. |
 | 8 | **Toast + mini overlay** | 2i, 2k | Second and third pywebview windows. The overlay is 296×54, always-on-top, frameless. ⚠️ **Never call `evaluate_js` from the GUI thread** — it blocks the caller on a semaphore released only by a continuation scheduled on that same thread. Use `_off_gui()`. This froze the app on the first toast and left the overlay blank; see `spike/FINDINGS.md`. |
-| 9 | **Customise mode** | 6h | 12-column grid. In CSS this is `grid-template-columns` and a drag handler, not canvas `move()` on tagged items. |
+| 9 | **Customise mode** | 6h | 12-column grid. In CSS this is `grid-template-columns` and a drag handler, not canvas `move()` on tagged items. **Audited and reworked** — `spike/AUDIT-PASS.md` is the record, including the three things the audit itself got wrong. The drag maths is arithmetic now and `tests/test_v4_drag.js` holds it there. |
 | 10 | **The motion the spec always wanted** | 6a | Aurora drift, star parallax, pointer spotlight, pointer lean, pulsing badges. Already live in the spike — this step is just deleting `BACKGROUND_MOTION_UNUSED`'s "unused". |
 | 11 | **Packaging** | — | PyInstaller onefile, as today. Verify WebView2 runtime is present (it ships with Windows 11) and that `APP_DIR` still resolves next to the exe. **Done:** `pyinstaller nebula-v4.spec` → `dist/Nebula-v4.exe`. User data lands next to the exe (`dist/config.json`, `dist/logs/`); the repo-root copies are untouched. Verified by *running* it — a missing `web/` bundle is a styled-vs-unstyled window, not a crash, so the build succeeding proves nothing. Running it is also what surfaced the dead renderer suspend (see `spike/FINDINGS.md`), worth **115 MB** hidden. |
 | 12 | **Macropad** | 2e | Still deliberately empty. There is still no HID layer. |
@@ -60,6 +60,8 @@ against a chassis that cannot yet live in the tray inherits its defects.
 
 ```bash
 python spike/gen_tokens.py                    # if design_v3.py changed
+python tools/lint_tokens.py                   # stylesheets AND scripts now
+node tests/test_v4_drag.js                    # the customise-mode drag maths
 python spike/app.py                           # run it
 python tools/shoot.py --out shots/now.png     # see it
 python tools/frames.py --only 2b              # see what it should be

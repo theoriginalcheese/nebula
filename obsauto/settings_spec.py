@@ -16,6 +16,8 @@ dashboard's own Customise mode, which owns it.
 
 import os
 
+from . import design_v3
+
 # ---- field kinds ----------------------------------------------------------
 # text          free string
 # path          free string that names a file/folder; a missing one is a
@@ -71,6 +73,10 @@ GROUPS = (
     ("storage", "Storage",
      "How long the disk lasts at your current rate, and the two things that "
      "change it. Culling moves files to the Recycle Bin - never a hard delete."),
+    ("appearance", "Appearance",
+     "Six accents over one fixed ground, plus how tight, how round and how "
+     "alive the shell is. Every one of these is an override of a token that "
+     "already exists, so nothing here can invent a colour."),
     ("legacy", "Legacy",
      "Superseded, kept so an older config still resolves."),
 )
@@ -186,6 +192,26 @@ FIELDS = (
                "deletes the original after the NAS copy is SHA-256 verified."),
 
     # ---- Legacy ----
+    # ---- Appearance ----
+    # Choice, never text: the menu IS the constraint. A free hex field would
+    # let the accent land somewhere it cannot be read against the ground, and
+    # then the ground is a support question rather than a design decision.
+    Field("appearance_accent", "Accent", "choice", "appearance",
+          choices=tuple(design_v3.ACCENTS),
+          hint="The one hue that leads. Ember still means a real "
+               "disconnection, whichever you pick."),
+    Field("appearance_density", "Density", "choice", "appearance",
+          choices=tuple(design_v3.DENSITIES),
+          hint="Padding and gaps only - the type scale does not move."),
+    Field("appearance_radius", "Corners", "choice", "appearance",
+          choices=tuple(design_v3.RADII),
+          hint="Cards stay concentric at every setting: the core radius is "
+               "derived from the shell, not scaled beside it."),
+    Field("appearance_motion", "Background motion", "choice", "appearance",
+          choices=tuple(design_v3.MOTION_MODES),
+          hint="Off pauses the aurora drift, the star wind and the pointer "
+               "spotlight. Worth having on a GPU that is also encoding."),
+
     Field("sync_folder", "Sync folder", "path", "legacy",
           restart="the classifier resolves its data path at launch",
           hint="Old folder-based sync for games.json, superseded by the GitHub "

@@ -80,27 +80,9 @@ html, body {
   animation-delay: var(--delay);
 }
 
-.blob {
-  position: absolute;
-  border-radius: 50%;
-  filter: blur(var(--blur));          /* static: rasterised once */
-  animation: drift var(--cycle) ease-in-out infinite alternate;  /* lint-allow: alternating loop - an ease-out curve visibly stutters at the turnaround */
-  animation-delay: var(--delay);
-}
-
 @keyframes drift {
   from { transform: translate3d(0, 0, 0) scale(1); }
   to   { transform: translate3d(var(--dx), var(--dy), 0) scale(var(--blob-scale-max)); }
-}
-
-/* 1b - wisps: the lanes of brighter gas. Thin, so blurred by a fraction of
-   their own height, per BACKGROUND["wisp_blur_frac"]. */
-.wisp {
-  position: absolute;
-  border-radius: 50%;
-  filter: blur(var(--blur));
-  animation: drift calc(var(--cycle) * 1.3) ease-in-out infinite alternate;  /* lint-allow: as .blob */
-  animation-delay: var(--delay);
 }
 
 /* 2/3 - star dust. Two layers share one wind vector that curves through the
@@ -119,13 +101,6 @@ html, body {
   animation-duration: var(--star-speed-far);
   animation-delay: calc(var(--star-speed-far) * -0.32);
   opacity: var(--star-far-opacity, .7);
-}
-
-/* The parallax the wind drift replaced. Kept so the two can be measured
-   against each other rather than argued about. */
-@keyframes rise {
-  from { transform: translate3d(0, 0, 0); }
-  to   { transform: translate3d(0, -50%, 0); }
 }
 
 @keyframes wind-drift {
@@ -436,9 +411,25 @@ html, body {
   transition: transform var(--pane-change-ms) var(--ease),
               opacity var(--pane-change-ms) var(--ease);
 }
-.dash-block[hidden],
-.dash-block.is-collapsed {
-  display: none;
+.dash-block[hidden] { display: none; }
+
+/* The block being dragged keeps its box and stays in the grid - it *is* the
+   drop placeholder. Removing it (display:none) meant the marker was measured
+   in a layout that still contained it while the remaining blocks had already
+   re-packed without it: two pictures, one of which the user was aiming at and
+   the other of which they got. */
+.dash-block.is-drag-src > .dash-body-wrap,
+.dash-block.is-drag-src > .dash-chrome { opacity: 0; }
+.dash-block.is-drag-src {
+  outline: 2px dashed rgb(var(--accent-rgb) / .55);
+  outline-offset: calc(var(--focus-ring-offset) * -1);
+  border-radius: var(--panel-shell-r);
+  background: rgb(var(--accent-rgb) / .08);
+}
+.dash-block.is-kbd-held {
+  outline: var(--focus-ring-w) solid var(--accent);
+  outline-offset: var(--focus-ring-offset);
+  border-radius: var(--panel-shell-r);
 }
 .dash-chrome[hidden] { display: none; }
 #pane-dashboard.is-editing .dash-chrome:not([hidden]) {
@@ -467,28 +458,47 @@ html, body {
   grid-template-columns: repeat(var(--grid-cols), 1fr);
   column-gap: var(--grid-gap);
   pointer-events: none;
-  z-index: 2;
+  /* Behind the modules. Guides drawn over content are a HUD, not a guide. */
+  z-index: 0;
 }
 .dash-grid-overlay.is-visible { display: grid; }
+/* One stroke per internal column line. Drawing both a left and a right border
+   on all twelve spans put two 1px strokes with a gap between them everywhere
+   the columns met, which read as a doubled, slightly blurry rule. */
 .dash-grid-overlay span {
   border-left: 1px solid rgb(var(--accent-rgb) / var(--grid-overlay-a));
-  border-right: 1px solid rgb(var(--accent-rgb) / var(--grid-overlay-a));
 }
+.dash-grid-overlay span:first-child { border-left: 0; }
 
 .dash-strip {
   height: var(--handle-strip-h);
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 0 10px 0 12px;
+  padding: 0 10px 0 4px;
   border-radius: var(--r-control);
   background: rgb(var(--accent-rgb) / .14);
   border: 1px solid rgb(var(--accent-rgb) / .22);
   margin-bottom: 0;
-  cursor: grab;
-  outline: none;
 }
-.dash-strip:focus-visible {
+/* The grip is the button, so the strip's role and accessible name are real
+   rather than a div[tabindex] with a focus ring that led nowhere. The span and
+   close controls are siblings - a button cannot contain buttons. */
+.dash-strip-grip {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  font-family: inherit;
+  text-align: left;
+  cursor: grab;
+}
+.dash-strip-grip:focus-visible {
   outline: var(--focus-ring-w) solid var(--accent);
   outline-offset: var(--focus-ring-offset);
 }
@@ -525,6 +535,12 @@ html, body {
   border-color: rgb(var(--accent-rgb) / .26);
   color: var(--text);
 }
+/* A rule you can see is a rule; a control that vanishes is a bug. The hero's
+   locked full width shows as a disabled segment with a title, not an empty gap. */
+.dash-span:disabled {
+  opacity: var(--disabled-a);
+  cursor: default;
+}
 .dash-strip-close {
   min-width: 30px; min-height: 30px;
   padding: 0;
@@ -540,38 +556,47 @@ html, body {
 }
 .dash-strip-close:hover { background: rgb(var(--hairline-rgb) / .08); color: var(--text); }
 
-.dash-scrim {
-  position: absolute;
-  inset: 0;
-  border-radius: inherit;
-  background: rgb(var(--ground-rgb) / calc(1 - var(--edit-content-a)));
-  opacity: 0;
-  pointer-events: none;
-  z-index: 1;
-}
-#pane-dashboard.is-editing .dash-body-wrap { position: relative; }
-#pane-dashboard.is-editing .dash-scrim {
-  opacity: 1;
-  pointer-events: auto;
-}
+/* One dimming mechanism, not two. A .dash-scrim at 45% *and* the body at
+   opacity .55 multiplied out to roughly 0.25 - far below the --edit-content-a
+   the token declares, and why edit mode read as murky rather than calm. */
 #pane-dashboard.is-editing .dash-body {
   opacity: var(--edit-content-a);
   pointer-events: none;
 }
 
-.dash-add-row {
-  flex: 0 0 auto;
+.dash-add-tile {
+  grid-column: span var(--block-span, 6);
+  min-width: 0;
+  align-self: start;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 16px;
+  border-radius: var(--panel-shell-r);
+  border: 1px dashed rgb(var(--accent-rgb) / .3);
+  background: rgb(var(--accent-rgb) / .04);
+}
+.dash-add-tile[hidden] { display: none; }
+.dash-add-tile .eyebrow { margin-bottom: 0; }
+.dash-add-chips {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
   gap: 8px;
-  max-width: min(100%, 420px);
 }
-.dash-add-row .eyebrow {
-  margin-bottom: 0;
-  margin-right: 4px;
-  white-space: nowrap;
+.dash-add-hint {
+  font-size: 10px;
+  color: var(--text-eyebrow);
+  line-height: 1.4;
 }
+
+/* Jiggle-mode rules: in customise mode the whole module is the handle, so it
+   has to say so. .dash-body is already pointer-events:none, which is what lets
+   a press anywhere on a module reach the block itself. */
+#pane-dashboard.is-editing .dash-block { cursor: grab; }
+#pane-dashboard.is-dragging .dash-block,
+#pane-dashboard.is-dragging .dash-strip-grip { cursor: grabbing; }
+.dash-add-chip { cursor: grab; }
 .dash-add-chip {
   height: var(--pill-h);
   padding: 0 12px;
@@ -597,33 +622,100 @@ html, body {
   to { opacity: 1; }
 }
 
-.dash-drop-marker {
-  position: absolute;
-  border: 2px dashed rgb(var(--accent-rgb) / .55);
-  border-radius: var(--panel-shell-r);
-  background: rgb(var(--accent-rgb) / .08);
-  pointer-events: none;
-  z-index: 4;
-  opacity: 0;
-  transition: transform var(--pane-change-ms) var(--ease),
-              opacity var(--hover-ms) var(--ease);
-}
-.dash-drop-marker:not([hidden]) {
-  opacity: 1;
-}
 #pane-dashboard.is-dragging .dash-grid-overlay.is-visible span {
   border-left-color: rgb(var(--accent-rgb) / .2);
-  border-right-color: rgb(var(--accent-rgb) / .2);
 }
+
+/* Sized once at grab time through custom properties. There is no #dash-drop-
+   marker any more: the origin slot is the placeholder, so nothing needs its
+   width and height re-assigned on every index change. */
 .dash-drag-ghost {
   position: fixed;
+  /* Required, not decorative. A fixed element with `left: auto` is laid out
+     at its STATIC position - where it would have sat in normal flow - and the
+     transform runs from there. Inside #pane-dashboard that put the ghost a
+     pane origin (~264px, ~113px here) away from the cursor for the whole
+     drag. Pinning the origin to the viewport is what makes
+     translate3d(clientX, clientY) mean what it says. */
+  left: 0;
+  top: 0;
+  width: var(--ghost-w, 0);
+  height: var(--ghost-h, 0);
   z-index: 5;
+  display: flex;
+  align-items: center;
+  padding: 0 18px;
   pointer-events: none;
   border-radius: var(--panel-shell-r);
+  border: 1px solid rgb(var(--accent-rgb) / .35);
+  background: rgb(var(--panel-rgb) / var(--chrome-a));
   box-shadow: 0 18px 40px -16px rgb(0 0 0 / .65);  /* lint-allow: drag shadow depth */
   transform: rotate(var(--drag-rotate));
   opacity: .92;
   transition: opacity var(--hover-ms) var(--ease);
+}
+/* An author `display` beats the UA stylesheet's `[hidden] { display: none }`,
+   so setting one here means the hidden attribute stops hiding it - and the
+   ghost is left parked over the hero at its last drag size. Same reason
+   .dash-add-tile and .dash-toast carry this line. */
+.dash-drag-ghost[hidden] { display: none; }
+/* Keep these two numbers in step with DASH_GHOST_COMPACT in app.js. */
+.dash-drag-ghost.is-compact {
+  width: 200px;
+  height: 44px;
+}
+.dash-ghost-label {
+  font-size: var(--t-body-size);
+  color: var(--text);
+}
+
+/* 6s, one line, and the only way back from a commit. */
+.dash-toast {
+  position: absolute;
+  left: 50%;
+  bottom: var(--content-pad);
+  z-index: 6;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  height: var(--pill-h);
+  padding: 0 8px 0 16px;
+  border-radius: var(--r-control);
+  border: 1px solid rgb(var(--hairline-rgb) / var(--shell-border-a));
+  background: rgb(var(--raised-rgb) / var(--chrome-a));
+  font-size: var(--t-row-size);
+  color: var(--text);
+  opacity: 0;
+  transform: translate3d(-50%, var(--pane-change-rise), 0);
+  transition: transform var(--pane-change-ms) var(--ease),
+              opacity var(--pane-change-ms) var(--ease);
+}
+.dash-toast[hidden] { display: none; }
+.dash-toast.is-in {
+  opacity: 1;
+  transform: translate3d(-50%, 0, 0);
+}
+.dash-toast-undo {
+  height: 28px;
+  padding: 0 12px;
+  border: 1px solid rgb(var(--accent-rgb) / .3);
+  border-radius: 7px;
+  background: rgb(var(--accent-rgb) / .14);
+  color: var(--accent-text);
+  font-family: inherit;
+  font-size: var(--t-row-small-size);
+  cursor: pointer;
+  transition: background var(--hover-ms) var(--ease);
+}
+.dash-toast-undo:hover { background: rgb(var(--accent-rgb) / .24); }
+
+.visually-hidden {
+  position: absolute;
+  width: 1px; height: 1px;
+  margin: -1px; padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
 }
 
 #pane-dashboard.is-editing .pill:not(#btn-customise),
@@ -668,7 +760,14 @@ html, body {
 
 /* --- stat tiles: 16/4/12 ---------------------------------------------- */
 
-.tiles { display: grid; grid-template-columns: repeat(4, 1fr); gap: var(--stack-gap); }
+/* auto-fit, not a hard repeat(4). At half width four 22px mono numbers shared
+   ~380px minus padding and stopped being readable at a glance, which is the
+   only job a stat tile has. */
+.tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(112px, 1fr));
+  gap: var(--stack-gap);
+}
 .tile {
   border-radius: var(--tile-shell-r);
   padding: var(--tile-pad);
@@ -714,6 +813,65 @@ html, body {
   transform-origin: center bottom;
 }
 .blk:hover { background: rgb(var(--accent-rgb) / .85); transform: scaleY(1.12); }
+.blk-label {
+  position: absolute; inset: 0;
+  display: flex; align-items: center;
+  padding: 0 8px;
+  font-size: var(--t-mono-size);
+  color: var(--text);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  pointer-events: none;
+}
+
+/* Three-hourly gridlines, so a position on the track is a time you can read
+   off rather than one you estimate against a four-label axis. */
+.ribbon-mark {
+  position: absolute; top: 0; bottom: 0; width: 1px;
+  background: rgb(var(--hairline-rgb) / .07);
+}
+/* Where "now" is. Without it the empty right-hand half of the day looks like
+   a gap in the recording rather than a part of the day that hasn't happened. */
+.ribbon-now {
+  position: absolute; top: 0; bottom: 0; width: 1px;
+  background: rgb(var(--hairline-rgb) / .5);
+}
+.ribbon-now::after {
+  content: "";
+  position: absolute; top: 0; left: -2px;
+  width: 5px; height: 5px; border-radius: 50%;
+  background: var(--text-secondary);
+}
+.ribbon-empty {
+  position: absolute; inset: 0;
+  display: flex; align-items: center; justify-content: center;
+  font-size: var(--t-mono-size); color: var(--text-tertiary);
+}
+
+/* What was recorded, biggest first. The bar answers "when"; this answers
+   "what", which used to be reachable only by hovering one span at a time. */
+.ribbon-legend {
+  display: flex; flex-wrap: wrap; gap: 6px 18px;
+  margin-top: 10px;
+}
+.ribbon-legend[hidden] { display: none; }
+.ribbon-legend-row {
+  display: inline-flex; align-items: baseline; gap: 7px;
+  font-size: var(--t-row-small-size); color: var(--text-secondary);
+}
+.ribbon-legend-row i {
+  width: 8px; height: 8px; border-radius: 2px;
+  background: rgb(var(--accent-rgb) / .55);
+  align-self: center;
+}
+.ribbon-legend-row b {
+  font-family: var(--font-mono); font-size: var(--t-mono-size);
+  font-weight: 400; color: var(--text);
+}
+.ribbon-legend-row em {
+  font-style: normal;
+  font-family: var(--font-mono); font-size: var(--t-mono-size);
+  color: var(--text-eyebrow);
+}
 /* The live block pulses - quarantined in Tk, free here. */
 .blk.live {
   background: rgb(var(--ember-rgb) / .7);
@@ -993,42 +1151,12 @@ html, body {
 }
 .listbox-option.is-active { color: var(--text); }
 
-/* --- legacy clip rows (unused) ----------------------------------------- */
+/* --- scroll shell for the clip and game lists ------------------------- */
 
 .rows { flex: 1; min-height: 0; overflow-y: auto; margin: 0 -6px; padding: 0 6px; }
 .rows::-webkit-scrollbar { width: 8px; }
 .rows::-webkit-scrollbar-thumb {
   background: rgb(var(--hairline-rgb) / .1); border-radius: 4px;
-}
-
-.row {
-  display: grid;
-  grid-template-columns: 54px 1fr auto auto;
-  align-items: center; gap: 14px;
-  height: 52px; padding: 0 10px;
-  border-radius: var(--r-control);
-  cursor: pointer;
-  border-bottom: 1px solid transparent;
-  border-image: linear-gradient(90deg, transparent 0, rgb(var(--hairline-rgb) / .08) var(--rule-fade),
-                rgb(var(--hairline-rgb) / .08) calc(100% - var(--rule-fade)), transparent 100%) 1;
-  transition: background var(--hover-ms) var(--ease);
-}
-.row:hover { background: rgb(var(--hairline-rgb) / .05); }
-.row .thumb {
-  width: 54px; height: 32px; border-radius: 5px;
-  background: rgb(var(--hairline-rgb) / .07);
-  display: grid; place-items: center;
-  font-size: 9px; color: var(--text-eyebrow);
-  overflow: hidden;
-}
-.row .name { font-size: var(--t-row-size); color: var(--text); }
-.row .sub {
-  font-family: var(--font-mono); font-size: var(--t-mono-size);
-  color: var(--text-tertiary); margin-top: 2px;
-}
-.row .len, .row .size {
-  font-family: var(--font-mono); font-size: var(--t-mono-size);
-  color: var(--text-secondary); font-variant-numeric: tabular-nums;
 }
 
 .empty {
@@ -1466,14 +1594,27 @@ html, body {
   transition: background var(--hover-ms) var(--ease);
 }
 .grow-row:hover { background: rgb(var(--hairline-rgb) / .05); }
+/* The square is the fallback, not the icon. When app_icons.py has something to
+   draw - the executable's own icon, or a monogram tile from the name - the img
+   fills it and the placeholder tint stops showing through. */
 .grow-row .ico {
   width: 22px; height: 22px; border-radius: 6px;
   background: rgb(var(--accent-rgb) / .18);
+  display: grid; place-items: center;
+  overflow: hidden;
+  flex: 0 0 auto;
+}
+.grow-row .ico:has(img) { background: transparent; }
+.grow-row .ico img {
+  width: 22px; height: 22px;
+  border-radius: 6px;
+  object-fit: contain;
 }
 .grow-row.is-app .ico {
   background: transparent;
   border: 1px solid rgb(var(--hairline-rgb) / .14);
 }
+.grow-row.is-app .ico:has(img) { border-color: transparent; }
 .grow-row .nm { font-size: var(--t-row-size); color: var(--text); }
 .grow-row .meta {
   font-family: var(--font-mono); font-size: var(--t-mono-size);
@@ -1568,6 +1709,14 @@ html, body {
   margin-left: auto;
   font-size: var(--t-mono-size); color: var(--text-eyebrow);
 }
+/* A text field's value sat hard against its own border while the dropdown
+   beside it was inset 12px by .listbox-trigger, so a row like
+   Resolution / Frame rate read as two different controls and the left edge of
+   the form zig-zagged. The padding goes on the input only - the listbox is a
+   wrapper whose trigger already carries it, and putting it on both insets the
+   dropdown text twice. */
+.field-input { padding: 0 12px; }
+
 .field-input, .listbox.field-select {
   height: var(--field-h);
   border: 1px solid rgb(var(--hairline-rgb) / .1);
@@ -1690,8 +1839,28 @@ html, body {
  * spotlight, which removes the aurora's drift *and* resets every blob to its
  * 0% keyframe - flattening the very thing the rule exists to preserve. Pause,
  * do not stop. */
+/* The appearance panel's motion setting, same mechanism as the OS preference
+   below: pause, never stop. `animation: none` resets every layer to its 0%
+   keyframe, which flattens the aurora rather than holding it still.
+
+   Subtle keeps the drift and drops the two pointer-tracked effects - they are
+   the ones that follow you around, and the ones a GPU that is also encoding
+   pays for most per pixel moved. Off holds everything where it is. */
+:root.motion-subtle,
+:root.motion-off {
+  --spotlight-a: 0;
+  --lean-window: 0px;
+  --star-speed-near: calc(var(--star-speed-far) * 2);
+}
+:root.motion-off .aurora-sheet,
+:root.motion-off .stars {
+  animation-play-state: paused;
+}
+:root.motion-subtle .spotlight,
+:root.motion-off .spotlight { opacity: 0; }
+
 @media (prefers-reduced-motion: reduce) {
-  .aurora-sheet, .blob, .wisp, .stars, .blk.live, .conn.live i {
+  .aurora-sheet, .stars, .blk.live, .conn.live i {
     animation-play-state: paused;
   }
   /* lint-allow: pausing a one-shot ENTRANCE animation would freeze the pane
@@ -1712,8 +1881,6 @@ html, body {
  * and one that eats three quarters of the integrated GPU doing so.
  */
 .asleep .aurora-sheet,
-.asleep .blob,
-.asleep .wisp,
 .asleep .stars,
 .asleep .blk.live,
 .asleep .conn.live i {

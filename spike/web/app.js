@@ -32,14 +32,21 @@ let pendingGameSelect = "";
 
 /* --- dashboard customise (6.8) ----------------------------------------- */
 
+const HERO_SPAN_LOCK = "Live session is always full width";
+const DASH_TOAST_MS = 6000;
+// Must match .dash-drag-ghost.is-compact in app.css - the drag needs the
+// number before the element has been laid out at it.
+const DASH_GHOST_COMPACT = [200, 44];
+
 let dashMeta = null;
 let dashLayout = [];
 let dashEditing = false;
 let dashLayoutBeforeEdit = null;
 let dashDrag = null;
 let dashKbdHeld = null;
-let dashKbdFocus = null;
 let dashRecentlyRemoved = null;
+let dashUndoLayout = null;
+let dashToastTimer = null;
 
 function dashBlockEl(id) {
   return document.querySelector(`.dash-block[data-block="${id}"]`);
@@ -105,10 +112,15 @@ function updateSpanControls() {
   for (const item of dashLayout) {
     const el = dashBlockEl(item.id);
     if (!el) continue;
-    el.style.setProperty("--block-span", String(item.id === "hero" ? dashMeta.cols : item.span));
+    const locked = item.id === "hero";
+    el.style.setProperty("--block-span", String(locked ? dashMeta.cols : item.span));
     el.querySelectorAll(".dash-span").forEach((btn) => {
       const s = parseInt(btn.dataset.span, 10);
-      btn.classList.toggle("is-active", item.id !== "hero" && item.span === s);
+      // The hero's full width is a rule, so show it as one. Hiding the segment
+      // made a deliberate constraint look like a missing control.
+      btn.disabled = locked;
+      btn.title = locked ? HERO_SPAN_LOCK : "";
+      btn.classList.toggle("is-active", locked ? s === dashMeta.cols : item.span === s);
     });
   }
 }
@@ -120,6 +132,9 @@ function reorderDashDom() {
     const el = dashBlockEl(item.id);
     if (el) grid.appendChild(el);
   }
+  // The Add module tile is part of the grid, so it has to stay last.
+  const tile = $("dash-add-tile");
+  if (tile) grid.appendChild(tile);
 }
 
 function syncDashBlockVisibility() {
@@ -131,50 +146,119 @@ function syncDashBlockVisibility() {
   }
 }
 
-function paintAddModuleRow() {
-  const host = $("dash-add-row");
-  if (!host) return;
+/* Add module belongs in the grid, not the titlebar row.
+
+   It used to be a wrapping chip row inside .pane-header-tools capped at 420px:
+   remove enough modules and it wrapped to a second line, grew the 62px pane
+   header and shoved the title sideways. The one piece of chrome that must
+   never move was the one this reflowed. As a half-width tile in the last grid
+   slot it grows into the space the removed modules just freed. */
+function paintAddModuleTile() {
+  const tile = $("dash-add-tile");
+  if (!tile) return;
   const placed = new Set(dashLayout.map((it) => it.id));
   const missing = (dashMeta.blocks || []).filter((id) => !placed.has(id));
   if (!missing.length || !dashEditing || currentPane !== "dashboard") {
-    host.hidden = true;
-    host.innerHTML = "";
+    tile.hidden = true;
+    tile.dataset.painted = "";
+    tile.innerHTML = "";
     return;
   }
-  host.hidden = false;
-  host.innerHTML = `<span class="eyebrow">Add module</span>` +
+  tile.hidden = false;
+  tile.style.setProperty("--block-span", String(dashMeta.spans[0] || 6));
+  // applyDashLayout runs on every index change during a drag, and rebuilding
+  // this markup each time threw away the chip the pointer was on. Repaint only
+  // when what it lists actually changes.
+  const signature = missing.join(",") + "|" + (dashRecentlyRemoved || "");
+  if (tile.dataset.painted === signature) return;
+  tile.dataset.painted = signature;
+  tile.innerHTML = `<span class="eyebrow">Add module</span>
+    <div class="dash-add-chips">` +
     missing.map((id) => {
       const recent = id === dashRecentlyRemoved;
-      const label = recent
-        ? `Restore ${dashMeta.labels[id] || id}`
-        : `+ ${dashMeta.labels[id] || id}`;
-      return `<button class="dash-add-chip no-drag${recent ? " is-recent" : ""}" type="button" data-add="${esc(id)}">${esc(label)}</button>`;
-    }).join("");
+      const label = dashMeta.labels[id] || id;
+      return `<button class="dash-add-chip no-drag${recent ? " is-recent" : ""}" type="button"
+        data-add="${esc(id)}" title="Drag into place, or click to add">${esc(label)}</button>`;
+    }).join("") + `</div>
+    <span class="dash-add-hint">Drag one into the grid to place it</span>`;
 }
 
-function measureBlockRect(id, layout) {
-  layout = layout || dashLayout;
+/* One region, one whole sentence at a time. Keyboard reordering is invisible
+   without it - the strip had a focus ring and nothing to announce. */
+function dashAnnounce(text) {
+  const live = $("dash-live");
+  if (live) live.textContent = text;
+}
+
+function dashPositionText(id) {
+  const i = dashLayout.findIndex((it) => it.id === id);
+  const label = (dashMeta.labels || {})[id] || id;
+  const span = spanOf(id);
+  const width = (dashMeta.span_labels || {})[span] || `${span} of ${dashMeta.cols}`;
+  return `${label}, position ${i + 1} of ${dashLayout.length}, ${width} width`;
+}
+
+/* Where a block lands is arithmetic, not something to discover by mutating the
+   live layout and reading it back. The old measureBlockRect() did the latter:
+   two full DOM reorders plus two forced synchronous layouts for one marker
+   position - the Tk "any change costs a composite" problem, rebuilt in a
+   browser. Measure the column width and the block heights once at drag start,
+   then answer every later question from packGridRows() and a few adds. */
+function dashGridMetrics() {
   const grid = $("dash-grid");
   const pane = $("pane-dashboard");
-  if (!grid || !pane) return null;
-  const saved = cloneDashLayout(dashLayout);
-  dashLayout = cloneDashLayout(layout);
-  reorderDashDom();
-  updateSpanControls();
-  const el = dashBlockEl(id);
-  if (!el) {
-    dashLayout = saved;
-    reorderDashDom();
-    updateSpanControls();
-    return null;
-  }
+  if (!grid || !pane || !dashMeta) return null;
+  const cols = dashMeta.cols;
+  const gr = grid.getBoundingClientRect();
   const pr = pane.getBoundingClientRect();
-  const r = el.getBoundingClientRect();
-  const rect = { left: r.left - pr.left, top: r.top - pr.top, width: r.width, height: r.height };
-  dashLayout = saved;
-  reorderDashDom();
-  updateSpanControls();
-  return rect;
+  const cs = getComputedStyle(grid);
+  const gap = parseFloat(cs.columnGap) || 0;
+  const rowGap = parseFloat(cs.rowGap) || gap;
+  const heights = new Map();
+  for (const it of dashLayout) {
+    const el = dashBlockEl(it.id);
+    if (el) heights.set(it.id, el.getBoundingClientRect().height);
+  }
+  return {
+    left: gr.left - pr.left,
+    top: gr.top - pr.top,
+    // The pane's own origin, so converting a client point to pane coordinates
+    // during the drag is subtraction rather than a getBoundingClientRect() -
+    // which, right after a DOM reorder, is a forced synchronous layout on
+    // every single pointermove.
+    paneLeft: pr.left,
+    paneTop: pr.top,
+    colW: (gr.width - gap * (cols - 1)) / cols,
+    gap,
+    rowGap,
+    heights,
+  };
+}
+
+/* An ordered layout -> the row bands and the box of every block in it, in pane
+   coordinates. Pure: it reads nothing from the DOM. */
+function dashRowBoxes(layout, m) {
+  const rows = [];
+  let y = 0;
+  for (const packed of packGridRows(layout)) {
+    let col = 0;
+    let rowH = 0;
+    const items = [];
+    for (const it of packed) {
+      const h = m.heights.get(it.id) || 0;
+      items.push({
+        id: it.id,
+        left: m.left + col * (m.colW + m.gap),
+        width: it.span * m.colW + (it.span - 1) * m.gap,
+        height: h,
+      });
+      col += it.span;
+      if (h > rowH) rowH = h;
+    }
+    rows.push({ top: m.top + y, height: rowH, items });
+    y += rowH + m.rowGap;
+  }
+  return rows;
 }
 
 function applyDashLayout(layout, opts) {
@@ -184,7 +268,7 @@ function applyDashLayout(layout, opts) {
   reorderDashDom();
   syncDashBlockVisibility();
   updateSpanControls();
-  paintAddModuleRow();
+  paintAddModuleTile();
   if (opts.animate !== false) {
     const moved = dashLayout.map((it) => it.id).filter((id) => prevIds.includes(id));
     flipBlocks(moved);
@@ -218,19 +302,81 @@ function setDashEditing(on, commit) {
   if (overlay) overlay.classList.toggle("is-visible", on);
   if (was === on) return;
   if (!on) {
-    const layout = commit === false
-      ? cloneDashLayout(dashLayoutBeforeEdit || dashLayout)
-      : cloneDashLayout(dashLayout);
-    applyDashLayout(layout, { animate: true });
-    if (commit !== false) persistDashLayout();
+    const before = cloneDashLayout(dashLayoutBeforeEdit || dashLayout);
+    const layout = commit === false ? before : cloneDashLayout(dashLayout);
     dashDragCleanup();
-    dashKbdHeld = null;
+    if (dashKbdHeld) {
+      const held = dashBlockEl(dashKbdHeld);
+      if (held) held.classList.remove("is-kbd-held");
+      dashKbdHeld = null;
+    }
     dashRecentlyRemoved = null;
+    applyDashLayout(layout, { animate: true });
+    if (commit !== false) {
+      persistDashLayout();
+      // Commit is the only visible exit, so it must be reversible. Without
+      // this an accidental change was unrecoverable and nobody explored.
+      if (!sameDashLayout(before, layout)) {
+        dashUndoLayout = before;
+        showDashToast("Layout saved", true);
+      }
+    } else {
+      dashUndoLayout = null;
+      hideDashToast();
+      dashAnnounce("Customise cancelled, layout restored");
+    }
   } else {
     buildGridOverlay();
+    hideDashToast();
     applyDashLayout(dashLayout, { animate: false });
+    dashAnnounce("Customise mode. Tab to a module, Space to pick it up, "
+      + "arrows to move it, Shift and arrows to resize, Delete to remove it.");
   }
-  paintAddModuleRow();
+  paintAddModuleTile();
+}
+
+function sameDashLayout(a, b) {
+  if (a.length !== b.length) return false;
+  return a.every((it, i) => it.id === b[i].id && it.span === b[i].span);
+}
+
+/* Reset is the other half of "the mode stops being scary": a way back to the
+   shipped arrangement that does not depend on remembering what you changed. */
+function resetDashLayout() {
+  if (!dashEditing || !dashMeta) return;
+  applyDashLayout(cloneDashLayout(dashMeta.default_grid || []));
+  dashRecentlyRemoved = null;
+  dashAnnounce("Layout reset to the default arrangement");
+}
+
+function showDashToast(text, undo) {
+  const host = $("dash-toast");
+  if (!host) return;
+  host.innerHTML = `<span>${esc(text)}</span>` +
+    (undo ? `<button class="dash-toast-undo no-drag" type="button" id="dash-undo">Undo</button>` : "");
+  host.hidden = false;
+  requestAnimationFrame(() => host.classList.add("is-in"));
+  dashAnnounce(undo ? `${text}. Undo is available for six seconds.` : text);
+  if (dashToastTimer) clearTimeout(dashToastTimer);
+  dashToastTimer = setTimeout(hideDashToast, DASH_TOAST_MS);
+}
+
+function hideDashToast() {
+  const host = $("dash-toast");
+  if (dashToastTimer) { clearTimeout(dashToastTimer); dashToastTimer = null; }
+  if (!host || host.hidden) return;
+  host.classList.remove("is-in");
+  host.hidden = true;
+  host.innerHTML = "";
+}
+
+function undoDashLayout() {
+  if (!dashUndoLayout) return;
+  applyDashLayout(cloneDashLayout(dashUndoLayout));
+  dashUndoLayout = null;
+  persistDashLayout();
+  hideDashToast();
+  dashAnnounce("Layout change undone");
 }
 
 async function persistDashLayout() {
@@ -266,8 +412,11 @@ function setBlockSpan(id, span) {
 
 function removeDashBlock(id) {
   if (!dashEditing || dashLayout.length <= 1) return;
+  if (dashKbdHeld === id) setKbdHeld(null);
   dashRecentlyRemoved = id;
   applyDashLayout(dashLayout.filter((it) => it.id !== id));
+  dashAnnounce(`${(dashMeta.labels || {})[id] || id} removed. `
+    + `Restore it from Add module.`);
 }
 
 function addDashBlock(id) {
@@ -276,38 +425,46 @@ function addDashBlock(id) {
   applyDashLayout(dashLayout.concat([{ id, span: dashMeta.cols }]));
 }
 
+/* Row band first, then column within it.
+
+   The previous test counted a block as "past" if the cursor was below its
+   vertical midpoint OR right of its horizontal one, with the second clause
+   guarded by `abs(cy - mid) < height / 2` - which is true for any cursor
+   inside the block at all, so the guard did nothing and the two clauses ORed
+   together. For two half-width modules sharing a row the resulting index was
+   not monotonic in cursor position: the placeholder flipped back and forth and
+   the drop landed a slot off. */
 function dropIndexFor(dragId, cx, cy) {
-  let index = 0;
-  for (const it of dashLayout) {
-    if (it.id === dragId) continue;
-    const el = dashBlockEl(it.id);
-    if (!el) continue;
-    const r = el.getBoundingClientRect();
-    const past = (cy > r.top + r.height / 2) ||
-      (Math.abs(cy - (r.top + r.height / 2)) < r.height / 2 && cx > r.left + r.width / 2);
-    if (past) index += 1;
+  const m = (dashDrag && dashDrag.metrics) || dashGridMetrics();
+  if (!m) return 0;
+  const x = cx - m.paneLeft;
+  const y = cy - m.paneTop;
+  // The resting blocks are the layout without the one in hand - the index is
+  // an insertion point into exactly that list.
+  const rest = dashLayout.filter((it) => it.id !== dragId);
+  const rows = dashRowBoxes(rest, m);
+  let seen = 0;
+  for (let r = 0; r < rows.length; r++) {
+    const row = rows[r];
+    const below = y >= row.top + row.height;
+    if (below && r < rows.length - 1) {
+      seen += row.items.length;
+      continue;          // in the gap, or further down: try the next band
+    }
+    if (below) return rest.length;                       // past the last row
+    let n = 0;
+    for (const it of row.items) {
+      if (x > it.left + it.width / 2) n += 1;
+    }
+    return seen + n;
   }
-  return index;
+  return rest.length;
 }
 
 function layoutWithDraggedAt(dragId, index) {
   const layout = dashLayout.filter((it) => it.id !== dragId);
   layout.splice(index, 0, { id: dragId, span: spanOf(dragId) });
   return layout;
-}
-
-function showDropMarker(dragId, index) {
-  const marker = $("dash-drop-marker");
-  if (!marker) return;
-  const rect = measureBlockRect(dragId, layoutWithDraggedAt(dragId, index));
-  if (!rect) {
-    marker.hidden = true;
-    return;
-  }
-  marker.hidden = false;
-  marker.style.transform = `translate3d(${rect.left}px, ${rect.top}px, 0)`;
-  marker.style.width = `${rect.width}px`;
-  marker.style.height = `${rect.height}px`;
 }
 
 function dashDragCleanup() {
@@ -317,12 +474,10 @@ function dashDragCleanup() {
     ghost.innerHTML = "";
     ghost.style.transform = "";
   }
-  const marker = $("dash-drop-marker");
-  if (marker) marker.hidden = true;
   setDashDragging(false);
   if (dashDrag && dashDrag.id) {
     const el = dashBlockEl(dashDrag.id);
-    if (el) el.classList.remove("is-collapsed");
+    if (el) el.classList.remove("is-drag-src");
   }
   dashDrag = null;
 }
@@ -332,26 +487,49 @@ function setDashDragging(on) {
   if (pane) pane.classList.toggle("is-dragging", on);
 }
 
-function startDashDrag(id, clientX, clientY) {
+/* A stand-in, not a copy. The old ghost deep-cloned .dash-body-wrap - clip
+   thumbnails, log rows and all - on every grab. What the user is aiming is a
+   rectangle with a name on it, so that is what follows the cursor.
+   Size goes through custom properties rather than style.width: it is one write
+   at grab time either way, but it keeps the layout-property rule honest. */
+function paintDragGhost(ghost, id, rect, compact) {
+  ghost.innerHTML =
+    `<span class="dash-ghost-label">${esc((dashMeta.labels || {})[id] || id)}</span>`;
+  // A module dragged out of Add module is full width and as tall as its
+  // content, and a 984px slab hanging off the cursor tells you nothing you
+  // cannot already see: the dashed slot in the grid is showing you the real
+  // footprint. So the thing under the finger stays the size of the chip.
+  ghost.classList.toggle("is-compact", !!compact);
+  ghost.style.setProperty("--ghost-w", compact ? "" : `${rect.width}px`);
+  ghost.style.setProperty("--ghost-h", compact ? "" : `${rect.height}px`);
+}
+
+function startDashDrag(id, clientX, clientY, opts) {
   if (!dashEditing) return;
   const el = dashBlockEl(id);
   const ghost = $("dash-drag-ghost");
   if (!el || !ghost) return;
+  opts = opts || {};
   dashDragCleanup();
   const r = el.getBoundingClientRect();
-  dashDrag = { id, offsetX: clientX - r.left, offsetY: clientY - r.top, lastIndex: null };
-  el.classList.add("is-collapsed");
+  dashDrag = {
+    id,
+    // A module picked up from the grid keeps the grip under the finger. One
+    // dragged out of Add module was never under the finger to begin with, so
+    // its compact stand-in rides centred on it instead.
+    offsetX: opts.centreGhost ? DASH_GHOST_COMPACT[0] / 2 : clientX - r.left,
+    offsetY: opts.centreGhost ? DASH_GHOST_COMPACT[1] / 2 : clientY - r.top,
+    index: dashLayout.findIndex((it) => it.id === id),
+    metrics: dashGridMetrics(),          // measured once, while nothing has moved
+  };
+  // The block keeps its box and stays in the grid - it is the placeholder.
+  // Removing it (display:none) put the aiming picture and the resulting one in
+  // two different layouts, and snapped everything below it with no animation.
+  el.classList.add("is-drag-src");
   setDashDragging(true);
-  ghost.innerHTML = "";
-  const clone = el.querySelector(".dash-body-wrap") || el;
-  const snap = clone.cloneNode(true);
-  snap.querySelectorAll(".dash-scrim").forEach((n) => n.remove());
-  ghost.appendChild(snap);
+  paintDragGhost(ghost, id, r, opts.centreGhost);
   ghost.hidden = false;
-  ghost.style.width = `${r.width}px`;
-  ghost.style.height = `${r.height}px`;
-  ghost.style.transform = `translate3d(${clientX - dashDrag.offsetX}px, ${clientY - dashDrag.offsetY}px, 0) rotate(var(--drag-rotate))`;
-  showDropMarker(id, dropIndexFor(id, clientX, clientY));
+  moveDashDrag(clientX, clientY);
 }
 
 function moveDashDrag(clientX, clientY) {
@@ -362,20 +540,73 @@ function moveDashDrag(clientX, clientY) {
       `translate3d(${clientX - dashDrag.offsetX}px, ${clientY - dashDrag.offsetY}px, 0) rotate(var(--drag-rotate))`;
   }
   const idx = dropIndexFor(dashDrag.id, clientX, clientY);
-  if (idx !== dashDrag.lastIndex) {
-    dashDrag.lastIndex = idx;
-    showDropMarker(dashDrag.id, idx);
-  }
+  if (idx === dashDrag.index) return;
+  dashDrag.index = idx;
+  // One layout, one truth: the placeholder is the real block moving, so the
+  // picture being aimed at and the one that lands are the same array.
+  applyDashLayout(layoutWithDraggedAt(dashDrag.id, idx));
 }
 
-function finishDashDrag(clientX, clientY) {
-  if (!dashDrag) return;
-  const id = dashDrag.id;
-  const index = dropIndexFor(id, clientX, clientY);
-  dashDragCleanup();
-  const layout = dashLayout.filter((it) => it.id !== id);
-  layout.splice(index, 0, { id, span: spanOf(id) });
-  applyDashLayout(layout);
+function finishDashDrag() {
+  // dashLayout already holds the block at the drop index - the placeholder was
+  // never a separate thing to reconcile.
+  if (dashDrag) dashDragCleanup();
+}
+
+/* One gesture for both "move this module" and "place this new one".
+ *
+ * Nothing happens until the pointer has actually travelled, so a tap on an Add
+ * module chip still just drops the module in at the end - the quick path - and
+ * a drag places it where you let go. Same distinction a home screen makes
+ * between tapping an app and dragging it out of the library. */
+const DASH_DRAG_SLOP = 4;
+
+function beginDashPointerDrag(e, id, opts) {
+  opts = opts || {};
+  const host = e.currentTarget === document ? e.target : e.currentTarget;
+  const startX = e.clientX;
+  const startY = e.clientY;
+  let started = false;
+  try { host.setPointerCapture(e.pointerId); } catch (_) { /* already gone */ }
+
+  const begin = () => {
+    if (opts.insert) {
+      const layout = cloneDashLayout(dashLayout);
+      layout.splice(dropIndexFor(id, startX, startY), 0,
+                    { id, span: dashMeta.cols });
+      if (dashRecentlyRemoved === id) dashRecentlyRemoved = null;
+      applyDashLayout(layout, { animate: false });
+    }
+    startDashDrag(id, startX, startY, { centreGhost: !!opts.insert });
+    started = !!dashDrag;
+  };
+
+  const move = (ev) => {
+    if (!started) {
+      if (Math.abs(ev.clientX - startX) < DASH_DRAG_SLOP &&
+          Math.abs(ev.clientY - startY) < DASH_DRAG_SLOP) return;
+      begin();
+      if (!started) return;
+    }
+    moveDashDrag(ev.clientX, ev.clientY);
+  };
+
+  const up = (ev) => {
+    host.removeEventListener("pointermove", move);
+    host.removeEventListener("pointerup", up);
+    host.removeEventListener("pointercancel", up);
+    try { host.releasePointerCapture(ev.pointerId); } catch (_) { /* fine */ }
+    if (started) {
+      finishDashDrag();
+      dashAnnounce(dashPositionText(id));
+    } else if (opts.insert) {
+      addDashBlock(id);
+    }
+  };
+
+  host.addEventListener("pointermove", move);
+  host.addEventListener("pointerup", up);
+  host.addEventListener("pointercancel", up);
 }
 
 function initDashboard(cfg) {
@@ -395,40 +626,81 @@ function moveKbdHeld(delta) {
   const [item] = layout.splice(i, 1);
   layout.splice(j, 0, item);
   applyDashLayout(layout);
-  if (dashKbdHeld) {
-    showDropMarker(dashKbdHeld, dashLayout.findIndex((x) => x.id === dashKbdHeld));
+  dashAnnounce(dashPositionText(dashKbdHeld));
+}
+
+/* Shift + arrow steps through dashMeta.spans rather than needing the mouse to
+   reach a 30px segment. */
+function stepKbdSpan(delta) {
+  if (!dashKbdHeld || dashKbdHeld === "hero") {
+    if (dashKbdHeld === "hero") dashAnnounce(HERO_SPAN_LOCK);
+    return;
   }
+  const spans = dashMeta.spans || [];
+  const i = spans.indexOf(spanOf(dashKbdHeld));
+  const j = Math.max(0, Math.min(spans.length - 1, (i < 0 ? 0 : i) + delta));
+  if (j === i) return;
+  setBlockSpan(dashKbdHeld, spans[j]);
+  dashAnnounce(dashPositionText(dashKbdHeld));
+}
+
+function setKbdHeld(id) {
+  const prev = dashKbdHeld;
+  if (prev) {
+    const el = dashBlockEl(prev);
+    if (el) el.classList.remove("is-kbd-held");
+  }
+  dashKbdHeld = id;
+  if (id) {
+    const el = dashBlockEl(id);
+    if (el) el.classList.add("is-kbd-held");
+    dashAnnounce(`Picked up ${dashPositionText(id)}`);
+  } else if (prev) {
+    dashAnnounce(`Dropped ${dashPositionText(prev)}`);
+  }
+  setDashDragging(!!id);
 }
 
 function wireDashCustomise() {
   buildGridOverlay();
 
+  // In customise mode the whole module is the handle, the way an icon is on a
+  // home screen in jiggle mode - not a 26px strip you have to find first. The
+  // strip stays as the affordance and as the keyboard target, and its grip is
+  // a real <button> so it has a role and a name without inventing one. The
+  // span and close controls are siblings of that button, not children: a
+  // button inside a button is not a thing.
   document.addEventListener("pointerdown", (e) => {
-    if (!dashEditing) return;
-    if (e.target.closest(".dash-span, .dash-strip-close, .dash-add-chip")) return;
-    const strip = e.target.closest(".dash-strip");
-    if (!strip || e.button !== 0) return;
+    if (!dashEditing || e.button !== 0) return;
+
+    const chip = e.target.closest(".dash-add-chip");
+    if (chip) {
+      e.preventDefault();
+      beginDashPointerDrag(e, chip.dataset.add, { insert: true });
+      return;
+    }
+    if (e.target.closest(".dash-span, .dash-strip-close")) return;
+    const block = e.target.closest(".dash-block");
+    if (!block || block.hidden) return;
     e.preventDefault();
-    const id = strip.dataset.strip;
-    strip.setPointerCapture(e.pointerId);
-    startDashDrag(id, e.clientX, e.clientY);
-    const move = (ev) => moveDashDrag(ev.clientX, ev.clientY);
-    const up = (ev) => {
-      strip.releasePointerCapture(ev.pointerId);
-      finishDashDrag(ev.clientX, ev.clientY);
-      strip.removeEventListener("pointermove", move);
-      strip.removeEventListener("pointerup", up);
-      strip.removeEventListener("pointercancel", up);
-    };
-    strip.addEventListener("pointermove", move);
-    strip.addEventListener("pointerup", up);
-    strip.addEventListener("pointercancel", up);
+    const grip = e.target.closest(".dash-strip-grip");
+    if (grip) grip.focus();          // preventDefault would have skipped it
+    beginDashPointerDrag(e, block.dataset.block);
   });
 
   document.addEventListener("click", (e) => {
+    if (e.target.closest("#dash-undo")) {
+      undoDashLayout();
+      return;
+    }
     if (!dashEditing) return;
+    if (e.target.closest("#btn-reset-layout")) {
+      resetDashLayout();
+      return;
+    }
     const spanBtn = e.target.closest(".dash-span");
     if (spanBtn) {
+      if (spanBtn.disabled) return;
       const block = spanBtn.closest(".dash-block");
       if (block) setBlockSpan(block.dataset.block, parseInt(spanBtn.dataset.span, 10));
       return;
@@ -439,6 +711,10 @@ function wireDashCustomise() {
       if (block) removeDashBlock(block.dataset.block);
       return;
     }
+    // Keyboard activation of a chip arrives here as a click with no pointer
+    // sequence behind it. The pointer path handles taps itself, and
+    // addDashBlock refuses a module that is already placed, so the overlap is
+    // a no-op rather than a double insert.
     const add = e.target.closest("[data-add]");
     if (add) addDashBlock(add.dataset.add);
   });
@@ -589,6 +865,9 @@ function buildBackdrop(bg, seed) {
     }
     const dot = document.createElement("div");
     dot.className = "star";
+    // lint-allow: one 1x1 anchor node built once per layer at boot, then never
+    // touched. The whole star field is its box-shadow, so there is nothing here
+    // to re-lay out - this is construction, not animation.
     dot.style.width = "1px";
     dot.style.height = "1px";
     dot.style.left = "0";
@@ -744,6 +1023,9 @@ function positionListboxPanel(host) {
   const trigger = host.querySelector(".listbox-trigger");
   if (!trigger) return;
   const rect = trigger.getBoundingClientRect();
+  // lint-allow: a fixed-position popover placed once when it opens. It is not
+  // in the document flow, so this reflows nothing behind it, and there is no
+  // transform spelling of "sit under that trigger".
   panel.style.top = `${rect.bottom + 4}px`;
   panel.style.left = `${rect.left}px`;
   panel.style.minWidth = `${rect.width}px`;
@@ -844,6 +1126,11 @@ function paletteHotkeyMatch(e) {
 function showPane(name) {
   if (!PANE_META[name]) return;
   closeListboxPanel(false);
+  // Leaving the dashboard leaves customise mode. Rebuilding #pane-actions was
+  // not enough on its own: .is-editing stayed on the dashboard, the handle
+  // strips stayed up and the draft stayed uncommitted while the user was three
+  // panes away.
+  if (dashEditing && name !== "dashboard") setDashEditing(false, true);
   currentPane = name;
   document.querySelectorAll(".rail-item").forEach((b) => {
     b.classList.toggle("is-active", b.dataset.pane === name);
@@ -872,6 +1159,9 @@ function showPane(name) {
   actions.innerHTML = "";
   if (name === "dashboard") {
     actions.innerHTML =
+      (dashEditing
+        ? `<button class="pill ghost no-drag" id="btn-reset-layout" type="button">Reset layout</button>`
+        : "") +
       `<button class="pill ghost no-drag" id="btn-customise" type="button">${dashEditing ? "Done" : "Customise"}</button>`;
     const cbtn = $("btn-customise");
     if (cbtn) cbtn.classList.toggle("is-active", dashEditing);
@@ -925,9 +1215,24 @@ function showPane(name) {
     body.classList.remove("switching");
     void body.offsetWidth;
     body.classList.add("switching");
+    // Take the entrance animation off again once it has played.
+    //
+    // `pane-in` animates transform, and an element with an animation that
+    // *can* apply a transform is a containing block for position:fixed
+    // descendants - for as long as the animation is attached, not just while
+    // it runs. Leaving .switching on the active pane forever therefore turned
+    // every fixed child of a pane into an absolute one: the customise-mode
+    // drag ghost resolved against the pane's padding box and sat a pane
+    // origin away from the cursor, which is most of why dragging a module
+    // felt wrong. Nothing in a screenshot of a resting pane can show this.
+    const done = () => body.classList.remove("switching");
+    body.addEventListener("animationend", done, { once: true });
+    // prefers-reduced-motion cancels the animation, so animationend never
+    // fires and the class would stick.
+    setTimeout(done, cssNum("--pane-change-ms", 260) + 60);
   }
   ensureSpots();
-  paintAddModuleRow();
+  paintAddModuleTile();
 }
 
 /* --- renderers --------------------------------------------------------- */
@@ -970,7 +1275,19 @@ function renderHero(d) {
   }).join("");
 }
 
+/* Customise mode is a modal editing state, and the 5s poll was rewriting the
+   innerHTML of #tiles and #activity underneath it. Two consequences, both of
+   which read as "it randomly updates": the Activity block changes height when
+   a log line arrives, so the whole grid re-packs while you are aiming at it;
+   and the block heights cached at grab time stop being true, so the
+   placeholder lands somewhere the drag maths no longer agrees with.
+   The dashboard freezes while you are arranging it and catches up on exit. */
+function dashContentFrozen() {
+  return dashEditing && currentPane === "dashboard";
+}
+
 function renderTiles(d) {
+  if (dashContentFrozen()) return;
   $("tiles").innerHTML = d.tiles.map((t) => `
     <div class="tile"><div class="tile-core">
       <span class="k">${esc(t.k)}</span>
@@ -980,6 +1297,7 @@ function renderTiles(d) {
 }
 
 function renderActivity(d) {
+  if (dashContentFrozen()) return;
   const a = d.activity;
   const filt = a.filter || "All";
   $("btn-log-filter").textContent = filt === "All" ? "All tags" : filt;
@@ -996,21 +1314,68 @@ function renderActivity(d) {
     </div>`).join("");
 }
 
+/* The ribbon used to be one flat bar with everything - which game, how long,
+   when - hidden inside a native `title`. Three things make it readable without
+   inventing a second hue: gridlines so a position is a time, a "now" marker so
+   the empty stretch reads as "not yet" rather than "nothing", and a legend
+   that says what was recorded and for how long. Hovering a span writes its
+   detail into the header, in one fixed place. */
+function ribbonSummary(r) {
+  const n = r.spans.length;
+  if (!n) return "no spans today";
+  return `${n} span${n > 1 ? "s" : ""} · ${fmtHMS(r.total_s)} recorded`;
+}
+
 function renderRibbon(d) {
   const track = $("ribbon");
   if (!track) return;
-  const spans = d.ribbon.spans;
-  $("ribbon-meta").textContent =
-    spans.length ? `${spans.length} span${spans.length > 1 ? "s" : ""} · ${fmtHMS(d.ribbon.total_s)} recorded` : "no spans today";
+  const r = d.ribbon;
+  const spans = r.spans;
+  $("ribbon-meta").textContent = ribbonSummary(r);
+
+  const marks = (r.hour_marks || [])
+    .map((p) => `<span class="ribbon-mark" style="left:${(p * 100).toFixed(4)}%"></span>`)
+    .join("");
+  const now = r.now_pct === undefined ? ""
+    : `<span class="ribbon-now" style="left:${(r.now_pct * 100).toFixed(4)}%"></span>`;
+
   if (!spans.length) {
-    track.innerHTML = `<div class="empty" style="min-height:34px;font-size:11px">nothing recorded today</div>`;
+    track.innerHTML = marks + now +
+      `<span class="ribbon-empty">nothing recorded today</span>`;
   } else {
-    track.innerHTML = spans.map((s) => `
-      <div class="blk ${s.live ? "live" : ""}"
-           style="left:${(s.start_pct * 100).toFixed(2)}%;width:${Math.max(0.4, s.width_pct * 100).toFixed(2)}%"
-           title="${esc(s.game || "unknown")} · ${fmtHMS(s.duration_s)}"></div>`).join("");
+    track.innerHTML = marks + spans.map((s, i) => {
+      const w = Math.max(0.4, s.width_pct * 100);
+      const game = s.game || "unknown";
+      // Only label a span with room for it; anything narrower would clip to
+      // an ellipsis and say less than the legend already does.
+      const label = w > 12 ? `<span class="blk-label">${esc(game)}</span>` : "";
+      return `<div class="blk ${s.live ? "live" : ""}" data-span="${i}"
+           style="left:${(s.start_pct * 100).toFixed(2)}%;width:${w.toFixed(2)}%"
+           >${label}</div>`;
+    }).join("") + now;
   }
-  $("ribbon-axis").innerHTML = d.ribbon.axis.map((a) => `<span>${esc(a)}</span>`).join("");
+  $("ribbon-axis").innerHTML = r.axis.map((a) => `<span>${esc(a)}</span>`).join("");
+
+  const legend = $("ribbon-legend");
+  if (legend) {
+    legend.innerHTML = (r.by_game || []).map((g) => `
+      <span class="ribbon-legend-row">
+        <i></i>${esc(g.game)}
+        <b>${esc(fmtHMS(g.seconds))}</b>
+        ${g.count > 1 ? `<em>${g.count} spans</em>` : ""}
+      </span>`).join("");
+    legend.hidden = !(r.by_game || []).length;
+  }
+
+  track.onpointerleave = () => { $("ribbon-meta").textContent = ribbonSummary(r); };
+  track.onpointerover = (e) => {
+    const blk = e.target.closest(".blk");
+    if (!blk) return;
+    const s = spans[parseInt(blk.dataset.span, 10)];
+    if (!s) return;
+    $("ribbon-meta").textContent =
+      `${s.game || "unknown"} · ${s.start_label}–${s.end_label} · ${fmtHMS(s.duration_s)}`;
+  };
 }
 
 function filterClips(clips) {
@@ -1128,6 +1493,15 @@ function renderConn(d) {
   $("conn-label").textContent = d.obs.label;
 }
 
+/* The row's icon: the executable's own where Nebula has seen it run, and a
+   monogram tile from the name otherwise. Both arrive as a data URL from
+   app_icons.py, so this does not have to know which it got - and the empty
+   .ico square stays as the fallback if a row somehow has neither. */
+function appIconImg(row) {
+  if (!row.icon) return "";
+  return `<img src="${esc(row.icon)}" alt="" width="22" height="22">`;
+}
+
 function renderGames(d) {
   const g = d.games;
   const pending = g.pending || [];
@@ -1165,7 +1539,7 @@ function renderGames(d) {
       return `
       <div class="grow-row ${active ? "is-selected" : ""}" data-game="${esc(row.name)}"
            data-basename="${esc(basename)}">
-        <span class="ico"></span>
+        <span class="ico">${appIconImg(row)}</span>
         <span class="nm">${esc(row.name)}</span>
         <span class="meta">${esc(row.meta)}</span>
       </div>`;
@@ -1178,7 +1552,7 @@ function renderGames(d) {
   } else {
     nlist.innerHTML = g.non_games.map((row) => `
       <div class="grow-row is-app" data-promote="${esc(row.name)}" title="Right-click to move back to Games">
-        <span class="ico"></span>
+        <span class="ico">${appIconImg(row)}</span>
         <span class="nm">${esc(row.name)}</span>
         <span class="meta">${esc(row.meta)}</span>
       </div>`).join("");
@@ -1540,8 +1914,31 @@ function renderMacropad(d) {
   $("macropad-foot").textContent = m.foot;
 }
 
+/* The appearance layer: four keys, and each one is an override of tokens that
+   tokens.css already generates. No second stylesheet, no per-theme rules - the
+   preference lands as a handful of variables on :root and everything that
+   reads them follows. The ground colours are not among them on purpose. */
+function applyAppearance(a) {
+  if (!a) return;
+  const root = document.documentElement;
+  const hue = a.accent || "violet";
+  for (const [to, from] of [
+    ["--accent", `--accent-${hue}`],
+    ["--accent-text", `--accent-${hue}-text`],
+    ["--accent-rgb", `--accent-${hue}-rgb`],
+  ]) {
+    root.style.setProperty(to, `var(${from})`);
+  }
+  root.style.setProperty("--density", String((a.densities || {})[a.density] ?? 1));
+  root.style.setProperty("--radius-scale", String((a.radii || {})[a.radius] ?? 1));
+  for (const mode of ["aurora", "subtle", "off"]) {
+    root.classList.toggle(`motion-${mode}`, a.motion === mode);
+  }
+}
+
 function renderSettings(d) {
   const s = d.settings;
+  applyAppearance(s.appearance);
   const nav = $("settings-nav");
   nav.innerHTML = s.groups.map((g) => `
     <button class="settings-nav-item no-drag ${g.key === settingsGroup ? "is-active" : ""}"
@@ -1766,6 +2163,7 @@ function fail(where, err) {
   await ready();
   try {
     bootCfg = await window.pywebview.api.config();
+    applyAppearance(bootCfg.appearance);
     buildBackdrop(bootCfg.background, bootCfg.seed);
     initDashboard(bootCfg);
     wireDashCustomise();
@@ -2091,30 +2489,28 @@ document.addEventListener("keydown", async (e) => {
       if (currentPane === "dashboard") showPane("dashboard");
       return;
     }
-    if (e.key === " " && e.target.closest(".dash-strip")) {
+    const grip = e.target.closest(".dash-strip-grip");
+    if ((e.key === " " || e.key === "Enter") && grip) {
       e.preventDefault();
-      const strip = e.target.closest(".dash-strip");
-      const id = strip.dataset.strip;
-      if (!dashKbdHeld) {
-        dashKbdHeld = id;
-        dashKbdFocus = id;
-        const el = dashBlockEl(id);
-        if (el) el.classList.add("is-collapsed");
-        setDashDragging(true);
-        showDropMarker(id, dashLayout.findIndex((x) => x.id === id));
-      } else {
-        const el = dashBlockEl(dashKbdHeld);
-        if (el) el.classList.remove("is-collapsed");
-        const marker = $("dash-drop-marker");
-        if (marker) marker.hidden = true;
-        setDashDragging(false);
-        dashKbdHeld = null;
-      }
+      setKbdHeld(dashKbdHeld ? null : grip.dataset.strip);
       return;
     }
-    if (dashKbdHeld && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
+    if (grip && (e.key === "Delete" || e.key === "Backspace")) {
       e.preventDefault();
-      moveKbdHeld(e.key === "ArrowDown" ? 1 : -1);
+      removeDashBlock(grip.dataset.strip);
+      return;
+    }
+    if (dashKbdHeld && e.shiftKey && (e.key === "ArrowLeft" || e.key === "ArrowRight")) {
+      e.preventDefault();
+      stepKbdSpan(e.key === "ArrowRight" ? 1 : -1);
+      return;
+    }
+    // The layout is an ordered list, so all four arrows step through it. Left
+    // and right read naturally for two modules sharing a row; up and down for
+    // two stacked. Both mean "one place along".
+    if (dashKbdHeld && ["ArrowDown", "ArrowRight", "ArrowUp", "ArrowLeft"].includes(e.key)) {
+      e.preventDefault();
+      moveKbdHeld(e.key === "ArrowDown" || e.key === "ArrowRight" ? 1 : -1);
       return;
     }
   }

@@ -1,6 +1,7 @@
 import json
 import os
 
+from . import design_v3
 from .paths import APP_DIR
 
 CONFIG_FILE = os.path.join(APP_DIR, "config.json")
@@ -39,6 +40,17 @@ DEFAULTS = {
     "cull_auto": False,               # ask first, always
     "disk_warn_days": 3,              # one toast at this threshold, once a day
     "disk_block_below_gb": 20,        # below this the hero refuses to start
+    # ---- appearance (the other half of customise) ----
+    # Customise mode makes the layout yours; these make the surface it sits on
+    # yours. Each is a CSS-variable override on :root over tokens that already
+    # exist - see design_v3.ACCENTS / DENSITIES / RADII / MOTION_MODES for the
+    # menus and why they are menus rather than free fields. The ground colours
+    # are deliberately not in here: six accents over one ground is a design
+    # system, a colour picker is a support burden.
+    "appearance_accent": design_v3.ACCENT_DEFAULT,
+    "appearance_density": design_v3.DENSITY_DEFAULT,
+    "appearance_radius": design_v3.RADIUS_DEFAULT,
+    "appearance_motion": design_v3.MOTION_DEFAULT,
     # ---- command palette (spec 7e) ----
     "palette_hotkey": "ctrl+k",       # blank = no global palette key
     # Legacy folder-based sync for games.json / steam_appid_cache.json (was

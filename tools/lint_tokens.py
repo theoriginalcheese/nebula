@@ -196,8 +196,106 @@ def check_reduced_motion(path):
                        "'Nothing is removed, nothing goes flat'")
 
 
+# `el.style.width = ...`, `.style.height =`, `.style.top =`, and the
+# setProperty spelling of the same thing. Not `+=` or `==`.
+JS_LAYOUT_WRITE = re.compile(
+    r"\.style\.(width|height|top|left|right|bottom)\s*=(?!=)"
+    r"|setProperty\(\s*[\"'](?:width|height|top|left|right|bottom)[\"']")
+
+JS_ALLOW = re.compile(r"//\s*lint-allow:\s*(.+)|/\*\s*lint-allow:\s*(.+)")
+
+
+def check_script(path):
+    """Rule 2 applies to JavaScript too, and this is where it was breaking.
+
+    The stylesheet check catches `transition: width`, but the drop marker never
+    animated width - it *assigned* `style.width` and `style.height` on every
+    index change, which is the same layout write wearing a costume and cost the
+    same forced reflow. A rule that only reads CSS cannot see it.
+
+    Sizing something once, at the start of a gesture, is fine; say so with a
+    lint-allow and the reason.
+    """
+    lines = open(path, encoding="utf-8").read().splitlines()
+    # One reason covers the whole run it introduces. Placing a popover or
+    # building a node is several of these in a row and they share an argument;
+    # demanding the marker per line would only teach people to write it four
+    # times without reading it.
+    run_allowed = False
+    prev_was_write = False
+    for idx, line in enumerate(lines):
+        if not JS_LAYOUT_WRITE.search(line):
+            prev_was_write = False
+            continue
+        if not prev_was_write:
+            run_allowed = any(JS_ALLOW.search(lines[j])
+                              for j in range(max(0, idx - 3), idx + 1))
+        prev_was_write = True
+        if run_allowed:
+            continue
+        report(path, idx + 1, "layout property written from JS", line.strip(),
+               "transform and opacity only - or state why with lint-allow")
+
+
+def check_hidden_attribute(sheets):
+    """An author `display` silently defeats the `hidden` attribute.
+
+    `[hidden] { display: none }` lives in the UA stylesheet, so any author rule
+    that sets `display` on the same element outranks it and the element stays
+    on screen with its attribute cheerfully set to true. This is not a subtle
+    failure - it parks a panel-coloured rectangle over the hero - but it looks
+    exactly like a layout mistake, so it costs a debugging session every time.
+
+    Rule: if markup hides an element with `hidden`, and a stylesheet gives its
+    class a `display`, that class needs its own `[hidden]` rule.
+    """
+    html_path = os.path.join(WEB, "index.html")
+    if not os.path.exists(html_path):
+        return
+    html = open(html_path, encoding="utf-8").read()
+
+    # A real `hidden` attribute: whitespace before, and space or `>` after -
+    # which is what separates it from `aria-hidden="true"` (followed by `=`)
+    # and from the class name `is-hidden` (preceded by a hyphen). Matching
+    # \bhidden\b catches all three and the rule cries wolf on working markup.
+    hidden_classes = set()
+    for tag in re.finditer(r"<\w+\s[^>]*>", html):
+        if not re.search(r"\shidden(?=[\s>])", tag.group(0)):
+            continue
+        found = re.search(r'class="([^"]+)"', tag.group(0))
+        if not found:
+            continue
+        classes = found.group(1).split()
+        # Anything already carrying .is-hidden is hidden by that class, so the
+        # attribute is belt-and-braces rather than the mechanism.
+        if "is-hidden" not in classes:
+            hidden_classes.update(classes)
+
+    for path in sheets:
+        text = open(path, encoding="utf-8").read()
+        for cls in sorted(hidden_classes):
+            block = re.search(r"^\.%s\s*\{([^}]*)\}" % re.escape(cls),
+                              text, re.M)
+            if not block:
+                continue
+            declared = re.search(r"\bdisplay\s*:\s*([\w-]+)", block.group(1))
+            # A base of `display: none` is the same answer the UA rule gives.
+            if not declared or declared.group(1) == "none":
+                continue
+            if re.search(r"\.%s\[hidden\]" % re.escape(cls), text):
+                continue
+            line = text[:block.start()].count("\n") + 1
+            report(path, line, "display defeats [hidden]", ".%s { display: ... }" % cls,
+                   "add .%s[hidden] { display: none } - the UA rule loses to this" % cls)
+
+
 def main():
     check_tokens_in_sync()
+
+    scripts = [os.path.join(WEB, f) for f in sorted(os.listdir(WEB))
+               if f.endswith(".js")]
+    for path in scripts:
+        check_script(path)
 
     sheets = [os.path.join(WEB, f) for f in sorted(os.listdir(WEB))
               if f.endswith(".css") and f != "tokens.css"]
@@ -208,10 +306,12 @@ def main():
     for path in sheets:
         check_stylesheet(path)
         check_reduced_motion(path)
+    check_hidden_attribute(sheets)
 
     if not problems:
-        print("token lint: clean (%d stylesheet%s)"
-              % (len(sheets), "" if len(sheets) == 1 else "s"))
+        print("token lint: clean (%d stylesheet%s, %d script%s)"
+              % (len(sheets), "" if len(sheets) == 1 else "s",
+                 len(scripts), "" if len(scripts) == 1 else "s"))
         return 0
 
     print("token lint: %d problem%s\n" % (len(problems), "" if len(problems) == 1 else "s"))

@@ -19,6 +19,7 @@
   --ember-rgb: 255 92 122;
   --card-core-rgb: 24 20 40;
   --panel-rgb: 18 16 31;
+  --raised-rgb: 36 30 68;
   --hairline-rgb: 245 243 255;
   --hairline-a: 0.0725;
   --shell-fill-a: 0.035;
@@ -26,45 +27,53 @@
   --core-a: 0.82;
   --chrome-a: 0.722;
 
+  /* --- appearance scales (F11) --------------------------------- */
+  /* Set by app.js from the appearance_* settings keys. Everything
+   * below that scales reads these, so a preference change is a
+   * variable write on :root and never a second stylesheet. */
+  --density: 1.0;
+  --radius-scale: 1.0;
+  --motion-scale: 1;
+
   /* --- geometry ---------------------------------------------- */
   --win-w: 1280px;
   --win-h: 808px;
   --tray-inset: 6px;
-  --r-tray: 28px;
-  --r-core: 22px;
-  --r-card: 17px;
-  --r-tile: 12px;
-  --r-control: 9px;
+  --r-tray: max(0px, calc(28px * var(--radius-scale)));
+  --r-core: max(0px, calc(22px * var(--radius-scale)));
+  --r-card: max(0px, calc(17px * var(--radius-scale)));
+  --r-tile: max(0px, calc(12px * var(--radius-scale)));
+  --r-control: max(0px, calc(9px * var(--radius-scale)));
   --titlebar-h: 46px;
   --titlebar-pad-l: 18px;
   --titlebar-pad-r: 8px;
   --rail-w: 232px;
   --rail-pad-x: 16px;
   --rail-pad-y: 12px;
-  --rail-item-h: 38px;
+  --rail-item-h: calc(38px * var(--density));
   --rail-item-gap: 3px;
   --pane-header-h: 62px;
   --pane-header-pad-x: 26px;
-  --content-pad: 26px;
-  --stack-gap: 16px;
+  --content-pad: calc(26px * var(--density));
+  --stack-gap: calc(16px * var(--density));
   --pill-h: 40px;
   --field-h: 36px;
   --sibling-gap: 8px;
   --rule-fade: 32px;
 
   /* --- card layers (6.2: shell / padding / core) -------------- */
-  --tray-shell-r: 28px;
+  --tray-shell-r: max(0px, calc(28px * var(--radius-scale)));
   --tray-pad: 6px;
-  --tray-core-r: 22px;
-  --hero-shell-r: 22px;
+  --tray-core-r: max(0px, calc(28px * var(--radius-scale) - 6px));
+  --hero-shell-r: max(0px, calc(22px * var(--radius-scale)));
   --hero-pad: 5px;
-  --hero-core-r: 17px;
-  --panel-shell-r: 18px;
+  --hero-core-r: max(0px, calc(22px * var(--radius-scale) - 5px));
+  --panel-shell-r: max(0px, calc(18px * var(--radius-scale)));
   --panel-pad: 4px;
-  --panel-core-r: 14px;
-  --tile-shell-r: 16px;
+  --panel-core-r: max(0px, calc(18px * var(--radius-scale) - 4px));
+  --tile-shell-r: max(0px, calc(16px * var(--radius-scale)));
   --tile-pad: 4px;
-  --tile-core-r: 12px;
+  --tile-core-r: max(0px, calc(16px * var(--radius-scale) - 4px));
 
   /* --- type --------------------------------------------------- */
   --font-ui: 'Segoe UI Variable', 'Segoe UI', system-ui, sans-serif;
@@ -146,6 +155,30 @@
   --spotlight-a: 0.22;
   --lean-window: 7px;
   --lean-ms: 900ms;
+
+  /* --- accent presets (F11) ------------------------------------ */
+  /* Six curated hues over one fixed ground. app.js copies the chosen
+   * pair into --accent / --accent-text / --accent-rgb; --ground,
+   * --panel and --card-core are never themable, and --ember is left
+   * alone so a real disconnection still reads as one. */
+  --accent-violet: #8B7CF6;
+  --accent-violet-text: #B9AEF9;
+  --accent-violet-rgb: 139 124 246;
+  --accent-indigo: #6E8BF7;
+  --accent-indigo-text: #A6BAFB;
+  --accent-indigo-rgb: 110 139 247;
+  --accent-cyan: #5AB6E8;
+  --accent-cyan-text: #9AD3F2;
+  --accent-cyan-rgb: 90 182 232;
+  --accent-teal: #4FC7B8;
+  --accent-teal-text: #8FE0D5;
+  --accent-teal-rgb: 79 199 184;
+  --accent-amber: #E9B872;
+  --accent-amber-text: #F2D2A4;
+  --accent-amber-rgb: 233 184 114;
+  --accent-magenta: #D471E0;
+  --accent-magenta-text: #E7A9EE;
+  --accent-magenta-rgb: 212 113 224;
 
   /* --- 7e palette ---------------------------------------------- */
   --palette-top: 14.0vh;

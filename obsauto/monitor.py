@@ -23,6 +23,7 @@ import time
 
 import psutil
 
+from . import app_icons
 from . import profiles
 from . import session_log
 
@@ -328,6 +329,11 @@ class Monitor:
 
     def _make_target(self, pid, exe_path, display_name):
         basename = os.path.basename(exe_path).lower()
+        # The one place a full path and a basename are both in hand. The Games
+        # pane needs the path to draw the app's real icon, and it deliberately
+        # cannot live in games.json - that file syncs across machines and a
+        # path does not. See obsauto/app_icons.py.
+        app_icons.remember(exe_path)
         folder = os.path.join(self.config["recording_root"], sanitize_folder_name(display_name))
         return (pid, basename, display_name, folder)
 

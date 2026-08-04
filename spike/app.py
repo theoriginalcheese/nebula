@@ -31,6 +31,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import psutil
 import webview
 
+from obsauto import app_icons
 from obsauto import design_v3 as dv
 from obsauto import forecast as forecast_mod
 from obsauto import palette as palette_mod
@@ -157,6 +158,28 @@ class Api:
         self._clips_scan_busy = False
         self._clips_scanned_at = 0.0
         self._ensure_clips_scan()
+        self._backfill_icon_paths()
+
+    def _backfill_icon_paths(self):
+        """Learn exe paths for anything already running, off the UI thread.
+
+        The Monitor records a path each time it sees a process, so the Games
+        pane fills in over time on its own. This is the head start: whatever is
+        running at launch gets its real icon on the first visit rather than
+        after its next restart.
+        """
+        def worker():
+            try:
+                snap = self._classifier.snapshot()
+                names = list(snap.get("games", {})) + list(snap.get("non_games", {}))
+                found = app_icons.backfill_from_running(names)
+                if found:
+                    self._api_log("[Icons] Resolved %d app icon%s from running processes."
+                                  % (found, "" if found == 1 else "s"))
+            except Exception as exc:
+                log_to_file("[Icons] Backfill failed: %s" % exc)
+
+        threading.Thread(target=worker, daemon=True).start()
 
     # --- chassis -------------------------------------------------------
 
@@ -180,6 +203,9 @@ class Api:
                 self.cfg.get("reconnect_interval_seconds") or 10),
             "min_clip_seconds": int(self.cfg.get("min_clip_seconds") or 10),
             "toggle_hotkey": self.cfg.get("toggle_hotkey") or "",
+            # At boot too, not only in the snapshot: the chrome should already
+            # be the user's accent and density on the first paint.
+            "appearance": self.appearance(),
             "dashboard": {
                 "blocks": list(SPIKE_DASH_BLOCKS),
                 "labels": dict(SPIKE_DASH_LABELS),
@@ -488,6 +514,29 @@ class Api:
             "config_path": CONFIG_FILE,
             "saved_at": saved,
             "obs_footer": self._settings_obs_footer(),
+            "appearance": self.appearance(),
+        }
+
+    def appearance(self):
+        """The four appearance keys, validated against design_v3's menus.
+
+        Sent with every snapshot rather than only at boot so a change applies
+        live - the whole point of putting these over tokens is that none of
+        them needs a restart. An unknown value (hand-edited config, or a hue
+        that was renamed) falls back to the default instead of leaving the
+        front end to reason about it.
+        """
+        def pick(key, menu, fallback):
+            value = self.cfg.get(key)
+            return value if value in menu else fallback
+
+        return {
+            "accent": pick("appearance_accent", dv.ACCENTS, dv.ACCENT_DEFAULT),
+            "density": pick("appearance_density", dv.DENSITIES, dv.DENSITY_DEFAULT),
+            "radius": pick("appearance_radius", dv.RADII, dv.RADIUS_DEFAULT),
+            "motion": pick("appearance_motion", dv.MOTION_MODES, dv.MOTION_DEFAULT),
+            "densities": dict(dv.DENSITIES),
+            "radii": dict(dv.RADII),
         }
 
     def _settings_obs_footer(self):
@@ -834,6 +883,7 @@ class Api:
                 "name": name,
                 "exes": e["exes"],
                 "meta": e["appid"] or e["source"] or e["exes"][0],
+                "icon": app_icons.data_url(e["exes"][0], name),
             })
 
         keep = {p.lower() for p in self.cfg.get("keep_alive_audio_processes", [])}
@@ -842,6 +892,7 @@ class Api:
             non_games.append({
                 "name": basename,
                 "meta": "keep-alive" if basename.lower() in keep else "",
+                "icon": app_icons.data_url(basename, basename),
             })
 
         pending = []
@@ -929,11 +980,33 @@ class Api:
             blocks.append({"game": s["game"],
                            "live": bool(recording and s is spans[-1]),
                            "duration_s": b - a,
+                           # Clock labels, so a span can say when it was
+                           # without the reader converting a percentage of a
+                           # day back into a time in their head.
+                           "start_label": time.strftime("%H:%M", time.localtime(a)),
+                           "end_label": time.strftime("%H:%M", time.localtime(b)),
                            "start_pct": (a - start) / day,
                            "width_pct": (b - a) / day})
         total = sum(b["duration_s"] for b in blocks)
+
+        # What was actually recorded, biggest first. The bar shows *when*; this
+        # is the part that answers *what*, which previously lived only in a
+        # native tooltip one span at a time.
+        per_game = {}
+        for b in blocks:
+            name = b["game"] or "unknown"
+            row = per_game.setdefault(name, {"game": name, "seconds": 0.0, "count": 0})
+            row["seconds"] += b["duration_s"]
+            row["count"] += 1
+        by_game = sorted(per_game.values(), key=lambda r: -r["seconds"])
+
         axis = ["00:00", "06:00", "12:00", "18:00", "24:00"]
-        return {"spans": blocks, "total_s": total, "axis": axis}
+        return {"spans": blocks, "total_s": total, "axis": axis,
+                "by_game": by_game,
+                # Where "now" is in the day, so the empty half of the track
+                # reads as "not yet" rather than "nothing happened".
+                "now_pct": max(0.0, min(1.0, (now - start) / day)),
+                "hour_marks": [h / 24.0 for h in range(3, 24, 3)]}
 
     CLIP_LIST_CAP = 400
 

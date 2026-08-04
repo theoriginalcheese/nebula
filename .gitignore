@@ -31,3 +31,9 @@ Windows Registry Editor Version 5.0.reg
 
 # Screenshot captures from tools/shoot.py (ephemeral verification output)
 shots/
+app_paths.json
+icons/
+
+# Runtime session log — written on every run, so tracking it dirtied the tree
+# on each launch and published play history to a public repo.
+sessions.jsonl

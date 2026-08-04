@@ -30,6 +30,29 @@ def rgb_triplet(hex_value):
     return " ".join(str(c) for c in dv._hex_to_rgb(hex_value))
 
 
+def scaled_radius(px, minus=0):
+    """A radius that follows ``--radius-scale``, clamped at zero.
+
+    Emitted as a calc rather than a plain px so "Sharp" and "Square" are one
+    variable write on :root instead of a second stylesheet. ``minus`` derives a
+    nested core radius from its own shell, keeping CARD_LAYERS' concentricity
+    at every scale (see the card-layers block below).
+    """
+    inner = "%dpx * var(--radius-scale)" % px
+    if minus:
+        inner += " - %dpx" % minus
+    return "max(0px, calc(%s))" % inner
+
+
+def scaled_density(px):
+    """Spacing that follows ``--density`` (0.85 / 1 / 1.15).
+
+    Padding and gaps only. Type is deliberately excluded: a density control
+    that shrinks the text is a zoom control wearing a disguise.
+    """
+    return "calc(%dpx * var(--density))" % px
+
+
 MARK_PNG = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web", "mark.png")
 
 
@@ -66,7 +89,7 @@ def main():
     # surface), but the stylesheet needs it by name.
     add("  --ground-deep: %s;" % dv.GROUND_DEEP)
     # Triplets for the layers that need real alpha.
-    for name in ("ground", "accent", "ember", "card_core", "panel"):
+    for name in ("ground", "accent", "ember", "card_core", "panel", "raised"):
         add("  --%s-rgb: %s;" % (name.replace("_", "-"), rgb_triplet(dv.COLORS[name])))
     add("  --hairline-rgb: %s;" % " ".join(str(c) for c in dv.HAIRLINE_RGB))
     add("  --hairline-a: %s;" % (sum(dv.HAIRLINE_ALPHA) / 2.0))
@@ -76,27 +99,36 @@ def main():
     add("  --chrome-a: %s;" % round(dv.CHROME_ALPHA / 255.0, 3))
 
     add("")
+    add("  /* --- appearance scales (F11) --------------------------------- */")
+    add("  /* Set by app.js from the appearance_* settings keys. Everything")
+    add("   * below that scales reads these, so a preference change is a")
+    add("   * variable write on :root and never a second stylesheet. */")
+    add("  --density: %s;" % dv.DENSITIES[dv.DENSITY_DEFAULT])
+    add("  --radius-scale: %s;" % dv.RADII[dv.RADIUS_DEFAULT])
+    add("  --motion-scale: 1;")
+
+    add("")
     add("  /* --- geometry ---------------------------------------------- */")
     add("  --win-w: %dpx;" % dv.WIDTH)
     add("  --win-h: %dpx;" % dv.HEIGHT)
     add("  --tray-inset: %dpx;" % dv.TRAY_INSET)
-    add("  --r-tray: %dpx;" % dv.RADIUS_TRAY)
-    add("  --r-core: %dpx;" % dv.RADIUS_CORE)
-    add("  --r-card: %dpx;" % dv.RADIUS_CARD)
-    add("  --r-tile: %dpx;" % dv.RADIUS_TILE)
-    add("  --r-control: %dpx;" % dv.RADIUS_CONTROL)
+    add("  --r-tray: %s;" % scaled_radius(dv.RADIUS_TRAY))
+    add("  --r-core: %s;" % scaled_radius(dv.RADIUS_CORE))
+    add("  --r-card: %s;" % scaled_radius(dv.RADIUS_CARD))
+    add("  --r-tile: %s;" % scaled_radius(dv.RADIUS_TILE))
+    add("  --r-control: %s;" % scaled_radius(dv.RADIUS_CONTROL))
     add("  --titlebar-h: %dpx;" % dv.TITLEBAR_H)
     add("  --titlebar-pad-l: %dpx;" % dv.TITLEBAR_PAD_LEFT)
     add("  --titlebar-pad-r: %dpx;" % dv.TITLEBAR_PAD_RIGHT)
     add("  --rail-w: %dpx;" % dv.RAIL_W)
     add("  --rail-pad-x: %dpx;" % dv.RAIL_PAD_X)
     add("  --rail-pad-y: %dpx;" % dv.RAIL_PAD_Y)
-    add("  --rail-item-h: %dpx;" % dv.RAIL_ITEM_H)
+    add("  --rail-item-h: %s;" % scaled_density(dv.RAIL_ITEM_H))
     add("  --rail-item-gap: %dpx;" % dv.RAIL_ITEM_GAP)
     add("  --pane-header-h: %dpx;" % dv.PANE_HEADER_H)
     add("  --pane-header-pad-x: %dpx;" % dv.PANE_HEADER_PAD_X)
-    add("  --content-pad: %dpx;" % dv.CONTENT_PAD)
-    add("  --stack-gap: %dpx;" % dv.STACK_GAP)
+    add("  --content-pad: %s;" % scaled_density(dv.CONTENT_PAD))
+    add("  --stack-gap: %s;" % scaled_density(dv.STACK_GAP))
     add("  --pill-h: %dpx;" % dv.CONTROL_PILL_H)
     add("  --field-h: %dpx;" % dv.CONTROL_FIELD_H)
     add("  --sibling-gap: %dpx;" % dv.SIBLING_GAP)
@@ -105,10 +137,13 @@ def main():
     # 6.2's nesting table. inner = outer - padding, asserted in test_design_v3.
     add("")
     add("  /* --- card layers (6.2: shell / padding / core) -------------- */")
+    # The core is derived from the *scaled* shell minus the (unscaled) padding,
+    # not scaled independently: inner = outer - padding is the nesting rule, and
+    # scaling both sides breaks it everywhere except --radius-scale: 1.
     for kind, (shell, pad, core) in dv.CARD_LAYERS.items():
-        add("  --%s-shell-r: %dpx;" % (kind, shell))
+        add("  --%s-shell-r: %s;" % (kind, scaled_radius(shell)))
         add("  --%s-pad: %dpx;" % (kind, pad))
-        add("  --%s-core-r: %dpx;" % (kind, core))
+        add("  --%s-core-r: %s;" % (kind, scaled_radius(shell, minus=pad)))
 
     add("")
     add("  /* --- type --------------------------------------------------- */")
@@ -182,6 +217,17 @@ def main():
     add("  --spotlight-a: %s;" % m["pointer_spotlight_alpha"])
     add("  --lean-window: %dpx;" % m["pointer_lean_window_px"])
     add("  --lean-ms: %dms;" % m["pointer_lean_ms"])
+
+    add("")
+    add("  /* --- accent presets (F11) ------------------------------------ */")
+    add("  /* Six curated hues over one fixed ground. app.js copies the chosen")
+    add("   * pair into --accent / --accent-text / --accent-rgb; --ground,")
+    add("   * --panel and --card-core are never themable, and --ember is left")
+    add("   * alone so a real disconnection still reads as one. */")
+    for name, (accent, accent_text) in dv.ACCENTS.items():
+        add("  --accent-%s: %s;" % (name, accent))
+        add("  --accent-%s-text: %s;" % (name, accent_text))
+        add("  --accent-%s-rgb: %s;" % (name, rgb_triplet(accent)))
 
     add("")
     add("  /* --- 7e palette ---------------------------------------------- */")

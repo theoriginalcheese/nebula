@@ -68,7 +68,6 @@
               <h1 class="pane-title" id="pane-title">Dashboard</h1>
             </div>
             <div class="pane-header-tools">
-              <div class="dash-add-row" id="dash-add-row" hidden></div>
               <div class="pane-actions" id="pane-actions">
                 <button class="pill ghost no-drag" id="btn-open-folder">Open folder</button>
                 <button class="pill ghost no-drag" id="btn-rescan">Rescan Steam</button>
@@ -85,14 +84,18 @@
               <div class="dash-grid" id="dash-grid">
                 <article class="dash-block" data-block="hero" id="block-hero">
                   <div class="dash-chrome" hidden>
-                    <div class="dash-strip" tabindex="0" data-strip="hero">
-                      <span class="dash-strip-label">Live session</span>
-                      <div class="dash-span-ctrl" hidden></div>
+                    <div class="dash-strip">
+                      <button class="dash-strip-grip no-drag" type="button" data-strip="hero"
+                              aria-label="Reorder Live session"><span class="dash-strip-label">Live session</span></button>
+                      <div class="dash-span-ctrl">
+                        <button class="dash-span no-drag" type="button" data-span="6">&#xBD;</button>
+                        <button class="dash-span no-drag" type="button" data-span="8">&#x2154;</button>
+                        <button class="dash-span no-drag" type="button" data-span="12">Full</button>
+                      </div>
                       <button class="dash-strip-close no-drag" type="button" title="Remove module" aria-label="Remove module">&#x2715;</button>
                     </div>
                   </div>
                   <div class="dash-body-wrap">
-                    <div class="dash-scrim"></div>
                     <div class="dash-body">
                     <section class="card hero" id="hero">
                       <div class="card-core hero-core">
@@ -132,8 +135,9 @@
 
                 <article class="dash-block" data-block="stats" id="block-stats">
                   <div class="dash-chrome" hidden>
-                    <div class="dash-strip" tabindex="0" data-strip="stats">
-                      <span class="dash-strip-label">Session stats</span>
+                    <div class="dash-strip">
+                      <button class="dash-strip-grip no-drag" type="button" data-strip="stats"
+                              aria-label="Reorder Session stats"><span class="dash-strip-label">Session stats</span></button>
                       <div class="dash-span-ctrl">
                         <button class="dash-span no-drag" type="button" data-span="6">½</button>
                         <button class="dash-span no-drag" type="button" data-span="8">⅔</button>
@@ -143,7 +147,6 @@
                     </div>
                   </div>
                   <div class="dash-body-wrap">
-                    <div class="dash-scrim"></div>
                     <div class="dash-body">
                       <section class="tiles" id="tiles"></section>
                     </div>
@@ -152,8 +155,9 @@
 
                 <article class="dash-block" data-block="activity" id="block-activity">
                   <div class="dash-chrome" hidden>
-                    <div class="dash-strip" tabindex="0" data-strip="activity">
-                      <span class="dash-strip-label">Activity</span>
+                    <div class="dash-strip">
+                      <button class="dash-strip-grip no-drag" type="button" data-strip="activity"
+                              aria-label="Reorder Activity"><span class="dash-strip-label">Activity</span></button>
                       <div class="dash-span-ctrl">
                         <button class="dash-span no-drag" type="button" data-span="6">½</button>
                         <button class="dash-span no-drag" type="button" data-span="8">⅔</button>
@@ -163,7 +167,6 @@
                     </div>
                   </div>
                   <div class="dash-body-wrap">
-                    <div class="dash-scrim"></div>
                     <div class="dash-body dash-body-grow">
                     <section class="card grow" id="activity-card">
                       <div class="card-core">
@@ -181,9 +184,14 @@
                     </div>
                   </div>
                 </article>
+                <!-- Add module is a grid tile, not a titlebar chip row: it
+                     grows into the space the removed modules just freed
+                     instead of reflowing the pane header. -->
+                <div class="dash-add-tile" id="dash-add-tile" hidden></div>
               </div>
-              <div class="dash-drop-marker" id="dash-drop-marker" hidden></div>
               <div class="dash-drag-ghost" id="dash-drag-ghost" hidden></div>
+              <div class="dash-toast" id="dash-toast" hidden></div>
+              <div class="visually-hidden" id="dash-live" aria-live="polite" aria-atomic="true"></div>
             </div>
 
             <!-- 2b Clips -->
@@ -196,6 +204,7 @@
                   </div>
                   <div class="ribbon" id="ribbon"></div>
                   <div class="ribbon-axis" id="ribbon-axis"></div>
+                  <div class="ribbon-legend" id="ribbon-legend" hidden></div>
                 </div>
               </section>
               <section class="card grow clips-main">

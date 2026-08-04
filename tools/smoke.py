@@ -50,6 +50,10 @@ BOOTS = [
 ]
 
 
+class LaunchRefused(Exception):
+    """The process we started exited instead of opening a window."""
+
+
 def launch(url_args=""):
     """Start the app from source and wait for its window to actually exist."""
     cmd = [sys.executable, os.path.join(ROOT, "spike", "app.py"), "--show"]
@@ -58,6 +62,18 @@ def launch(url_args=""):
     p = subprocess.Popen(cmd, cwd=ROOT)
     for _ in range(60):
         time.sleep(1.0)
+        # Check the child before checking for a window. A second instance exits
+        # on the single-instance mutex within a second, and shoot.windows()
+        # would then cheerfully find the window belonging to the instance that
+        # was ALREADY running - photographing whatever pane it happened to be
+        # on and reporting it as the surface we asked for. That is exactly the
+        # false green this tool exists to prevent: a `customise ok` line under
+        # a screenshot of the Settings pane.
+        if p.poll() is not None:
+            raise LaunchRefused(
+                "the app exited immediately (rc=%s) - almost certainly another "
+                "Nebula is running, and ?%s needs its own boot. Quit the "
+                "running one first." % (p.returncode, url_args or "-"))
         if shoot.windows("Nebula"):
             # The window exists, but WebView2 paints a frame or two later.
             time.sleep(4.0)
@@ -142,7 +158,12 @@ def main():
 
     for name, url, frame in boots:
         print("%s (own boot: ?%s)" % (name, url))
-        proc = launch(url)
+        try:
+            proc = launch(url)
+        except LaunchRefused as exc:
+            print("  %-12s FAIL  %s" % (name, exc))
+            failed += 1
+            continue
         try:
             if capture(name, frame):
                 ok += 1

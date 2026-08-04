@@ -436,6 +436,60 @@ DRAG_ROTATE_DEG = -0.6       # "Dragged copy: rotate -0.6deg · shadow lg"
 REFLOW_MS_UNUSED = 260
 
 # ---------------------------------------------------------------------------
+# Appearance (customise, part two)
+# ---------------------------------------------------------------------------
+# Customise mode made the *layout* the user's. Appearance was not customisable
+# at all - no accent, no density, no radius, no motion control - even though
+# every knob such a panel would turn already exists as a token. So: four keys,
+# each one an override of tokens that are already generated.
+#
+# Three rules this is built on, in the order they matter:
+#
+# 1. **The ground is not themable.** COLORS["ground"], ["panel"] and
+#    ["card_core"] stay exactly where they are for every accent. Six curated
+#    hues over one fixed ground is a design system; a free colour picker is a
+#    support burden and a promise that every surface still reads at every
+#    value.
+# 2. **Never a hex field.** ACCENTS is the whole menu. `spec: "No other hues
+#    exist in this app"` is widened here from one accent to a choice of six -
+#    deliberately, and only for the accent pair. `ember` is untouched, so the
+#    two-hue system (accent leads, ember means a real disconnection) survives
+#    whichever accent is picked.
+# 3. **Radius scales the shell and derives the core**, rather than scaling
+#    both. CARD_LAYERS' nesting rule is inner = outer - padding; scaling the
+#    two independently breaks concentricity at every value except 1.0.
+#
+# Each accent is (accent, accent_text): the line/dot/glow hue and the lighter
+# text-on-dark partner, matched to the same value range as the violet default
+# so contrast against the fixed ground holds without per-hue special cases.
+ACCENTS = {
+    "violet":  ("#8B7CF6", "#B9AEF9"),   # default - the v3 accent
+    "indigo":  ("#6E8BF7", "#A6BAFB"),
+    "cyan":    ("#5AB6E8", "#9AD3F2"),
+    "teal":    ("#4FC7B8", "#8FE0D5"),
+    "amber":   ("#E9B872", "#F2D2A4"),
+    "magenta": ("#D471E0", "#E7A9EE"),
+}
+ACCENT_DEFAULT = "violet"
+
+# Multiplier on CONTENT_PAD, STACK_GAP and RAIL_ITEM_H. Not on type: a density
+# control that shrinks the text is a zoom control wearing a disguise.
+DENSITIES = {"compact": 0.85, "default": 1.0, "roomy": 1.15}
+DENSITY_DEFAULT = "default"
+
+# Multiplier on every radius, shells first. 0 is a real value - "Square" means
+# square, and max(0px, ...) in the generated calc keeps derived cores from
+# going negative.
+RADII = {"soft": 1.0, "sharp": 0.6, "square": 0.0}
+RADIUS_DEFAULT = "soft"
+
+# The three motion levels the background can run at. "off" pays for itself on
+# a GPU that is also encoding, which is the same argument that retired the
+# per-frame canvas timer in v3 - handed to the user instead of decided for them.
+MOTION_MODES = ("aurora", "subtle", "off")
+MOTION_DEFAULT = "aurora"
+
+# ---------------------------------------------------------------------------
 # Session ribbon (7b) and storage forecast (7c)
 # ---------------------------------------------------------------------------
 RIBBON_H = 188                  # "Real size - 996x188 inside the Clips pane"
