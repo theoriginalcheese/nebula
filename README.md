@@ -13,6 +13,38 @@ when you go idle, and stops when you're done.
 
 ---
 
+## Install
+
+**[Download the latest Nebula.exe →](https://github.com/theoriginalcheese/nebula/releases/latest)**
+
+One file. No Python, no installer, nothing to uninstall — put it wherever you want Nebula to
+live and double-click it.
+
+1. Install [OBS Studio](https://obsproject.com/) 28 or newer if you haven't already, and turn
+   on **Tools → WebSocket Server Settings → Enable WebSocket server**. Nebula talks to OBS
+   through that; it is the one thing it cannot do for you.
+2. Run `Nebula.exe`. On a machine that has never run it before, a **four-step setup** walks
+   you through connecting to OBS (with a Test button that tells you what is wrong if it
+   can't), choosing where clips go, scanning your Steam library, and picking the toggle
+   hotkey.
+3. It minimises to the tray and starts watching. Launch a game and it records.
+
+> **Where its files live.** Nebula keeps `config.json`, `games.json`, `logs/` and its icon
+> cache **next to the exe**, not in `%APPDATA%`. Put it in its own folder — `C:\Nebula\`, say
+> — rather than loose in Downloads. Moving that folder moves your whole setup with it.
+
+Windows will warn that it's from an unknown publisher; the build isn't code-signed. *More
+info → Run anyway*, or build it yourself from source (below) if you'd rather not take that
+on trust.
+
+### Setting up a second machine
+
+Nebula's per-machine settings (recording folder, NAS path) are deliberately **not** synced —
+those differ per PC and the setup flow asks for them. What you *do* want shared is the game
+list. Fill in **Settings → Game list sync** with a private GitHub repo and token on both
+machines, and a game you classify on one is known on the other within seconds. See
+[Cross-device sync setup](#cross-device-sync-setup).
+
 ## What it does
 
 - **Detects the active game automatically.** A Steam-aware hybrid classifier scans your
@@ -87,11 +119,27 @@ It starts minimised to the tray and connects + starts monitoring on its own.
 
 ## Build a standalone .exe
 
+The shipping build is **v4**, which renders the UI as HTML in a WebView2 window rather than
+on a Tk canvas:
+
+```bash
+pyinstaller nebula-v4.spec
+```
+
+Produces a single-file, windowed `dist/Nebula-v4.exe` — no separate Python install needed to
+run it. WebView2 ships with Windows 11 and with any recent Edge, so there is nothing else to
+install.
+
+The older Tk build is still buildable while v4 finishes settling:
+
 ```bash
 pyinstaller nebula.spec
 ```
 
-Produces a single-file, windowed `dist/Nebula.exe` — no separate Python install needed to run it.
+⚠️ **The frozen build and a source run do not share data.** `APP_DIR` resolves next to the
+executable, so `dist/Nebula-v4.exe` reads `dist/config.json` while `python spike/app.py`
+reads the repo root's. A setting changed in one is invisible to the other, and when you're
+checking whether a build works it's `dist/logs/obsauto.log` you want, not `logs/`.
 
 ## Configuration
 
