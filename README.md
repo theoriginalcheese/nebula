@@ -175,6 +175,20 @@ powershell -ExecutionPolicy Bypass -File scripts\setup-obs-elevated-task.ps1
 After that, Nebula's `ensure_obs_running` prefers `schtasks /run /tn NebulaLaunchOBS` and
 falls back to `obs_path` only if the task is missing.
 
+### Keeping up to date
+
+- **Packaged `Nebula.exe`:** Settings → Updates → **Check for updates**. That hits GitHub
+  Releases, and on a frozen build can download a newer exe beside the current one (swap after
+  quit). Or grab [releases/latest](https://github.com/theoriginalcheese/nebula/releases/latest)
+  by hand.
+- **Source clone (`python main.py`):** on the laptop or desktop,
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\update-from-github.ps1
+```
+
+  That `git fetch` + `git pull --ff-only` from `origin`. Restart Nebula afterwards.
+
 ### Cross-device sync setup
 
 - **Game list (GitHub):** create a private repo, set `github_gamedata_repo` and a `github_token`

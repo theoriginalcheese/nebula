@@ -187,6 +187,7 @@ class NebulaHost:
             on_notify=self._on_notify,
             on_connection_change=self._on_connection_change,
             offloader=offloader,
+            on_record_prompt=self._on_record_prompt,
         )
 
     # --- marshalling ----------------------------------------------------
@@ -797,10 +798,14 @@ class NebulaHost:
         if self._transport_busy:
             return
         self._transport_busy = True
+        prior = self.monitor._recording_target if self.monitor else None
+        hold_basename = prior[1] if prior else None
+        hold_name = prior[2] if prior else None
 
         def worker():
-            result = {"action": action, "stopped": False,
-                      "outcome": None, "problem": None}
+            result = {"action": action, "stopped": False, "event": None,
+                      "outcome": None, "problem": None,
+                      "hold_basename": hold_basename, "hold_name": hold_name}
             try:
                 status = self.obs.get_record_status()
                 recording = bool(status.get("outputActive"))
@@ -808,18 +813,24 @@ class NebulaHost:
                 if action == "record":
                     if recording:
                         self.obs.stop_record()
-                        result.update(stopped=True, outcome="Recording stopped.")
+                        result.update(stopped=True, event="stop",
+                                      outcome="Recording stopped.")
+                    elif (self.monitor and self.monitor._hold_off
+                          and self.monitor._hold_off_pending is not None):
+                        self.monitor.accept_record_prompt()
+                        result.update(event="start",
+                                      outcome="Recording started.")
                     else:
                         self.obs.start_record()
-                        result.update(outcome="Recording started.")
+                        result.update(event="start", outcome="Recording started.")
                 elif not recording:
                     result["outcome"] = "Nothing is recording - nothing to pause."
                 elif paused:
                     self.obs.resume_record()
-                    result.update(outcome="Recording resumed.")
+                    result.update(event="resume", outcome="Recording resumed.")
                 else:
                     self.obs.pause_record()
-                    result.update(outcome="Recording paused.")
+                    result.update(event="pause", outcome="Recording paused.")
             except OBSError as exc:
                 result["problem"] = str(exc)
             self.call_soon(lambda r=result: self._transport_done(r))
@@ -835,7 +846,45 @@ class NebulaHost:
             self._log("[Manual] %s" % result["outcome"])
             if result.get("stopped") and self.monitor:
                 self.monitor._recording_target = None
+                self.monitor.note_manual_stop(
+                    result.get("hold_basename"), result.get("hold_name"))
+                try:
+                    name = result.get("hold_name") or "Recording"
+                    self._windows.toast_replace("stop", name)
+                except Exception as exc:
+                    self._log("[Toast] %s" % exc)
+            elif result.get("event") == "start" and self.monitor:
+                self.monitor.clear_hold_off()
         self._poll_now()
+
+    def _on_record_prompt(self, basename, display_name, reason, target):
+        b, n, r, t = basename, display_name, reason, target
+
+        def show():
+            if reason == "same":
+                title = "Record again?"
+                sub = n or b or "this game"
+            else:
+                title = "New game detected"
+                sub = "Record %s?" % (n or b)
+            self._log("[Monitor] Prompt: %s (%s)" % (sub, r))
+            # v4 toast is informational today; Accept is the hero Record button
+            # (which clears hold-off via _transport_done). Dismiss = Not now
+            # via a short-lived prompt toast that also offers Not now by
+            # timing out into a skip.
+            try:
+                self._windows.toast_replace(
+                    "prompt", sub, {"title": title})
+            except Exception as exc:
+                self._log("[Toast] %s" % exc)
+            # Auto-skip if they ignore it for the prompt life — keeps the
+            # monitor from re-firing every debounce. They can still hit Record.
+            def skip_later():
+                if self.monitor and self.monitor._hold_off_prompted == b:
+                    self.monitor.dismiss_record_prompt(b)
+            threading.Timer(30.0, lambda: self.call_soon(skip_later)).start()
+
+        self.call_soon(show)
 
     def _stop(self):
         self._abort_connect = True

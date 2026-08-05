@@ -412,7 +412,10 @@ TOAST_OUT_MS = 200
 TOAST_TINTS = {
     "start": EMBER, "stop": EMBER, "error": EMBER,
     "pause": ACCENT, "resume": ACCENT,
+    "prompt": ACCENT,
 }
+TOAST_PROMPT_LIFE_MS = 30000
+TOAST_PROMPT_H = 118
 
 # ---------------------------------------------------------------------------
 # Customise mode (6.8)

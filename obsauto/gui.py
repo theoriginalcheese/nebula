@@ -506,7 +506,7 @@ class AppWindow:
         self.monitor = Monitor(
             self.obs, classifier, config, on_log=self._log, on_state=self._on_state,
             on_notify=self._show_notification, on_connection_change=self._on_connection_change,
-            offloader=offloader,
+            offloader=offloader, on_record_prompt=self._on_record_prompt,
         )
         # Instant replay (7a). OBS holds the video; this arms the buffer and
         # files what comes out. The event hook is how the saved path arrives -
@@ -3227,6 +3227,8 @@ class AppWindow:
             self._settings_field(field)
         if self._settings_group == "obs":
             self._build_settings_obs_footer()
+        elif self._settings_group == "updates":
+            self._build_settings_updates_footer()
         elif self._settings_group == "offload" and not thumbs.available():
             # 7f: "If ffmpeg isn't on PATH, show one dismissible row in
             # Settings → Storage offering the download - not a modal, not a
@@ -3298,6 +3300,152 @@ class AppWindow:
         self._focus_ring(test)
         test.pack(side="right", padx=8, pady=8)
         self._refresh_settings_obs_footer()
+
+    def _build_settings_updates_footer(self):
+        """Check GitHub Releases (exe) or point at the git-pull script (source)."""
+        from . import __version__
+        from . import updater as updater_mod
+
+        foot = ctk.CTkFrame(self._settings_host, fg_color=dv.over(ACCENT, 0.07, dv.CARD_CORE),
+                            corner_radius=dv.RADIUS_TILE, border_width=1,
+                            border_color=dv.over(ACCENT, 0.18, dv.CARD_CORE))
+        foot.pack(fill="x", padx=12, pady=(16, 12))
+        if updater_mod.is_frozen():
+            blurb = (f"Running Nebula {__version__} (packaged). Check GitHub "
+                     "Releases and download a newer exe beside this one.")
+        else:
+            blurb = (f"Running Nebula {__version__} from source. On a laptop, "
+                     "pull the latest with scripts\\update-from-github.ps1 — "
+                     "or tap Check below to see if a release is newer.")
+        self._settings_updates_label = ctk.CTkLabel(
+            foot, text=blurb, anchor="w", justify="left", wraplength=400,
+            text_color=ACCENT_LIGHT, font=ctk.CTkFont(size=12))
+        self._settings_updates_label.pack(side="left", padx=14, pady=10)
+        btn = ctk.CTkButton(
+            foot, text="Check for updates", command=self._check_for_updates,
+            fg_color="transparent", hover_color=SURFACE_HOVER, text_color=TEXT,
+            border_width=1, border_color=dv.over(ACCENT, 0.42, dv.CARD_CORE),
+            corner_radius=999, font=ctk.CTkFont(size=12), width=140, height=34)
+        self._focus_ring(btn)
+        btn.pack(side="right", padx=8, pady=8)
+
+    def _check_for_updates(self):
+        """Worker → toast. Never blocks the Tk thread on GitHub."""
+        if getattr(self, "_update_check_busy", False):
+            return
+        self._update_check_busy = True
+        label = getattr(self, "_settings_updates_label", None)
+        if label is not None:
+            try:
+                label.configure(text="Checking GitHub…")
+            except Exception:
+                pass
+
+        def worker():
+            from . import updater as updater_mod
+            outcome = {"ok": False, "status": None, "message": "", "release": None}
+            try:
+                result = updater_mod.check_for_update(
+                    token=self.config.get("github_token") or None)
+                outcome["ok"] = True
+                outcome["status"] = result["status"]
+                outcome["release"] = result["release"]
+                rel = result["release"]
+                tag = rel.get("tag") or rel.get("version") or "?"
+                if result["status"] == "current":
+                    outcome["message"] = f"You're on the latest ({result['local']})."
+                elif result["status"] == "no_asset":
+                    outcome["message"] = (
+                        f"{tag} is on GitHub but has no .exe asset yet — "
+                        "open the release page or pull source.")
+                else:
+                    outcome["message"] = (
+                        f"{tag} is available (you have {result['local']}).")
+            except Exception as exc:
+                outcome["message"] = f"Update check failed: {exc}"
+            self.root.after(0, lambda o=outcome: self._check_for_updates_done(o))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _check_for_updates_done(self, outcome):
+        self._update_check_busy = False
+        label = getattr(self, "_settings_updates_label", None)
+        if label is not None:
+            try:
+                label.configure(text=outcome["message"])
+            except Exception:
+                pass
+        status = outcome.get("status")
+        if not outcome["ok"]:
+            self._toast_replace("error", outcome["message"])
+            return
+        if status == "current":
+            self._toast_replace("pause", outcome["message"])
+            return
+        if status == "no_asset":
+            self._toast_replace("pause", outcome["message"])
+            return
+
+        # Update available — offer download for frozen builds.
+        from . import updater as updater_mod
+        release = outcome["release"] or {}
+        tag = release.get("tag") or "update"
+
+        def open_page():
+            import webbrowser
+            url = release.get("html_url") or "https://github.com/theoriginalcheese/nebula/releases/latest"
+            webbrowser.open(url)
+            self._toast_dismiss_now()
+
+        actions = [("Open release", open_page)]
+        if updater_mod.is_frozen() and release.get("asset_url"):
+            def download():
+                self._toast_dismiss_now()
+                self._download_update(release)
+
+            actions.insert(0, ("Download", download))
+        self._toast_replace(
+            "prompt", tag, {"title": "Update available"},
+            actions=actions,
+        )
+
+    def _download_update(self, release):
+        if getattr(self, "_update_download_busy", False):
+            return
+        self._update_download_busy = True
+        self._log(f"[Update] Downloading {release.get('asset_name')}…")
+        self._toast_replace("pause", "Downloading update…")
+
+        def worker():
+            from . import updater as updater_mod
+            result = {"ok": False, "path": None, "message": ""}
+            try:
+                dest = updater_mod.default_download_path(release.get("asset_name"))
+                path = updater_mod.download_update(
+                    release["asset_url"], dest,
+                    token=self.config.get("github_token") or None)
+                result.update(ok=True, path=path,
+                              message=f"Saved to {path}. Quit Nebula and swap the exe.")
+            except Exception as exc:
+                result["message"] = f"Download failed: {exc}"
+            self.root.after(0, lambda r=result: self._download_update_done(r))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _download_update_done(self, result):
+        self._update_download_busy = False
+        if result["ok"]:
+            self._log(f"[Update] {result['message']}")
+            self._toast_replace("start", result["message"])
+            label = getattr(self, "_settings_updates_label", None)
+            if label is not None:
+                try:
+                    label.configure(text=result["message"])
+                except Exception:
+                    pass
+        else:
+            self._log(f"[Update] {result['message']}")
+            self._toast_replace("error", result["message"])
 
     def _refresh_settings_obs_footer(self):
         label = getattr(self, "_settings_obs_footer_label", None)
@@ -5250,10 +5398,9 @@ class AppWindow:
     # round-trip; OBSClient serialises them against the poll internally.
 
     def _toggle_record(self):
-        """Manual override, independent of auto-detection. Note: if monitoring
-        is active and a game is still running, the auto-detector may start a
-        new recording again within a couple of seconds after a manual stop,
-        since keeping it recording is its whole job."""
+        """Manual override, independent of auto-detection. A stop arms hold-off
+        so the monitor does not bounce straight back into StartRecord; a start
+        clears that hold-off."""
         self._transport("record")
 
     def _toggle_pause(self):
@@ -5273,10 +5420,15 @@ class AppWindow:
                 self._toast_replace("error", reason)
                 return
         self._transport_busy = True
+        # Capture hold-off context on the Tk thread before the worker runs.
+        prior_target = self.monitor._recording_target
+        hold_basename = prior_target[1] if prior_target else None
+        hold_name = prior_target[2] if prior_target else None
 
         def worker():
             result = {"action": action, "stopped": False,
-                      "event": None, "outcome": None, "problem": None}
+                      "event": None, "outcome": None, "problem": None,
+                      "hold_basename": hold_basename, "hold_name": hold_name}
             try:
                 status = self.obs.get_record_status()
                 recording = bool(status.get("outputActive"))
@@ -5286,6 +5438,13 @@ class AppWindow:
                         self.obs.stop_record()
                         result.update(stopped=True, event="stop",
                                       outcome="Recording stopped.")
+                    elif (self.monitor._hold_off
+                          and self.monitor._hold_off_pending is not None):
+                        # Accept the re-record toast without a free StartRecord
+                        # into whatever directory OBS currently has set.
+                        self.monitor.accept_record_prompt()
+                        result.update(event="start",
+                                      outcome="Recording started.")
                     else:
                         self.obs.start_record()
                         result.update(event="start", outcome="Recording started.")
@@ -5304,7 +5463,7 @@ class AppWindow:
                 # except block exits, so a lambda that captured it would die
                 # with NameError inside the Tk callback (CLAUDE.md).
                 result["problem"] = str(exc)
-            self.root.after(0, lambda: self._transport_done(result))
+            self.root.after(0, lambda r=result: self._transport_done(r))
 
         threading.Thread(target=worker, daemon=True).start()
 
@@ -5318,13 +5477,67 @@ class AppWindow:
             self._log(f"[Manual] {result['outcome']}")
             if result["stopped"]:
                 self.monitor._recording_target = None
+                self.monitor.note_manual_stop(
+                    result.get("hold_basename"), result.get("hold_name"))
                 # "Refresh: on launch, on rec_stop, every 15 min."
                 self._refresh_forecast()
                 self._refresh_ribbon()
                 self._refresh_stat_tiles()
+                name = result.get("hold_name") or "Recording"
+                self._toast_replace("stop", name)
+            elif result.get("event") == "start":
+                # Manual Record clears hold-off so auto-monitor can take over.
+                self.monitor.clear_hold_off()
         # Don't make the card wait up to a second to catch up with a button the
         # user just pressed - that lag is what made double-presses possible.
         self._poll_now()
+
+    def _on_record_prompt(self, basename, display_name, reason, target):
+        """Monitor thread → ask whether to start recording under hold-off."""
+        # Bind locals before the closure (deferred-callback trap).
+        b, n, r, t = basename, display_name, reason, target
+        self._ui(lambda: self._show_record_prompt(b, n, r, t))
+
+    def _show_record_prompt(self, basename, display_name, reason, target):
+        if reason == "same":
+            title = "Record again?"
+            sub = display_name or basename or "this game"
+        else:
+            title = "New game detected"
+            sub = f"Record {display_name or basename}?"
+        # Keep references the button handlers need; accept reads pending from Monitor.
+        def accept():
+            toast = getattr(self, "_toast", None)
+            if toast is not None:
+                toast["on_timeout"] = None
+            self.monitor.accept_record_prompt()
+            self._toast_dismiss_now()
+            self._poll_now()
+
+        def dismiss():
+            toast = getattr(self, "_toast", None)
+            if toast is not None:
+                toast["on_timeout"] = None
+            self.monitor.dismiss_record_prompt(basename)
+            self._toast_dismiss_now()
+
+        self._toast_replace(
+            "prompt", sub, {"title": title},
+            actions=[("Record", accept), ("Not now", dismiss)],
+            on_timeout=dismiss,
+        )
+
+    def _toast_dismiss_now(self):
+        toast = getattr(self, "_toast", None)
+        if not toast:
+            return
+        try:
+            if toast["popup"].winfo_exists():
+                toast["dismissing"] = True
+                toast["remaining"] = 0
+                self._toast_fade_out(toast)
+        except Exception:
+            self._toast = None
 
     def _flash_status_card(self):
         """A brief brighter-border pulse on the status card glass panel
@@ -5367,6 +5580,7 @@ class AppWindow:
     # surface, so a fade or a 16px rise never composites the dashboard.
 
     TOAST_W, TOAST_H = 336, 88          # base design units
+    TOAST_PROMPT_W, TOAST_PROMPT_H = 360, 118
 
     def _toast_workarea(self):
         """The work area of the screen the pointer is on.
@@ -5409,13 +5623,17 @@ class AppWindow:
         """Everything the toast renders, resolved from an event name."""
         tint = dv.TOAST_TINTS.get(event, ACCENT)
         role = {"start": "start", "stop": "square", "pause": "pause",
-                "resume": "resume", "error": "disconnected"}.get(event, "start")
+                "resume": "resume", "error": "disconnected",
+                "prompt": "start"}.get(event, "start")
         glyph = ICON_GLYPHS[dv.ICONS[role]] if role in dv.ICONS else ICON_GLYPHS[role]
         title = {
             "start": "Recording started", "stop": "Recording stopped",
             "pause": "Recording paused", "resume": "Recording resumed",
             "error": "Something went wrong",
+            "prompt": "Record again?",
         }.get(event, str(event))
+        if details and details.get("title"):
+            title = details["title"]
 
         parts = []
         if details:
@@ -5427,24 +5645,45 @@ class AppWindow:
             if size is not None:
                 parts.append(_format_bytes(size))
         return {"tint": tint, "glyph": glyph, "title": title,
-                "sub": display_name, "detail": "  ·  ".join(parts)}
+                "sub": display_name, "detail": "  ·  ".join(parts),
+                "event": event}
 
     def _show_notification(self, event, display_name, details=None):
         """Entry point - called from the monitor's thread, so it marshals."""
         self._ui(lambda: self._toast_replace(event, display_name, details))
 
-    def _toast_replace(self, event, display_name, details=None):
+    def _toast_replace(self, event, display_name, details=None, actions=None,
+                       on_timeout=None):
         """The replace path. Builds the single toast on first use, then only
-        ever updates it."""
+        ever updates it. `actions` is an optional list of (label, callback)
+        for confirmation toasts (hold-off re-record prompts)."""
         content = self._toast_content(event, display_name, details)
+        content["actions"] = list(actions or [])
+        want_prompt = bool(content["actions"])
         toast = self._toast
-        if toast is None or not toast["popup"].winfo_exists():
-            toast = self._toast = self._toast_build()
+        need_rebuild = (
+            toast is None
+            or not toast["popup"].winfo_exists()
+            or bool(toast.get("actions")) != want_prompt
+        )
+        if need_rebuild:
+            if toast is not None:
+                try:
+                    toast["popup"].destroy()
+                except Exception:
+                    pass
+                self._toast = None
+            toast = self._toast = self._toast_build(prompt=want_prompt)
         self._toast_apply(toast, content)
 
         # Reset the life regardless of where it was - "Replacing an event
-        # resets the line to full."
-        toast["remaining"] = dv.TOAST_LIFE_MS
+        # resets the line to full." Prompt toasts linger longer so the user
+        # can actually tap a button.
+        life = dv.TOAST_PROMPT_LIFE_MS if want_prompt else dv.TOAST_LIFE_MS
+        toast["life"] = life
+        toast["remaining"] = life
+        toast["actions"] = content["actions"]
+        toast["on_timeout"] = on_timeout
         if toast["dismissing"]:
             # It was already fading out; bring it straight back to full rather
             # than letting the old fade finish and destroy the window.
@@ -5454,8 +5693,9 @@ class AppWindow:
             toast["ticking"] = True
             self._toast_tick(toast)
 
-    def _toast_build(self):
-        w, h = self.TOAST_W, self.TOAST_H
+    def _toast_build(self, prompt=False):
+        w = self.TOAST_PROMPT_W if prompt else self.TOAST_W
+        h = self.TOAST_PROMPT_H if prompt else self.TOAST_H
         sw, sh = self._S(w), self._S(h)
         popup = ctk.CTkToplevel(self.root)
         popup.overrideredirect(True)
@@ -5497,6 +5737,21 @@ class AppWindow:
         detail = canvas.create_text(60, 66, anchor="w", text="", fill=FAINT,
                                     font=dv.font(11, mono=True), state="hidden")
 
+        # Action chips (prompt toasts only). Hit-testing via tagged rects.
+        btn_items = []
+        if prompt:
+            by = h - 44
+            specs = [("Record", 16, 108), ("Not now", 132, 108)]
+            for i, (label, bx, bw) in enumerate(specs):
+                rect = canvas.create_rectangle(
+                    bx, by, bx + bw, by + 28,
+                    fill=ACCENT_TINT if i == 0 else EDGE, outline="",
+                    tags=(f"toast_btn_{i}",))
+                text = canvas.create_text(
+                    bx + bw / 2, by + 14, text=label, fill=TEXT if i == 0 else MUTED,
+                    font=dv.font(12, 500), tags=(f"toast_btn_{i}",))
+                btn_items.append({"rect": rect, "text": text, "tag": f"toast_btn_{i}"})
+
         # The 2px drain. The mockup animates it scaleX(1)->scaleX(0) with the
         # document's one and only `transform-origin: left`, so the bar is
         # anchored at the left and its right edge travels leftward.
@@ -5512,8 +5767,10 @@ class AppWindow:
             "popup": popup, "canvas": canvas, "chip": chip, "icon": icon,
             "title": title, "sub": sub, "detail": detail, "drain": drain,
             "track": (track_x0, track_x1, bar_y), "geom": (sw, sh, x, y_end),
-            "remaining": dv.TOAST_LIFE_MS, "hovering": False,
-            "ticking": False, "dismissing": False, "has_detail": False,
+            "remaining": dv.TOAST_LIFE_MS, "life": dv.TOAST_LIFE_MS,
+            "hovering": False, "ticking": False, "dismissing": False,
+            "has_detail": False, "actions": [], "buttons": btn_items,
+            "prompt": prompt, "on_timeout": None,
         }
 
         def on_enter(_e):
@@ -5525,7 +5782,25 @@ class AppWindow:
             toast["hovering"] = False
             canvas.itemconfigure(toast["detail"], state="hidden")
 
-        def on_click(_e):
+        def on_click(e):
+            if toast.get("actions"):
+                # Button hit-test in canvas coords (design units via ScaledCanvas).
+                try:
+                    items = canvas.find_overlapping(e.x, e.y, e.x, e.y)
+                except Exception:
+                    items = ()
+                for i, btn in enumerate(toast["buttons"]):
+                    tags = set()
+                    for item in items:
+                        tags.update(canvas.gettags(item))
+                    if btn["tag"] in tags and i < len(toast["actions"]):
+                        _label, callback = toast["actions"][i]
+                        try:
+                            callback()
+                        except Exception as exc:
+                            self._log(f"[Toast] Action failed: {exc}")
+                        return
+                return  # body click does nothing on prompt toasts
             self.show()                        # "Click anywhere focuses the window"
 
         canvas.bind("<Enter>", on_enter)
@@ -5544,6 +5819,13 @@ class AppWindow:
         canvas.itemconfigure(toast["detail"], text=content["detail"], state="hidden")
         canvas.itemconfigure(toast["drain"], fill=content["tint"])
         toast["has_detail"] = bool(content["detail"])
+        actions = content.get("actions") or []
+        toast["actions"] = actions
+        for i, btn in enumerate(toast.get("buttons") or []):
+            label = actions[i][0] if i < len(actions) else ""
+            state = "normal" if i < len(actions) else "hidden"
+            canvas.itemconfigure(btn["text"], text=label, state=state)
+            canvas.itemconfigure(btn["rect"], state=state)
         self._toast_set_drain(toast, 1.0)
         # Re-assert topmost: another window may have been raised over it while
         # the toast sat idle between events.
@@ -5600,7 +5882,8 @@ class AppWindow:
             toast["dismissing"] = True
             self._toast_fade_out(toast)
             return
-        self._toast_set_drain(toast, toast["remaining"] / float(dv.TOAST_LIFE_MS))
+        life = float(toast.get("life") or dv.TOAST_LIFE_MS)
+        self._toast_set_drain(toast, toast["remaining"] / life)
         toast["popup"].after(50, lambda: self._toast_tick(toast))
 
     def _toast_fade_out(self, toast):
@@ -5621,12 +5904,19 @@ class AppWindow:
             self._toast_alpha(toast, 1.0 - t)
             if t >= 1.0:
                 toast["ticking"] = False
+                timed_out = toast.get("on_timeout")
+                toast["on_timeout"] = None
                 if self._toast is toast:
                     self._toast = None
                 try:
                     toast["popup"].destroy()
                 except Exception:
                     pass
+                if timed_out:
+                    try:
+                        timed_out()
+                    except Exception as exc:
+                        self._log(f"[Toast] Timeout handler failed: {exc}")
                 return
             toast["popup"].after(16, lambda: step(i + 1))
 

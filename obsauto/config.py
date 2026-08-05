@@ -94,6 +94,10 @@ DEFAULTS = {
     # is also the apostrophe key, so binding by name would suppress apostrophes
     # system-wide. 41 = the backtick/grave key left of "1". None = bind by name.
     "toggle_hotkey_scancode": 41,
+    # After a manual Stop, wait this many seconds before offering "Record
+    # again?" for the same still-running game. A different game prompts as
+    # soon as it is detected. 0 = prompt for the same game immediately too.
+    "holdoff_same_game_seconds": 60,
 }
 
 

@@ -567,10 +567,11 @@ def _humanise(event):
 def _toast_content(event, display_name, details):
     tint_name = {
         "start": "ember", "stop": "ember", "error": "ember",
-        "pause": "accent", "resume": "accent",
+        "pause": "accent", "resume": "accent", "prompt": "accent",
     }.get(event, "accent")
     role = {"start": "start", "stop": "square", "pause": "pause",
-            "resume": "resume", "error": "disconnected"}.get(event, "start")
+            "resume": "resume", "error": "disconnected",
+            "prompt": "start"}.get(event, "start")
     if role in dv.ICONS:
         glyph_key = dv.ICONS[role]
     else:
@@ -588,7 +589,10 @@ def _toast_content(event, display_name, details):
         "pause": "Recording paused",
         "resume": "Recording resumed",
         "error": "Something went wrong",
+        "prompt": "Record again?",
     }.get(event) or _humanise(event)
+    if isinstance(details, dict) and details.get("title"):
+        title = details["title"]
     parts = []
     if details:
         if isinstance(details, str):

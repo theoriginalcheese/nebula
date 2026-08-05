@@ -77,6 +77,9 @@ GROUPS = (
      "Six accents over one fixed ground, plus how tight, how round and how "
      "alive the shell is. Every one of these is an override of a token that "
      "already exists, so nothing here can invent a colour."),
+    ("updates", "Updates",
+     "Keep this install in sync with GitHub. Packaged builds check Releases; "
+     "source checkouts use a one-line git pull script."),
     ("legacy", "Legacy",
      "Superseded, kept so an older config still resolves."),
 )
@@ -211,6 +214,12 @@ FIELDS = (
           choices=tuple(design_v3.MOTION_MODES),
           hint="Off pauses the aurora drift, the star wind and the pointer "
                "spotlight. Worth having on a GPU that is also encoding."),
+
+    Field("holdoff_same_game_seconds", "Re-record prompt delay", "int", "recording",
+          minimum=0, maximum=3600,
+          hint="After you hit Stop, wait this many seconds before asking to "
+               "record the same game again. A different game asks as soon as "
+               "it is detected. 0 = ask immediately for the same game too."),
 
     Field("sync_folder", "Sync folder", "path", "legacy",
           restart="the classifier resolves its data path at launch",

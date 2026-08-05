@@ -203,8 +203,12 @@ class Monitor:
     SELF_PROCESSES = {"nebula.exe", "python.exe", "pythonw.exe",
                       "obs64.exe", "obs32.exe"}
 
+    # After a manual Stop, wait this long before offering "record again?" for
+    # the same game. A different game prompts as soon as it debounces in.
+    HOLDOFF_SAME_GAME_SECONDS = 60
+
     def __init__(self, obs_client, classifier, config, on_log=None, on_state=None, on_notify=None,
-                 on_connection_change=None, offloader=None):
+                 on_connection_change=None, offloader=None, on_record_prompt=None):
         self.obs = obs_client
         self.classifier = classifier
         self.config = config
@@ -213,6 +217,9 @@ class Monitor:
         self.on_state = on_state or (lambda **kwargs: None)  # game, folder, idle
         self.on_notify = on_notify or (lambda event, display_name, details=None: None)  # event: "start"|"stop"|"pause"|"resume"
         self.on_connection_change = on_connection_change or (lambda connected: None)
+        # Fired when hold-off wants the UI to ask "Record again?" / "Record X?".
+        # Args: basename, display_name, reason ("same"|"switch"), target tuple.
+        self.on_record_prompt = on_record_prompt or (lambda *a, **k: None)
         self._running = False
         self._thread = None
         self._recording_target = None  # (pid, basename, display_name, folder, window_id) or None
@@ -222,6 +229,14 @@ class Monitor:
         self._last_reconnect_attempt = 0.0
         self._was_disconnected = False
         self._auto_paused = False
+        # Manual-stop hold-off: suppress auto StartRecord until the user
+        # confirms via toast, starts recording manually, or the held games exit.
+        self._hold_off = False
+        self._hold_off_since = 0.0
+        self._hold_off_basename = None   # game that was recording when Stop hit
+        self._hold_off_skip = set()      # basenames the user said "Not now" to
+        self._hold_off_prompted = None   # basename we last prompted for
+        self._hold_off_pending = None    # full target tuple awaiting Accept
         self._last_foreground = None   # so the hero's foreground line only fires on change
         self._audio_keep_alive = AudioKeepAlive(
             config.get("keep_alive_audio_processes", ["discord.exe"]), on_log=self.log,
@@ -247,7 +262,109 @@ class Monitor:
         self._pending_target = _UNSET
         self._pending_count = 0
         self._auto_paused = False
+        self.clear_hold_off()
         self.log("[Monitor] Stopped.")
+
+    def note_manual_stop(self, basename=None, display_name=None):
+        """UI clicked Stop. Suppress auto-restart until confirm / exit / clear."""
+        if not basename:
+            hinted = self._find_new_game_target()
+            if hinted is not None:
+                basename, display_name = hinted[1], hinted[2]
+        self._hold_off = True
+        self._hold_off_since = time.time()
+        self._hold_off_basename = (basename or "").lower() or None
+        self._hold_off_skip.clear()
+        self._hold_off_prompted = None
+        self._hold_off_pending = None
+        self._pending_target = _UNSET
+        self._pending_count = 0
+        label = display_name or basename or "manual"
+        self.log(f"[Monitor] Hold-off after manual stop ({label}).")
+
+    def clear_hold_off(self):
+        was = self._hold_off
+        self._hold_off = False
+        self._hold_off_since = 0.0
+        self._hold_off_basename = None
+        self._hold_off_skip.clear()
+        self._hold_off_prompted = None
+        self._hold_off_pending = None
+        if was:
+            self.log("[Monitor] Hold-off cleared.")
+
+    def accept_record_prompt(self):
+        """User tapped Record on the hold-off toast — start the pending game."""
+        target = self._hold_off_pending
+        self.clear_hold_off()
+        if target is None:
+            return False
+        self._pending_target = _UNSET
+        self._pending_count = 0
+        if target == self._recording_target:
+            self._recording_target = None
+        self._apply_target(target)
+        return True
+
+    def dismiss_record_prompt(self, basename=None):
+        """User tapped Not now — don't re-ask for this game until it exits."""
+        needle = (basename or (self._hold_off_pending[1] if self._hold_off_pending else "")
+                  or "").lower()
+        if needle:
+            self._hold_off_skip.add(needle)
+            self.log(f"[Monitor] Hold-off: skipped {needle} until it exits.")
+        self._hold_off_prompted = needle or self._hold_off_prompted
+        self._hold_off_pending = None
+
+    @staticmethod
+    def _basename_running(basename):
+        needle = (basename or "").lower()
+        if not needle:
+            return False
+        for proc in psutil.process_iter(["name"]):
+            try:
+                name = proc.info.get("name") or ""
+                if name.lower() == needle:
+                    return True
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                continue
+        return False
+
+    def _refresh_hold_off(self):
+        """Drop exited skip entries; resume normal auto-record when nothing left."""
+        if not self._hold_off:
+            return
+        self._hold_off_skip = {b for b in self._hold_off_skip if self._basename_running(b)}
+        if self._hold_off_basename and not self._basename_running(self._hold_off_basename):
+            self._hold_off_basename = None
+        if not self._hold_off_basename and not self._hold_off_skip:
+            self.clear_hold_off()
+
+    def _maybe_prompt_hold_off(self, target):
+        """Ask the UI once per game whether to start recording under hold-off."""
+        if target is None:
+            return
+        basename = (target[1] or "").lower()
+        display = target[2]
+        if not basename or basename in self._hold_off_skip:
+            return
+        same = self._hold_off_basename and basename == self._hold_off_basename
+        if same:
+            wait = float(self.config.get(
+                "holdoff_same_game_seconds", self.HOLDOFF_SAME_GAME_SECONDS))
+            if time.time() - self._hold_off_since < wait:
+                return
+            reason = "same"
+        else:
+            reason = "switch"
+        if self._hold_off_prompted == basename:
+            return
+        self._hold_off_prompted = basename
+        self._hold_off_pending = target
+        try:
+            self.on_record_prompt(basename, display, reason, target)
+        except Exception as e:
+            self.log(f"[Monitor] Record prompt failed: {e}")
 
     def _stop_current_recording(self, prev_name):
         """Stop whatever's currently recording (retrying once if OBS briefly
@@ -601,6 +718,8 @@ class Monitor:
                 else:
                     target = self._find_new_game_target()
 
+                self._refresh_hold_off()
+
                 if target == self._recording_target:
                     self._pending_target = _UNSET
                     self._pending_count = 0
@@ -611,9 +730,20 @@ class Monitor:
                         self._pending_target = target
                         self._pending_count = 1
                     if self._pending_count >= self.DEBOUNCE_TICKS:
-                        self._apply_target(target)
-                        self._pending_target = _UNSET
-                        self._pending_count = 0
+                        if (self._hold_off and target is not None
+                                and self._recording_target is None):
+                            # Manual stop is sticky: never auto-StartRecord.
+                            # Prompt for a different game immediately, or the
+                            # same game after HOLDOFF_SAME_GAME_SECONDS.
+                            self._maybe_prompt_hold_off(target)
+                            self.on_state(game=target[2], folder=None,
+                                          idle=should_pause)
+                            self._pending_target = _UNSET
+                            self._pending_count = 0
+                        else:
+                            self._apply_target(target)
+                            self._pending_target = _UNSET
+                            self._pending_count = 0
             except Exception as e:  # keep the loop alive no matter what
                 self.log(f"[Monitor] Error: {e}")
             time.sleep(self.config["poll_interval_seconds"])
