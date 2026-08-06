@@ -192,7 +192,29 @@ class OBSClient:
         self.call("StartRecord")
 
     def stop_record(self):
+        """Stop the active recording.
+
+        Always lifts a pause first. OBS can hang forever on StopRecord while
+        paused - the encoder's end_data_capture thread never runs because a
+        paused output stops feeding it audio/video, so the output stays in
+        STOPPING indefinitely (obs-studio#7249 / #7946). Nebula then looks
+        frozen because every later GetRecordStatus waits on the same wedged
+        websocket. Resume-then-stop is the safe path; a brief unpaused frame
+        is fine - we are about to finalise the file anyway.
+        """
+        self._lift_record_pause()
         return self.call("StopRecord")  # responseData includes 'outputPath'
+
+    def _lift_record_pause(self):
+        """Resume if (and only if) the live recording is paused. Soft-fails."""
+        try:
+            status = self.get_record_status()
+        except OBSError:
+            return False
+        if status.get("outputActive") and status.get("outputPaused"):
+            self.resume_record()
+            return True
+        return False
 
     def pause_record(self):
         self.call("PauseRecord")

@@ -544,6 +544,8 @@ class AppWindow:
         self._customising = False     # 6.8 edit mode; owns the handle strips and grid overlay
         self._drag_block = None
         self._poll_job = None         # the single _poll_obs_status timer, so it can be pulled forward
+        self._poll_in_flight = False  # GetRecordStatus runs off the Tk thread
+        self._poll_queued = False     # a beat/`_poll_now` arrived while in flight
         self._transport_busy = False  # a start/stop/pause round-trip is in flight
         # Keeps PhotoImage refs alive - Tk garbage-collects them otherwise, and
         # the canvas item goes blank. Append-only was fine when the UI was built
@@ -5294,35 +5296,80 @@ class AppWindow:
         GetRecordStatus, not a client-side timestamp taken when the monitor
         merely *decided* to record - if OBS is disconnected or a start
         request silently failed, a client-side timer would keep counting
-        even though nothing is actually being recorded."""
-        is_recording = False
-        is_paused = False
-        if self.obs.connected:
+        even though nothing is actually being recorded.
+
+        The OBS round-trip MUST NOT run on the Tk thread. `call()` waits up
+        to 5s for a response; when OBS is wedged (notably StopRecord-while-
+        paused), that wait freezes the whole window. Single-flight worker,
+        apply on the Tk thread. The next after-beat is booked up front so
+        `_poll_now` can still cancel-and-replace a single chain the way the
+        transport tests require.
+        """
+        delay = 1000 if self._visible else 5000
+        if getattr(self, "_poll_in_flight", False):
+            # Keep the timer chain alive without stacking OBS round-trips.
+            # `_poll_now` (and a beat that fires mid-flight) just ask for
+            # another sample once the in-flight one lands.
+            self._poll_queued = True
+            self._poll_job = self.root.after(delay, self._poll_obs_status)
+            return
+
+        self._poll_in_flight = True
+        self._poll_queued = False
+        # Book the next beat now - before the worker returns - so callers of
+        # `_poll_now` see a live job id they can cancel, matching the old
+        # synchronous contract.
+        self._poll_job = self.root.after(delay, self._poll_obs_status)
+
+        def worker():
+            payload = {
+                "connected": bool(self.obs.connected),
+                "recording": False,
+                "paused": False,
+                "status": None,
+            }
+            if payload["connected"]:
+                try:
+                    status = self.obs.get_record_status()
+                    payload["status"] = status
+                    payload["recording"] = bool(status.get("outputActive"))
+                    payload["paused"] = bool(status.get("outputPaused"))
+                except OBSError:
+                    pass
             try:
-                status = self.obs.get_record_status()
-                is_recording = bool(status.get("outputActive"))
-                is_paused = bool(status.get("outputPaused"))
-                if is_recording:
-                    total_seconds = status.get("outputDuration", 0) // 1000
-                    hh, rem = divmod(total_seconds, 3600)
-                    mm, ss = divmod(rem, 60)
-                    self._tray_elapsed = f"{hh:02d}:{mm:02d}:{ss:02d}"
-                    written = status.get("outputBytes", 0)
-                    # The tray tooltip and the mini overlay still want these,
-                    # so they're computed regardless - only the hero's own
-                    # canvas items need the card to exist.
-                    if self._hero_present():
-                        self.bg.itemconfigure(self.timer_label_id, text=self._tray_elapsed)
-                        self.bg.itemconfigure(self.storage_label_id,
-                                              text=_format_bytes(written))
-                        self._update_bitrate(status.get("outputDuration", 0), written)
-            except OBSError:
-                pass
+                self.root.after(0, lambda p=payload: self._poll_obs_apply(p))
+            except Exception:
+                self._poll_in_flight = False
+
+        threading.Thread(target=worker, daemon=True, name="obs-status-poll").start()
+
+    def _poll_obs_apply(self, payload):
+        """Tk-thread half of `_poll_obs_status` - widgets only, no OBS I/O."""
+        self._poll_in_flight = False
+        is_recording = bool(payload.get("recording"))
+        is_paused = bool(payload.get("paused"))
+        status = payload.get("status") or {}
+        connected = bool(payload.get("connected"))
+
+        if is_recording:
+            total_seconds = status.get("outputDuration", 0) // 1000
+            hh, rem = divmod(total_seconds, 3600)
+            mm, ss = divmod(rem, 60)
+            self._tray_elapsed = f"{hh:02d}:{mm:02d}:{ss:02d}"
+            written = status.get("outputBytes", 0)
+            # The tray tooltip and the mini overlay still want these,
+            # so they're computed regardless - only the hero's own
+            # canvas items need the card to exist.
+            if self._hero_present():
+                self.bg.itemconfigure(self.timer_label_id, text=self._tray_elapsed)
+                self.bg.itemconfigure(self.storage_label_id,
+                                      text=_format_bytes(written))
+                self._update_bitrate(status.get("outputDuration", 0), written)
 
         was = (self._is_recording, self._is_paused, self._obs_connected)
         self._is_paused = is_paused
         self._is_recording = is_recording
-        self._obs_connected = bool(self.obs.connected)
+        self._obs_connected = connected
         if was != (is_recording, is_paused, self._obs_connected):
             self._update_tray_tooltip()   # icon + tooltip follow the real state
 
@@ -5334,7 +5381,7 @@ class AppWindow:
 
         # The hero card owns the badge/border/readout visibility; pick the state
         # that matches what OBS and the monitor are actually doing right now.
-        if not self.obs.connected:
+        if not connected:
             state = "disconnected"
         elif is_recording and is_paused:
             state = "paused"
@@ -5353,14 +5400,23 @@ class AppWindow:
         # edit mode had deliberately made it inert.
         if not getattr(self, "_customising", False) and self._hero_present():
             self._set_enabled(self.record_toggle_btn,
-                              self.obs.connected or state == "disconnected",
+                              connected or state == "disconnected",
                               text_color=self._hero_primary_text)
 
-        # A second is right when you're watching the timer tick; while hidden in
-        # the tray nothing renders it, so back off. The monitor thread drives the
-        # actual recording independently of this poll.
-        self._poll_job = self.root.after(
-            1000 if self._visible else 5000, self._poll_obs_status)
+        # A `_poll_now` (or a beat that fired mid-flight) asked for a fresh
+        # sample - run it now rather than waiting for the already-booked beat.
+        if getattr(self, "_poll_queued", False):
+            self._poll_queued = False
+            job = getattr(self, "_poll_job", None)
+            if job is not None:
+                try:
+                    self.root.after_cancel(job)
+                except Exception:
+                    pass
+                self._poll_job = None
+            self._poll_obs_status()
+            return
+        # Otherwise the next beat was booked when the worker launched.
 
     def _poll_now(self):
         """Bring the next status poll forward without starting a second chain.
@@ -5435,6 +5491,10 @@ class AppWindow:
                 paused = bool(status.get("outputPaused"))
                 if action == "record":
                     if recording:
+                        # Same OBS hang as the monitor path: StopRecord while
+                        # paused can wedge the encoder. Lift first.
+                        if paused:
+                            self.obs.resume_record()
                         self.obs.stop_record()
                         result.update(stopped=True, event="stop",
                                       outcome="Recording stopped.")

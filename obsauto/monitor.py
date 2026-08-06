@@ -370,13 +370,44 @@ class Monitor:
         """Stop whatever's currently recording (retrying once if OBS briefly
         rejects it), then discard the clip if it turned out too short to be
         worth keeping - e.g. a game window that flickered open and shut
-        rather than an actual play session."""
+        rather than an actual play session.
+
+        A paused recording must be resumed before StopRecord. OBS can hang
+        forever stopping while paused (encoder end_data_capture never fires);
+        that is exactly the "Nebula froze when I closed the game I had
+        paused" failure mode. OBSClient.stop_record already lifts the pause,
+        and we clear `_auto_paused` here so the next tick doesn't try to
+        re-pause a file that no longer exists.
+        """
         if not self.obs.is_recording():
             return True
+
+        # Manual pause never sets `_auto_paused`, so the loop's
+        # `_ensure_resumed` path is skipped on game-close. Lift it here
+        # regardless - stop_record does the OBS call on the real client;
+        # this keeps our flag honest and covers test doubles that only
+        # implement the raw Pause/Resume/Stop methods.
+        get_status = getattr(self.obs, "get_record_status", None)
+        if get_status is not None:
+            try:
+                status = get_status()
+                if status.get("outputActive") and status.get("outputPaused"):
+                    if not self._auto_paused:
+                        self.log(f"[OBS] Resuming paused recording before stop ({prev_name}).")
+                    try:
+                        self.obs.resume_record()
+                    except OBSError as e:
+                        self.log(f"[OBS] Resume-before-stop failed: {e}")
+                    self._auto_paused = False
+            except OBSError as e:
+                self.log(f"[OBS] Could not read pause state before stop: {e}")
 
         response = None
         for attempt in range(2):
             try:
+                # OBSClient.stop_record lifts a pause itself; calling it after
+                # the probe above is intentional (idempotent) so a plain
+                # StopRecord stub still gets the resume from the block above.
                 response = self.obs.stop_record()
                 break
             except OBSError as e:
