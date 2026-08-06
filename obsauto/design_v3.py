@@ -407,6 +407,14 @@ TOAST_DRAIN_H = 2
 TOAST_MARGIN = 24                    # from both edges of the active screen
 TOAST_IN_MS, TOAST_IN_RISE = 320, 16
 TOAST_OUT_MS = 200
+# Capsule silhouette (design C): pill radius = height / 2. Width tuned so a
+# title + middot + game name fit without wrapping.
+TOAST_W, TOAST_H = 340, 56
+TOAST_PROMPT_W, TOAST_PROMPT_H = 360, 108
+TOAST_PAD = 3                        # shell → core inset (two-layer card)
+# Chromakey for true pill corners on the frameless toplevel (not in the
+# Nebula Deep palette, so it never punches holes in the glass).
+TOAST_KEY = "#00FF01"
 # "Icon + tint per event: start/stop -> ember, pause/resume -> accent,
 #  error -> ember."
 TOAST_TINTS = {
@@ -415,7 +423,16 @@ TOAST_TINTS = {
     "prompt": ACCENT,
 }
 TOAST_PROMPT_LIFE_MS = 30000
-TOAST_PROMPT_H = 118
+# Soft dust near the icon chip - (dx, dy, radius_px, base_alpha) relative to
+# the chip centre. Twinkles on the toast surface only (own toplevel; free).
+TOAST_DUST = (
+    (20, -12, 1.6, 0.55),
+    (28, -4, 1.1, 0.32),
+    (16, 14, 1.3, 0.40),
+    (-10, -16, 1.0, 0.28),
+    (36, 10, 0.9, 0.22),
+    (8, -18, 0.8, 0.20),
+)
 
 # ---------------------------------------------------------------------------
 # Customise mode (6.8)

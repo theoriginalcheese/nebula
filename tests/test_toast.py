@@ -140,6 +140,19 @@ check("ember is start/stop/error only",
       {k for k, v in dv.TOAST_TINTS.items() if v == gui.EMBER} == {"start", "stop", "error"},
       dv.TOAST_TINTS)
 
+# Capsule silhouette + Nebula dust (design C).
+app._toast_replace("start", "Helldivers 2")
+settle(40)
+check("capsule height matches the token", app.TOAST_H == dv.TOAST_H == 56,
+      (app.TOAST_H, dv.TOAST_H))
+check("capsule width matches the token", app.TOAST_W == dv.TOAST_W == 340,
+      (app.TOAST_W, dv.TOAST_W))
+check("dust constellation is present",
+      len(app._toast.get("dust") or []) == len(dv.TOAST_DUST),
+      len(app._toast.get("dust") or []))
+check("dust follows the event tint",
+      all(app._toast["canvas"].itemcget(d, "fill") for d in app._toast["dust"]))
+
 # ---- position: bottom-right of the active screen, 24px from both edges -----
 app.root.update()
 sw, sh, x, y_end = app._toast["geom"]
