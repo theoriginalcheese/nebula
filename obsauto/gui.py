@@ -4,6 +4,7 @@ import math
 import os
 import re
 import shutil
+import sys
 import threading
 import time
 import tkinter as tk
@@ -5693,14 +5694,16 @@ class AppWindow:
             toast["ticking"] = True
             self._toast_tick(toast)
 
-    def _toast_pill_photo(self, sw, sh, radius):
+    def _toast_pill_photo(self, sw, sh, radius, chromakey=True):
         """Nebula crop + two-layer glass, masked to a capsule.
 
-        Outside the pill is the chromakey colour so `-transparentcolor` can
-        punch true rounded ends on the frameless toplevel.
+        When `chromakey` is True (Windows), outside the pill is TOAST_KEY so
+        `-transparentcolor` can punch true rounded ends. Otherwise the outside
+        stays fully transparent in the RGBA buffer and we composite onto the
+        canvas ground colour — no green flash on Linux/mac.
         """
         key = tuple(int(dv.TOAST_KEY.lstrip("#")[i:i + 2], 16) for i in (0, 2, 4))
-        surface = Image.new("RGBA", (sw, sh), (*key, 255))
+        surface = Image.new("RGBA", (sw, sh), (0, 0, 0, 0))
 
         crop = (self.nebula.resize((sw, sh))
                 if self.nebula.size != (sw, sh)
@@ -5723,15 +5726,16 @@ class AppWindow:
         core = make_glass_tile(
             core_w, core_h, CARD_CORE, tint_alpha=200, radius=core_r,
             border_hex=EDGE, border_alpha=40)
-        # Paste core inset; keep key outside the shell (already in surface).
         layer = Image.new("RGBA", (sw, sh), (0, 0, 0, 0))
         layer.paste(core, (pad, pad), core)
         surface = Image.alpha_composite(surface, layer)
 
-        # Flatten: Tk chromakey needs opaque key pixels, not alpha zeros.
-        flat = Image.new("RGB", (sw, sh), key)
-        flat.paste(surface.convert("RGB"), mask=surface.split()[3])
-        return to_photo(flat)
+        if chromakey:
+            # Flatten: Tk chromakey needs opaque key pixels, not alpha zeros.
+            flat = Image.new("RGB", (sw, sh), key)
+            flat.paste(surface.convert("RGB"), mask=surface.split()[3])
+            return to_photo(flat)
+        return to_photo(surface)
 
     def _toast_build(self, prompt=False):
         w = self.TOAST_PROMPT_W if prompt else self.TOAST_W
@@ -5758,16 +5762,31 @@ class AppWindow:
 
         canvas = ScaledCanvas(
             tk.Canvas(popup, width=sw, height=sh, highlightthickness=0, bd=0,
-                      bg=key),
+                      bg=BASE_BG),
             self.scale)
         canvas.pack(fill="both", expand=True)
-        try:
-            # True pill corners: anything painted the key colour falls out.
-            popup.wm_attributes("-transparentcolor", key)
-        except Exception:
-            pass
+        # Chromakey only on Windows - elsewhere `-transparentcolor` is a no-op
+        # and the key colour would show as a neon green fringe.
+        keyed = sys.platform == "win32"
+        if keyed:
+            try:
+                popup.configure(fg_color=key)
+                canvas._c.configure(bg=key)
+                popup.wm_attributes("-transparentcolor", key)
+            except Exception:
+                keyed = False
+                try:
+                    popup.configure(fg_color=BASE_BG)
+                    canvas._c.configure(bg=BASE_BG)
+                except Exception:
+                    pass
+        else:
+            try:
+                popup.configure(fg_color=BASE_BG)
+            except Exception:
+                pass
 
-        photo = self._toast_pill_photo(sw, sh, radius)
+        photo = self._toast_pill_photo(sw, sh, radius, chromakey=keyed)
         self._keep_image(photo)
         canvas.create_image(0, 0, anchor="nw", image=photo)
 
