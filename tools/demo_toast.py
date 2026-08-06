@@ -20,7 +20,7 @@ from obsauto.config import load_config
 from obsauto.gui import AppWindow
 
 
-HOLD_MS = 3500
+HOLD_MS = 4200
 
 SEQUENCE = [
     ("start", "Helldivers 2", None),

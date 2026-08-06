@@ -143,15 +143,79 @@ check("ember is start/stop/error only",
 # Capsule silhouette + Nebula dust (design C).
 app._toast_replace("start", "Helldivers 2")
 settle(40)
-check("capsule height matches the token", app.TOAST_H == dv.TOAST_H == 56,
+check("capsule height matches the token", app.TOAST_H == dv.TOAST_H == 60,
       (app.TOAST_H, dv.TOAST_H))
-check("capsule width matches the token", app.TOAST_W == dv.TOAST_W == 340,
+check("capsule width matches the token", app.TOAST_W == dv.TOAST_W == 384,
       (app.TOAST_W, dv.TOAST_W))
 check("dust constellation is present",
       len(app._toast.get("dust") or []) == len(dv.TOAST_DUST),
       len(app._toast.get("dust") or []))
 check("dust follows the event tint",
       all(app._toast["canvas"].itemcget(d, "fill") for d in app._toast["dust"]))
+check("dust motion is seeded per show",
+      app._toast.get("dust_style") in set(dv.TOAST_DUST_STYLE.values()),
+      app._toast.get("dust_style"))
+check("dust home positions match the constellation",
+      len(app._toast.get("dust_home") or []) == len(dv.TOAST_DUST))
+check("dust anchor matches the style table",
+      app._toast.get("dust_anchor")
+      == dv.TOAST_DUST_ANCHOR.get(app._toast.get("dust_style")),
+      (app._toast.get("dust_style"), app._toast.get("dust_anchor")))
+
+# Motion seed changes across replaces (variation, not a fixed dance).
+styles = set()
+anchors = set()
+for _ in range(12):
+    app._toast_replace("start", "Helldivers 2")
+    settle(20)
+    styles.add(app._toast.get("dust_style"))
+    anchors.add(app._toast.get("dust_anchor"))
+check("start dust usually bursts (hybrid may spice)",
+      "burst" in styles or len(styles) >= 1, styles)
+amps = []
+for _ in range(6):
+    app._toast_replace("error", "OBS disconnected")
+    settle(20)
+    amps.append(round(float(app._toast.get("dust_amp") or 0), 3))
+check("each show draws a fresh dust amplitude",
+      len(set(amps)) >= 2, amps)
+check("dust amplitude stays in the mid band",
+      all(0.6 <= a <= 1.2 for a in amps), amps)
+
+# Calmer styles live on the trailing end; action flavours hug the icon.
+check("drift anchors to the right end",
+      dv.TOAST_DUST_ANCHOR["drift"] == "right")
+check("orbit anchors to the right end",
+      dv.TOAST_DUST_ANCHOR["orbit"] == "right")
+check("burst anchors to the icon end",
+      dv.TOAST_DUST_ANCHOR["burst"] == "left")
+
+# Long stop row must stay inside the pill (ellipsis, not clip).
+app._toast_replace(
+    "stop", "Helldivers 2",
+    {"duration": 761, "size": 1_240_000_000})
+settle(40)
+w = app.TOAST_W
+max_x = w - dv.TOAST_TEXT_INSET
+overflow = False
+for key in ("title", "sep", "sub", "detail"):
+    item = app._toast[key]
+    try:
+        if app._toast["canvas"].itemcget(item, "state") == "hidden":
+            continue
+    except Exception:
+        pass
+    bbox = app._toast["canvas"].bbox(item)
+    if bbox and (bbox[2] / app.scale) > max_x + 0.5:
+        overflow = True
+check("long toast row stays inside the pill", not overflow,
+      {k: app._toast["canvas"].bbox(app._toast[k]) for k in
+       ("title", "sep", "sub", "detail")})
+check("text inset clears the capsule curve",
+      dv.TOAST_TEXT_INSET >= dv.TOAST_H // 2,
+      (dv.TOAST_TEXT_INSET, dv.TOAST_H))
+check("entrance rise is noticeable", dv.TOAST_IN_RISE >= 24, dv.TOAST_IN_RISE)
+check("exit fade is longer than a blink", dv.TOAST_OUT_MS >= 280, dv.TOAST_OUT_MS)
 
 # ---- position: bottom-right of the active screen, 24px from both edges -----
 app.root.update()
@@ -162,12 +226,12 @@ check("24px margin from the right edge", abs((right - sw - margin) - x) <= 1,
       (right - sw - margin, x))
 check("24px margin from the bottom edge", abs((bottom - sh - margin) - y_end) <= 1,
       (bottom - sh - margin, y_end))
-# Don't compare against winfo_screenheight(): that's the PRIMARY monitor in
-# logical units, while the work area is physical and may be a different screen
-# entirely (the toast follows the cursor). Assert the rect is sane and that the
-# toast fits inside it instead.
-check("work area is a sane rect", right > left and bottom > top,
-      (left, top, right, bottom))
+# Toast is pinned to the primary monitor (not wherever the cursor sits).
+primary = app._monitor_workarea(primary=True)
+check("toast work area is the primary monitor",
+      app._toast_workarea() == primary, (app._toast_workarea(), primary))
+check("primary work area is a sane rect",
+      primary[2] > primary[0] and primary[3] > primary[1], primary)
 check("toast sits wholly inside the work area",
       x >= left and y_end >= top and x + sw <= right and y_end + sh <= bottom,
       (x, y_end, sw, sh, (left, top, right, bottom)))

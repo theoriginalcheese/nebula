@@ -2,6 +2,7 @@ import contextlib
 import ctypes
 import math
 import os
+import random
 import re
 import shutil
 import sys
@@ -4298,7 +4299,7 @@ class AppWindow:
         popup.configure(fg_color=dv.CARD_CORE)
         apply_rounded_corners(popup)
 
-        left, top, right, bottom = self._toast_workarea()
+        left, top, right, bottom = self._monitor_workarea(primary=False)
         sw = self._S(width)
         x = left + ((right - left) - sw) // 2
         y = top + int((bottom - top) * dv.PALETTE_TOP_FRACTION)
@@ -5583,14 +5584,11 @@ class AppWindow:
     TOAST_W, TOAST_H = dv.TOAST_W, dv.TOAST_H
     TOAST_PROMPT_W, TOAST_PROMPT_H = dv.TOAST_PROMPT_W, dv.TOAST_PROMPT_H
 
-    def _toast_workarea(self):
-        """The work area of the screen the pointer is on.
+    def _monitor_workarea(self, primary=False):
+        """Work area of the primary monitor, or the monitor under the pointer.
 
-        "Bottom-right of the active screen, 24px from both edges, above the
-        taskbar." The work area already excludes the taskbar, so "above the
-        taskbar" falls out of using it. v2 used winfo_screenwidth(), which is
-        the *primary* monitor - on this multi-monitor setup the toast could
-        appear on a screen the user wasn't looking at.
+        Returns (left, top, right, bottom) in physical pixels. The work area
+        already excludes the taskbar.
         """
         try:
             from ctypes import windll, byref, sizeof, Structure, c_long, c_ulong, c_wchar
@@ -5607,9 +5605,13 @@ class AppWindow:
                             ("rcWork", RECT), ("dwFlags", c_ulong),
                             ("szDevice", c_wchar * 32)]
 
-            pt = POINT()
-            windll.user32.GetCursorPos(byref(pt))
-            monitor = windll.user32.MonitorFromPoint(pt, 2)  # NEAREST
+            if primary:
+                # MONITOR_DEFAULTTOPRIMARY — toast always on the main screen.
+                monitor = windll.user32.MonitorFromPoint(POINT(0, 0), 1)
+            else:
+                pt = POINT()
+                windll.user32.GetCursorPos(byref(pt))
+                monitor = windll.user32.MonitorFromPoint(pt, 2)  # NEAREST
             info = MONITORINFOEXW()
             info.cbSize = sizeof(MONITORINFOEXW)
             if windll.user32.GetMonitorInfoW(monitor, byref(info)):
@@ -5617,8 +5619,11 @@ class AppWindow:
                 return r.left, r.top, r.right, r.bottom
         except Exception:
             pass
-        # Fall back to the primary screen minus a guess at the taskbar.
         return (0, 0, self.root.winfo_screenwidth(), self.root.winfo_screenheight() - 48)
+
+    def _toast_workarea(self):
+        """Primary-monitor work area — toast never follows a secondary screen."""
+        return self._monitor_workarea(primary=True)
 
     def _toast_content(self, event, display_name, details):
         """Everything the toast renders, resolved from an event name."""
@@ -5667,6 +5672,8 @@ class AppWindow:
             or not toast["popup"].winfo_exists()
             or bool(toast.get("actions")) != want_prompt
         )
+        was_dismissing = bool(toast and toast.get("dismissing"))
+        reused = not need_rebuild
         if need_rebuild:
             if toast is not None:
                 try:
@@ -5685,11 +5692,13 @@ class AppWindow:
         toast["remaining"] = life
         toast["actions"] = content["actions"]
         toast["on_timeout"] = on_timeout
-        if toast["dismissing"]:
-            # It was already fading out; bring it straight back to full rather
-            # than letting the old fade finish and destroy the window.
+        if was_dismissing:
+            # Rescued mid-fade — play the entrance again rather than snapping.
             toast["dismissing"] = False
-            self._toast_alpha(toast, 1.0)
+            self._toast_rise_in(toast)
+        elif reused:
+            # Same window, new event — soft opacity pulse so it doesn't hard-cut.
+            self._toast_swap_pulse(toast)
         if not toast["ticking"]:
             toast["ticking"] = True
             self._toast_tick(toast)
@@ -5715,9 +5724,12 @@ class AppWindow:
             [0, 0, sw - 1, sh - 1], radius=radius, fill=255)
         surface.paste(crop, (0, 0), mask)
 
+        # No drawn stroke on the shell — chromakey + the pill mask already
+        # silhouette the capsule; a border reads as a grey rectangular frame
+        # once DWM composites the toplevel.
         shell = make_glass_tile(
             sw, sh, CARD_TINT, tint_alpha=210, radius=radius,
-            border_hex=CARD_BORDER, border_alpha=70)
+            border_hex=CARD_BORDER, border_alpha=0)
         surface = Image.alpha_composite(surface, shell)
 
         pad = self._S(dv.TOAST_PAD)
@@ -5725,7 +5737,7 @@ class AppWindow:
         core_r = max(1, radius - pad)
         core = make_glass_tile(
             core_w, core_h, CARD_CORE, tint_alpha=200, radius=core_r,
-            border_hex=EDGE, border_alpha=40)
+            border_hex=EDGE, border_alpha=0)
         layer = Image.new("RGBA", (sw, sh), (0, 0, 0, 0))
         layer.paste(core, (pad, pad), core)
         surface = Image.alpha_composite(surface, layer)
@@ -5758,7 +5770,9 @@ class AppWindow:
         x = right - sw - margin
         y_end = bottom - sh - margin
         popup.geometry(f"{sw}x{sh}+{x}+{y_end + self._S(dv.TOAST_IN_RISE)}")
-        apply_rounded_corners(popup)
+        # Do NOT apply_rounded_corners here. DWM's rounded HWND draws a grey
+        # rectangular silhouette around the chromakey pill — the outline we
+        # want gone. The pill mask + transparentcolor is the silhouette.
 
         canvas = ScaledCanvas(
             tk.Canvas(popup, width=sw, height=sh, highlightthickness=0, bd=0,
@@ -5780,6 +5794,9 @@ class AppWindow:
                     canvas._c.configure(bg=BASE_BG)
                 except Exception:
                     pass
+            else:
+                # Force sharp HWND corners so DWM doesn't stroke a frame.
+                self._toast_donot_round(popup)
         else:
             try:
                 popup.configure(fg_color=BASE_BG)
@@ -5791,29 +5808,30 @@ class AppWindow:
         canvas.create_image(0, 0, anchor="nw", image=photo)
 
         # Single-row capsule: chip + title · game · detail.
-        cy = h / 2 if not prompt else 28
-        chip_r = 13
-        chip_cx, chip_cy = 22, cy
+        cy = h / 2 if not prompt else 30
+        chip_r = 14
+        chip_cx, chip_cy = 24, cy
         chip = canvas.create_oval(
             chip_cx - chip_r, chip_cy - chip_r,
             chip_cx + chip_r, chip_cy + chip_r,
             fill=ACCENT_TINT, outline="")
         icon = canvas.create_text(
-            chip_cx, chip_cy, text="", fill=ACCENT, font=(ICON_FONT, -12))
+            chip_cx, chip_cy, text="", fill=ACCENT, font=(ICON_FONT, -13))
         title = canvas.create_text(
-            44, cy, anchor="w", text="", fill=TEXT, font=dv.font(13, 500))
+            50, cy, anchor="w", text="", fill=TEXT, font=dv.font(14, 500))
         sep = canvas.create_text(
-            44, cy, anchor="w", text="·", fill=FAINT, font=dv.font(13, 500),
+            50, cy, anchor="w", text="·", fill=FAINT, font=dv.font(14, 500),
             state="hidden")
         sub = canvas.create_text(
-            44, cy, anchor="w", text="", fill=MUTED, font=dv.type_font("meta"))
+            50, cy, anchor="w", text="", fill=MUTED, font=dv.type_font("meta"))
         detail = canvas.create_text(
-            44, cy, anchor="w", text="", fill=FAINT,
-            font=dv.font(11, mono=True), state="hidden")
+            50, cy, anchor="w", text="", fill=FAINT,
+            font=dv.font(12, mono=True), state="hidden")
 
-        # Soft Nebula dust near the chip - event-tint, twinkles on the tick.
+        # Soft Nebula dust near the chip - event-tint, motion on the tick.
         dust_items = []
         dust_base = []
+        dust_home = []
         for dx, dy, r, alpha in dv.TOAST_DUST:
             d = canvas.create_oval(
                 chip_cx + dx - r, chip_cy + dy - r,
@@ -5822,6 +5840,7 @@ class AppWindow:
                 tags=("toast_dust",))
             dust_items.append(d)
             dust_base.append(alpha)
+            dust_home.append((dx, dy, r))
 
         # Action chips (prompt toasts only). Hit-testing via tagged rects.
         btn_items = []
@@ -5853,13 +5872,16 @@ class AppWindow:
             "popup": popup, "canvas": canvas, "chip": chip, "icon": icon,
             "title": title, "sep": sep, "sub": sub, "detail": detail,
             "drain": drain, "dust": dust_items, "dust_base": dust_base,
-            "dust_origin": (chip_cx, chip_cy),
+            "dust_home": dust_home, "dust_origin": (chip_cx, chip_cy),
+            "dust_style": "drift", "dust_phase": [], "dust_speed": 1.0,
+            "dust_amp": 1.0, "dust_t0": time.time(),
             "track": (track_x0, track_x1, bar_y), "geom": (sw, sh, x, y_end),
-            "row_y": cy, "text_x": 44,
+            "row_y": cy, "text_x": 50,
             "remaining": dv.TOAST_LIFE_MS, "life": dv.TOAST_LIFE_MS,
             "hovering": False, "ticking": False, "dismissing": False,
             "has_detail": False, "actions": [], "buttons": btn_items,
             "prompt": prompt, "on_timeout": None, "tint": ACCENT,
+            "event": "start",
         }
 
         def on_enter(_e):
@@ -5896,54 +5918,78 @@ class AppWindow:
         return toast
 
     def _toast_layout_row(self, toast):
-        """Pack title · sub · detail on one baseline without overlap."""
+        """Pack title · sub · detail on one baseline; ellipsize to the pill."""
         canvas = toast["canvas"]
         x = toast["text_x"]
         y = toast["row_y"]
         gap = 8
         detail_text = toast.get("detail_text") or ""
+        # Keep text clear of the capsule's curved ends (radius ≈ H/2).
+        w = self.TOAST_PROMPT_W if toast.get("prompt") else self.TOAST_W
+        max_x = w - dv.TOAST_TEXT_INSET
+
+        def _right(item):
+            try:
+                bbox = canvas.bbox(item)
+                return (bbox[2] / self.scale) if bbox else x
+            except Exception:
+                return x
+
+        def _ellipsize(item, text, left):
+            """Trim from the end until the item's right edge is ≤ max_x."""
+            if not text:
+                canvas.itemconfigure(item, text="")
+                return
+            candidate = text
+            while True:
+                shown = candidate if candidate == text else (candidate.rstrip() + "…")
+                canvas.itemconfigure(item, text=shown)
+                canvas.coords(item, left, y)
+                if _right(item) <= max_x or len(candidate) <= 1:
+                    if _right(item) > max_x:
+                        canvas.itemconfigure(item, text="")
+                    return
+                candidate = candidate[:-1]
 
         canvas.coords(toast["title"], x, y)
-        try:
-            bbox = canvas.bbox(toast["title"])
-            tx = (bbox[2] / self.scale) + gap if bbox else x + 80
-        except Exception:
-            tx = x + 80
+        _ellipsize(toast["title"], canvas.itemcget(toast["title"], "text") or "", x)
+        tx = _right(toast["title"]) + gap
 
         sub_text = canvas.itemcget(toast["sub"], "text") or ""
+        # Prefer keeping the title; drop the tail if there's no room left.
         has_tail = bool(sub_text) or (toast["has_detail"] and detail_text)
+        if has_tail and tx + 24 > max_x:
+            canvas.itemconfigure(toast["sep"], state="hidden")
+            canvas.itemconfigure(toast["sub"], text="", state="hidden")
+            canvas.itemconfigure(toast["detail"], text="", state="hidden")
+            return
 
         if has_tail:
             canvas.itemconfigure(toast["sep"], state="normal")
             canvas.coords(toast["sep"], tx, y)
-            try:
-                sb = canvas.bbox(toast["sep"])
-                tx = (sb[2] / self.scale) + gap if sb else tx + 10
-            except Exception:
-                tx += 10
+            tx = _right(toast["sep"]) + gap
         else:
             canvas.itemconfigure(toast["sep"], state="hidden")
 
-        canvas.coords(toast["sub"], tx, y)
         if sub_text:
-            try:
-                bb = canvas.bbox(toast["sub"])
-                tx = (bb[2] / self.scale) + gap if bb else tx + 40
-            except Exception:
-                tx += 40
+            canvas.itemconfigure(toast["sub"], state="normal")
+            _ellipsize(toast["sub"], sub_text, tx)
+            tx = _right(toast["sub"]) + gap
+        else:
+            canvas.itemconfigure(toast["sub"], text="", state="hidden")
 
         if toast["has_detail"] and detail_text:
             prefix = "·  " if sub_text else ""
-            canvas.itemconfigure(toast["detail"], text=prefix + detail_text,
-                                 state="normal")
-            canvas.coords(toast["detail"], tx, y)
+            canvas.itemconfigure(toast["detail"], state="normal")
+            _ellipsize(toast["detail"], prefix + detail_text, tx)
         else:
-            canvas.itemconfigure(toast["detail"], text=detail_text, state="hidden")
+            canvas.itemconfigure(toast["detail"], text="", state="hidden")
 
     def _toast_apply(self, toast, content):
         canvas = toast["canvas"]
         tint = content["tint"]
         toast["tint"] = tint
+        toast["event"] = content.get("event") or "start"
         canvas.itemconfigure(toast["chip"], fill=_tint_for(tint))
         canvas.itemconfigure(toast["icon"], text=content["glyph"], fill=tint)
         canvas.itemconfigure(toast["title"], text=content["title"])
@@ -5960,7 +6006,8 @@ class AppWindow:
         canvas.itemconfigure(toast["drain"], fill=tint)
         self._toast_layout_row(toast)
         self._toast_set_drain(toast, 1.0)
-        self._toast_twinkle(toast, force=True)
+        self._toast_seed_dust(toast)
+        self._toast_animate_dust(toast, force=True)
         # Re-assert topmost: another window may have been raised over it while
         # the toast sat idle between events.
         try:
@@ -5968,25 +6015,131 @@ class AppWindow:
         except Exception:
             pass
 
-    def _toast_twinkle(self, toast, force=False):
-        """Nebula dust near the chip - soft opacity pulse in the event tint.
+    def _toast_donot_round(self, window):
+        """Tell DWM not to round this HWND — rounded preference paints a grey
+        rectangular frame around a chromakey pill."""
+        try:
+            window.update_idletasks()
+            hwnd = (ctypes.windll.user32.GetParent(window.winfo_id())
+                    or window.winfo_id())
+            DWMWA_WINDOW_CORNER_PREFERENCE = 33
+            DWMWC_DONOTROUND = 1
+            value = ctypes.c_int(DWMWC_DONOTROUND)
+            ctypes.windll.dwmapi.DwmSetWindowAttribute(
+                hwnd, DWMWA_WINDOW_CORNER_PREFERENCE,
+                ctypes.byref(value), ctypes.sizeof(value))
+        except Exception:
+            pass
+
+    def _toast_seed_dust(self, toast):
+        """Fresh motion recipe each show: event flavour + random seed."""
+        event = toast.get("event") or "start"
+        style = dv.TOAST_DUST_STYLE.get(event, "drift")
+        # Rare spice so a string of the same event isn't locked to one dance.
+        if random.random() < 0.08:
+            style = random.choice(tuple(set(dv.TOAST_DUST_STYLE.values())))
+        n = len(toast.get("dust") or [])
+        anchor = dv.TOAST_DUST_ANCHOR.get(style, "left")
+        toast["dust_style"] = style
+        toast["dust_anchor"] = anchor
+        toast["dust_t0"] = time.time()
+        # Quieter than the first busy pass, but still clearly alive.
+        toast["dust_speed"] = random.uniform(0.7, 1.15)
+        toast["dust_amp"] = random.uniform(0.65, 1.15)
+        toast["dust_phase"] = [random.uniform(0, math.tau) for _ in range(n)]
+        toast["dust_spin"] = [random.choice((-1.0, 1.0)) for _ in range(n)]
+        # Soften at most one dot so the constellation stays readable.
+        toast["dust_gain"] = [
+            random.uniform(0.7, 0.9) if random.random() < 0.2 else 1.0
+            for _ in range(n)
+        ]
+        w = self.TOAST_PROMPT_W if toast.get("prompt") else self.TOAST_W
+        cy = toast.get("row_y") or (self.TOAST_H / 2)
+        if anchor == "right":
+            # Fan inward from the trailing end so dots stay inside the pill.
+            toast["dust_origin"] = (w - 28, cy)
+            toast["dust_mirror"] = -1.0
+        else:
+            toast["dust_origin"] = (24, cy)
+            toast["dust_mirror"] = 1.0
+
+    def _toast_animate_dust(self, toast, force=False):
+        """Nebula dust — quieter motion, left or right by style.
 
         Toast is its own toplevel, so this never composites the dashboard.
         """
         dust = toast.get("dust") or []
-        if not dust:
+        home = toast.get("dust_home") or []
+        if not dust or len(home) != len(dust):
             return
         tint = toast.get("tint") or ACCENT
-        phase = time.time() * 2.4
+        ox, oy = toast.get("dust_origin") or (22, 28)
+        mirror = float(toast.get("dust_mirror") or 1.0)
+        style = toast.get("dust_style") or "drift"
+        speed = float(toast.get("dust_speed") or 1.0)
+        amp = float(toast.get("dust_amp") or 1.0)
+        phases = toast.get("dust_phase") or [0.0] * len(dust)
+        spins = toast.get("dust_spin") or [1.0] * len(dust)
+        gains = toast.get("dust_gain") or [1.0] * len(dust)
+        t = (time.time() - float(toast.get("dust_t0") or time.time())) * speed
+        canvas = toast["canvas"]
+
         for i, item in enumerate(dust):
-            base = toast["dust_base"][i]
-            wave = 0.55 + 0.45 * (0.5 + 0.5 * math.sin(phase + i * 1.7))
-            alpha = base * (1.0 if force else wave)
+            dx0, dy0, r = home[i]
+            dx0 = dx0 * mirror
+            base = toast["dust_base"][i] * (gains[i] if i < len(gains) else 1.0)
+            phase = phases[i] if i < len(phases) else i * 1.7
+            spin = spins[i] if i < len(spins) else 1.0
+            dist = math.hypot(dx0, dy0) or 1.0
+            ux, uy = dx0 / dist, dy0 / dist
+
+            if force:
+                ox_i, oy_i = dx0, dy0
+                wave = 0.9
+            elif style == "burst":
+                pulse = 0.5 + 0.5 * math.sin(t * 2.8 + phase)
+                reach = (1.8 + 3.6 * pulse) * amp
+                ox_i = dx0 + ux * reach
+                oy_i = dy0 + uy * reach
+                wave = 0.5 + 0.45 * pulse
+            elif style == "sink":
+                settle = min(1.0, t * 0.5)
+                ox_i = dx0 * (1.0 - 0.28 * settle) + 1.0 * amp * math.sin(t + phase)
+                oy_i = dy0 * (1.0 - 0.15 * settle) + settle * (2.8 * amp)
+                wave = 0.65 - 0.2 * settle + 0.12 * math.sin(t * 1.2 + phase)
+            elif style == "drift":
+                ox_i = dx0 + amp * 3.0 * math.sin(t * 1.05 + phase)
+                oy_i = dy0 + amp * 1.8 * math.sin(t * 0.7 + phase * 0.6)
+                wave = 0.55 + 0.4 * (0.5 + 0.5 * math.sin(t * 1.7 + phase))
+            elif style == "rise":
+                lift = min(1.0, t * 0.7)
+                ox_i = dx0 + amp * 1.2 * math.sin(t * 1.4 + phase)
+                oy_i = dy0 - lift * (3.2 + 2.2 * amp) * (0.5 + 0.5 * math.sin(t + phase))
+                wave = 0.5 + 0.45 * (0.4 + 0.6 * lift)
+            elif style == "scatter":
+                ox_i = dx0 + amp * 3.4 * math.sin(t * 4.0 * spin + phase)
+                oy_i = dy0 + amp * 2.8 * math.cos(t * 3.2 * spin + phase * 1.3)
+                wave = 0.4 + 0.5 * abs(math.sin(t * 4.5 + phase))
+            else:  # orbit
+                ang = phase + t * 1.15 * spin
+                radius = dist * (0.88 + 0.18 * amp)
+                ox_i = math.cos(ang) * radius
+                oy_i = math.sin(ang) * radius * 0.72
+                wave = 0.55 + 0.4 * (0.5 + 0.5 * math.sin(t * 1.5 + phase))
+
+            alpha = max(0.08, min(0.95, base * wave))
             try:
-                toast["canvas"].itemconfigure(
-                    item, fill=dv.over(tint, alpha, CARD_CORE))
+                canvas.coords(
+                    item,
+                    ox + ox_i - r, oy + oy_i - r,
+                    ox + ox_i + r, oy + oy_i + r)
+                canvas.itemconfigure(item, fill=dv.over(tint, alpha, CARD_CORE))
             except Exception:
                 pass
+
+    def _toast_twinkle(self, toast, force=False):
+        """Back-compat alias — dust now moves, not only twinkles."""
+        self._toast_animate_dust(toast, force=force)
 
     def _toast_set_drain(self, toast, fraction):
         x0, x1, bar_y = toast["track"]
@@ -6004,13 +6157,18 @@ class AppWindow:
             pass
 
     def _toast_rise_in(self, toast):
-        """"Toast in: rise 16px 320ms" - and fade alongside it."""
+        """Toast in: rise + fade, ease-out — readable, not an instant pop."""
         sw, sh, x, y_end = toast["geom"]
         rise = self._S(dv.TOAST_IN_RISE)
         steps = max(1, dv.TOAST_IN_MS // 16)
+        toast["entering"] = True
 
         def step(i=0):
             if not toast["popup"].winfo_exists():
+                toast["entering"] = False
+                return
+            if toast.get("dismissing"):
+                toast["entering"] = False
                 return
             t = min(1.0, i / steps)
             # Spec easing cubic-bezier(.32,.72,0,1) ≈ ease-out cubic here.
@@ -6019,10 +6177,37 @@ class AppWindow:
                 toast["popup"].geometry(
                     f"{sw}x{sh}+{x}+{int(y_end + rise * (1 - eased))}")
             except Exception:
+                toast["entering"] = False
                 return
             self._toast_alpha(toast, eased)
             if t < 1.0:
                 toast["popup"].after(16, lambda: step(i + 1))
+            else:
+                toast["entering"] = False
+
+        step()
+
+    def _toast_swap_pulse(self, toast):
+        """In-place replace: brief dim then settle, so content doesn't hard-cut."""
+        if toast.get("dismissing") or toast.get("entering"):
+            return
+        steps = max(1, 180 // 16)
+
+        def step(i=0):
+            if not toast["popup"].winfo_exists() or toast.get("dismissing"):
+                return
+            t = min(1.0, i / steps)
+            # Dip to ~0.45 then ease back to 1.
+            if t < 0.35:
+                alpha = 1.0 - (t / 0.35) * 0.55
+            else:
+                u = (t - 0.35) / 0.65
+                alpha = 0.45 + 0.55 * (1 - (1 - u) ** 2)
+            self._toast_alpha(toast, alpha)
+            if t < 1.0:
+                toast["popup"].after(16, lambda: step(i + 1))
+            else:
+                self._toast_alpha(toast, 1.0)
 
         step()
 
@@ -6039,14 +6224,14 @@ class AppWindow:
             return
         life = float(toast.get("life") or dv.TOAST_LIFE_MS)
         self._toast_set_drain(toast, toast["remaining"] / life)
-        self._toast_twinkle(toast)
+        self._toast_animate_dust(toast)
         toast["popup"].after(50, lambda: self._toast_tick(toast))
 
     def _toast_fade_out(self, toast):
-        """"Toast out: fade 200ms." No slide - the spec only fades on the way
-        out, and a replacement arriving mid-fade cancels it (see
-        _toast_replace) rather than racing it."""
+        """Toast out: fade + soft drop so exit mirrors the entrance."""
         steps = max(1, dv.TOAST_OUT_MS // 16)
+        sw, sh, x, y_end = toast["geom"]
+        drop = self._S(max(12, dv.TOAST_IN_RISE // 2))
 
         def step(i=0):
             if not toast["popup"].winfo_exists():
@@ -6057,7 +6242,13 @@ class AppWindow:
                 self._toast_tick(toast)
                 return
             t = min(1.0, i / steps)
-            self._toast_alpha(toast, 1.0 - t)
+            eased = t * t  # ease-in — accelerates as it leaves
+            self._toast_alpha(toast, 1.0 - eased)
+            try:
+                toast["popup"].geometry(
+                    f"{sw}x{sh}+{x}+{int(y_end + drop * eased)}")
+            except Exception:
+                pass
             if t >= 1.0:
                 toast["ticking"] = False
                 timed_out = toast.get("on_timeout")
@@ -6247,7 +6438,7 @@ class AppWindow:
                            self.root.winfo_screenheight())
 
     def _mini_saved_position(self, sw, sh):
-        left, top, right, bottom = self._toast_workarea()
+        left, top, right, bottom = self._monitor_workarea(primary=False)
         key, _rect = self._mini_monitor_key((left + right) / 2, (top + bottom) / 2)
         saved = (self.config.get("mini_overlay_positions") or {}).get(key)
         if saved and len(saved) == 2:
