@@ -1233,16 +1233,23 @@ class AppWindow:
         self.bg.create_text(pad_l + 27, cy, anchor="w", text="Nebula",
                             fill=TEXT, font=dv.font(14, 500))
 
-        # Version badge - reads obsauto.__version__, not a drawn-in string.
-        from . import __version__
+        # Version badge - release number, plus +N when this source tree is
+        # ahead of the last tag (display_version). Width follows the label.
+        from .version import display_version, version_info
+        ver = display_version()
+        info = version_info()
         bx = pad_l + 27 + 48
-        self._glass(bx, cy - 8, 34, 16, tint=ACCENT, radius=5, tint_alpha=34,
+        badge_w = max(34, 12 + len(ver) * 6.2)
+        self._glass(bx, cy - 8, badge_w, 16, tint=ACCENT, radius=5, tint_alpha=34,
                     border_hex=ACCENT, border_alpha=0)
-        self.bg.create_text(bx + 17, cy, text=__version__, fill=ACCENT_LIGHT,
+        self.bg.create_text(bx + badge_w / 2, cy, text=ver, fill=ACCENT_LIGHT,
                             font=dv.font(9.5, mono=True))
+        # Detail (git describe) is only for humans debugging a source tree.
+        if info.get("git"):
+            self._log("[App] %s" % info["detail"])
 
         # Monitoring toggle - same action as the hotkey.
-        mx = bx + 50
+        mx = bx + badge_w + 16
         self._mon_icon = self.bg.create_text(
             mx, cy, anchor="w", text=ICON_GLYPHS[dv.ICONS["idle"]],
             fill=FAINT, font=(ICON_FONT, -13))
@@ -3305,20 +3312,21 @@ class AppWindow:
 
     def _build_settings_updates_footer(self):
         """Check GitHub Releases (exe) or point at the git-pull script (source)."""
-        from . import __version__
         from . import updater as updater_mod
+        from .version import display_version, version_info
 
+        info = version_info()
         foot = ctk.CTkFrame(self._settings_host, fg_color=dv.over(ACCENT, 0.07, dv.CARD_CORE),
                             corner_radius=dv.RADIUS_TILE, border_width=1,
                             border_color=dv.over(ACCENT, 0.18, dv.CARD_CORE))
         foot.pack(fill="x", padx=12, pady=(16, 12))
+        label = display_version()
         if updater_mod.is_frozen():
-            blurb = (f"Running Nebula {__version__} (packaged). Check GitHub "
-                     "Releases and download a newer exe beside this one.")
+            blurb = (f"Running Nebula {label} (packaged). Check GitHub "
+                     "Releases — Install & relaunch replaces this exe.")
         else:
-            blurb = (f"Running Nebula {__version__} from source. On a laptop, "
-                     "pull the latest with scripts\\update-from-github.ps1 — "
-                     "or tap Check below to see if a release is newer.")
+            blurb = (f"Running Nebula {label}. Check for a newer release, or "
+                     "Pull from GitHub to fast-forward this clone.")
         self._settings_updates_label = ctk.CTkLabel(
             foot, text=blurb, anchor="w", justify="left", wraplength=400,
             text_color=ACCENT_LIGHT, font=ctk.CTkFont(size=12))
@@ -3401,15 +3409,88 @@ class AppWindow:
 
         actions = [("Open release", open_page)]
         if updater_mod.is_frozen() and release.get("asset_url"):
-            def download():
+            def install():
                 self._toast_dismiss_now()
-                self._download_update(release)
+                self._install_update(release)
 
-            actions.insert(0, ("Download", download))
+            actions.insert(0, ("Install & relaunch", install))
+        elif not updater_mod.is_frozen() and updater_mod.source_checkout_root():
+            def pull():
+                self._toast_dismiss_now()
+                self._pull_source_update()
+
+            actions.insert(0, ("Pull from GitHub", pull))
         self._toast_replace(
             "prompt", tag, {"title": "Update available"},
             actions=actions,
         )
+
+    def _pull_source_update(self):
+        if getattr(self, "_update_download_busy", False):
+            return
+        self._update_download_busy = True
+        self._log("[Update] Pulling from GitHub…")
+        self._toast_replace("pause", "Pulling from GitHub…")
+
+        def worker():
+            from . import updater as updater_mod
+            result = updater_mod.pull_source_update()
+            self.root.after(0, lambda r=result: self._pull_source_update_done(r))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _pull_source_update_done(self, result):
+        self._update_download_busy = False
+        msg = result.get("message") or ("Done." if result.get("ok") else "Pull failed.")
+        self._log("[Update] %s" % msg)
+        label = getattr(self, "_settings_updates_label", None)
+        if label is not None:
+            try:
+                label.configure(text=msg)
+            except Exception:
+                pass
+        self._toast_replace("start" if result.get("ok") else "error", msg)
+
+    def _install_update(self, release):
+        if getattr(self, "_update_download_busy", False):
+            return
+        self._update_download_busy = True
+        self._log(f"[Update] Downloading {release.get('asset_name')}…")
+        self._toast_replace("pause", "Downloading update…")
+
+        def worker():
+            from . import updater as updater_mod
+            result = {"ok": False, "path": None, "message": ""}
+            try:
+                dest = updater_mod.default_download_path(release.get("asset_name"))
+                path = updater_mod.download_update(
+                    release["asset_url"], dest,
+                    token=self.config.get("github_token") or None)
+                updater_mod.install_and_relaunch(path)
+                result.update(
+                    ok=True, path=path,
+                    message="Installing — Nebula will restart.")
+            except Exception as exc:
+                result["message"] = f"Install failed: {exc}"
+            self.root.after(0, lambda r=result: self._install_update_done(r))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _install_update_done(self, result):
+        self._update_download_busy = False
+        if result["ok"]:
+            self._log(f"[Update] {result['message']}")
+            self._toast_replace("start", result["message"])
+            label = getattr(self, "_settings_updates_label", None)
+            if label is not None:
+                try:
+                    label.configure(text=result["message"])
+                except Exception:
+                    pass
+            self.root.after(400, self.quit)
+        else:
+            self._log(f"[Update] {result['message']}")
+            self._toast_replace("error", result["message"])
 
     def _download_update(self, release):
         if getattr(self, "_update_download_busy", False):

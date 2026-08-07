@@ -1769,6 +1769,12 @@ html, body {
   background: rgb(var(--accent-rgb) / .55);
 }
 .switch.is-on::after { transform: translate3d(18px, 0, 0); }
+.settings-footer-actions {
+  display: inline-flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end;
+}
+.settings-footer-actions .pill[disabled] {
+  opacity: .45; pointer-events: none;
+}
 .settings-footer {
   margin-top: 16px;
   flex: 0 0 auto;

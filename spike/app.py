@@ -178,6 +178,9 @@ class Api:
         self.seed = random.randrange(1, 2 ** 31)
         self._classifier = Classifier(on_log=self._api_log)
         self._settings_saved_at = None
+        self._update_pending = None
+        self._update_last_message = ""
+        self._update_busy = False
         self._log_filter = "All"
         self._goto_pane = None
         self._clips_cache = None
@@ -254,7 +257,12 @@ class Api:
                 "span_labels": dict(dv.SPAN_LABELS),
                 "layout": self._saved_dashboard_layout(),
             },
+            "version": self._version_payload(),
         }
+
+    def _version_payload(self):
+        from obsauto.version import version_info
+        return version_info()
 
     # --- first run (mockup 1l) -----------------------------------------
 
@@ -649,6 +657,7 @@ class Api:
             "config_path": CONFIG_FILE,
             "saved_at": saved,
             "obs_footer": self._settings_obs_footer(),
+            "updates_footer": self._settings_updates_footer(),
             "appearance": self.appearance(),
         }
 
@@ -687,6 +696,156 @@ class Api:
             parts.append("%d ms handshake" % ms)
         text = " · ".join(parts) if parts else "Connected"
         return {"text": text, "can_test": True}
+
+    def _settings_updates_footer(self):
+        """Version + what the Updates pane can do right now."""
+        from obsauto import updater as updater_mod
+        from obsauto.version import version_info
+
+        info = version_info()
+        frozen = info["frozen"]
+        pending = getattr(self, "_update_pending", None) or {}
+        last = getattr(self, "_update_last_message", "") or ""
+        if frozen:
+            blurb = ("Running Nebula %s (packaged). Check GitHub Releases and "
+                     "install over this exe." % info["display"])
+        else:
+            blurb = ("Running Nebula %s. Pull the latest from GitHub, then "
+                     "restart." % info["display"])
+        if last:
+            blurb = last
+        can_install = bool(
+            pending.get("status") == "update"
+            and pending.get("release", {}).get("asset_url")
+            and frozen)
+        can_pull = (not frozen) and bool(updater_mod.source_checkout_root())
+        return {
+            "text": blurb,
+            "kind": info["channel"],
+            "version": info["release"],
+            "display": info["display"],
+            "detail": info["detail"],
+            "status": pending.get("status") or "",
+            "tag": (pending.get("release") or {}).get("tag") or "",
+            "can_install": can_install,
+            "can_pull": can_pull,
+            "busy": bool(getattr(self, "_update_busy", False)),
+        }
+
+    def check_for_update(self):
+        """Hit GitHub Releases. Safe to call from the UI thread — short timeout."""
+        from obsauto import updater as updater_mod
+
+        if self._update_busy:
+            return {"ok": False, "error": "busy",
+                    "updates_footer": self._settings_updates_footer()}
+        self._update_busy = True
+        try:
+            result = updater_mod.check_for_update(
+                token=self.cfg.get("github_token") or None)
+            self._update_pending = result
+            rel = result.get("release") or {}
+            tag = rel.get("tag") or rel.get("version") or "?"
+            if result["status"] == "current":
+                msg = "You're on the latest (%s)." % result["local"]
+            elif result["status"] == "no_asset":
+                msg = ("%s is on GitHub but has no .exe asset yet." % tag)
+            else:
+                msg = "%s is available (you have %s)." % (tag, result["local"])
+            self._update_last_message = msg
+            self._api_log("[Update] %s" % msg)
+            out = {"ok": True, "status": result["status"], "message": msg,
+                   "tag": tag}
+        except Exception as exc:
+            msg = "Update check failed: %s" % exc
+            self._update_last_message = msg
+            self._api_log("[Update] %s" % msg)
+            out = {"ok": False, "error": str(exc), "message": msg}
+        finally:
+            self._update_busy = False
+        out["updates_footer"] = self._settings_updates_footer()
+        return out
+
+    def apply_update(self):
+        """Download the pending release and replace this packaged build.
+
+        Schedules a helper that waits for us to quit, then swaps the exe and
+        relaunches. Source checkouts should call ``pull_source_update`` instead.
+        """
+        from obsauto import updater as updater_mod
+
+        if self._update_busy:
+            return {"ok": False, "error": "busy",
+                    "updates_footer": self._settings_updates_footer()}
+        if not updater_mod.is_frozen():
+            return {"ok": False,
+                    "error": "Packaged builds only — use Pull from GitHub.",
+                    "updates_footer": self._settings_updates_footer()}
+        pending = self._update_pending or {}
+        release = pending.get("release") or {}
+        if pending.get("status") != "update" or not release.get("asset_url"):
+            return {"ok": False, "error": "Nothing to install — check first.",
+                    "updates_footer": self._settings_updates_footer()}
+
+        self._update_busy = True
+        self._update_last_message = "Downloading %s…" % (
+            release.get("asset_name") or "update")
+        try:
+            dest = updater_mod.default_download_path(release.get("asset_name"))
+            path = updater_mod.download_update(
+                release["asset_url"], dest,
+                token=self.cfg.get("github_token") or None)
+            updater_mod.install_and_relaunch(path)
+            self._update_last_message = (
+                "Installing %s — Nebula will restart." % (
+                    release.get("tag") or "update"))
+            self._api_log("[Update] %s" % self._update_last_message)
+            if self._host:
+                threading.Timer(0.4, self._host.quit).start()
+            out = {"ok": True, "message": self._update_last_message,
+                   "relaunching": True}
+        except Exception as exc:
+            msg = "Install failed: %s" % exc
+            self._update_last_message = msg
+            self._api_log("[Update] %s" % msg)
+            out = {"ok": False, "error": str(exc), "message": msg}
+        finally:
+            self._update_busy = False
+        out["updates_footer"] = self._settings_updates_footer()
+        return out
+
+    def pull_source_update(self):
+        """git pull --ff-only for source checkouts."""
+        from obsauto import updater as updater_mod
+
+        if self._update_busy:
+            return {"ok": False, "error": "busy",
+                    "updates_footer": self._settings_updates_footer()}
+        if updater_mod.is_frozen():
+            return {"ok": False,
+                    "error": "Source checkouts only — use Install & relaunch.",
+                    "updates_footer": self._settings_updates_footer()}
+        self._update_busy = True
+        try:
+            result = updater_mod.pull_source_update()
+            self._update_last_message = result.get("message") or ""
+            self._api_log("[Update] %s" % self._update_last_message)
+            out = {"ok": bool(result.get("ok")),
+                   "message": self._update_last_message,
+                   "head": result.get("head") or ""}
+        finally:
+            self._update_busy = False
+        out["updates_footer"] = self._settings_updates_footer()
+        return out
+
+    def open_releases_page(self):
+        import webbrowser
+        pending = self._update_pending or {}
+        release = pending.get("release") or {}
+        url = (release.get("html_url")
+               or "https://github.com/theoriginalcheese/nebula/releases/latest")
+        webbrowser.open(url)
+        return {"ok": True}
 
     def hero_action(self, label):
         """Route a hero button press to the host transport layer."""

@@ -177,17 +177,19 @@ falls back to `obs_path` only if the task is missing.
 
 ### Keeping up to date
 
-- **Packaged `Nebula.exe`:** Settings → Updates → **Check for updates**. That hits GitHub
-  Releases, and on a frozen build can download a newer exe beside the current one (swap after
-  quit). Or grab [releases/latest](https://github.com/theoriginalcheese/nebula/releases/latest)
+- **Packaged `Nebula.exe`:** Settings → Updates → **Check for updates**, then
+  **Install & relaunch**. That downloads the newer exe from GitHub Releases,
+  swaps it over this build after quit, and starts again. Or grab
+  [releases/latest](https://github.com/theoriginalcheese/nebula/releases/latest)
   by hand.
-- **Source clone (`python main.py`):** on the laptop or desktop,
+- **Source clone (`python main.py` / `python spike/app.py`):** Settings → Updates
+  → **Pull from GitHub** (or the script below), then restart Nebula.
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts\update-from-github.ps1
 ```
 
-  That `git fetch` + `git pull --ff-only` from `origin`. Restart Nebula afterwards.
+  That `git fetch` + `git pull --ff-only` from `origin`.
 
 ### Cross-device sync setup
 

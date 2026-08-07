@@ -1918,6 +1918,14 @@ function renderMacropad(d) {
    tokens.css already generates. No second stylesheet, no per-theme rules - the
    preference lands as a handful of variables on :root and everything that
    reads them follows. The ground colours are not among them on purpose. */
+function applyVersion(info) {
+  const badge = $("build-badge");
+  if (!badge || !info) return;
+  badge.textContent = info.display || info.release || "";
+  badge.title = info.detail || "";
+  badge.dataset.channel = info.channel || "";
+}
+
 function applyAppearance(a) {
   if (!a) return;
   const root = document.documentElement;
@@ -1981,6 +1989,22 @@ function renderSettings(d) {
     foot.innerHTML = `
       <span>${esc(s.obs_footer.text)}</span>
       <button class="pill ghost no-drag" id="btn-test-obs">Test again</button>`;
+  } else if (settingsGroup === "updates") {
+    const u = s.updates_footer || { text: "", kind: "source" };
+    const actions = [];
+    actions.push(`<button class="pill ghost no-drag" id="btn-check-update"${u.busy ? " disabled" : ""}>Check for updates</button>`);
+    if (u.can_install) {
+      actions.push(`<button class="pill primary no-drag" id="btn-apply-update"${u.busy ? " disabled" : ""}>Install &amp; relaunch</button>`);
+    } else if (u.can_pull) {
+      actions.push(`<button class="pill primary no-drag" id="btn-pull-update"${u.busy ? " disabled" : ""}>Pull from GitHub</button>`);
+    }
+    if (u.status === "update" || u.status === "no_asset") {
+      actions.push(`<button class="pill ghost no-drag" id="btn-open-release">Open release</button>`);
+    }
+    foot.classList.remove("is-hidden");
+    foot.innerHTML = `
+      <span>${esc(u.text || "")}</span>
+      <span class="settings-footer-actions">${actions.join("")}</span>`;
   } else {
     foot.classList.add("is-hidden");
     foot.innerHTML = "";
@@ -2368,6 +2392,7 @@ function fail(where, err) {
   await ready();
   try {
     bootCfg = await window.pywebview.api.config();
+    applyVersion(bootCfg.version);
     applyAppearance(bootCfg.appearance);
     buildBackdrop(bootCfg.background, bootCfg.seed);
     initDashboard(bootCfg);
@@ -2619,6 +2644,57 @@ document.addEventListener("click", async (e) => {
   if (e.target.closest("#btn-test-obs")) {
     /* Real handshake lands in step 2. Refresh the honest footer for now. */
     await load();
+    return;
+  }
+
+  if (e.target.closest("#btn-check-update")) {
+    const btn = e.target.closest("#btn-check-update");
+    if (btn) btn.disabled = true;
+    try {
+      const r = await window.pywebview.api.check_for_update();
+      if (lastSnapshot && r && r.updates_footer) {
+        lastSnapshot.settings.updates_footer = r.updates_footer;
+        renderSettings(lastSnapshot);
+      } else {
+        await load();
+      }
+    } finally {
+      if (btn) btn.disabled = false;
+    }
+    return;
+  }
+  if (e.target.closest("#btn-apply-update")) {
+    const btn = e.target.closest("#btn-apply-update");
+    if (btn) btn.disabled = true;
+    try {
+      const r = await window.pywebview.api.apply_update();
+      if (lastSnapshot && r && r.updates_footer) {
+        lastSnapshot.settings.updates_footer = r.updates_footer;
+        renderSettings(lastSnapshot);
+      }
+    } catch (_) {
+      if (btn) btn.disabled = false;
+    }
+    return;
+  }
+  if (e.target.closest("#btn-pull-update")) {
+    const btn = e.target.closest("#btn-pull-update");
+    if (btn) btn.disabled = true;
+    try {
+      const r = await window.pywebview.api.pull_source_update();
+      if (lastSnapshot && r && r.updates_footer) {
+        lastSnapshot.settings.updates_footer = r.updates_footer;
+        renderSettings(lastSnapshot);
+      } else {
+        await load();
+      }
+    } finally {
+      if (btn) btn.disabled = false;
+    }
+    return;
+  }
+  if (e.target.closest("#btn-open-release")) {
+    await window.pywebview.api.open_releases_page();
     return;
   }
 

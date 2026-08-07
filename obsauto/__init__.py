@@ -1,6 +1,5 @@
 """Nebula - OBS auto-folder recorder."""
 
-# The v3 titlebar renders a version badge (frame 2a). Rather than drawing the
-# mockup's literal "0.9.2" as decoration, this is the real, single source of
-# truth for it - bump it here and the badge follows.
-__version__ = "0.9.3"
+# Version lives in version.py so the titlebar, Updates pane and updater all
+# share one number. Bump __version__ there when you cut a release tag.
+from .version import __version__, display_version, version_info  # noqa: F401

@@ -140,8 +140,198 @@ def source_checkout_root():
     """Repo root when running from a git clone; else None."""
     if is_frozen():
         return None
-    root = os.path.dirname(APP_DIR) if os.path.basename(APP_DIR) == "obsauto" else APP_DIR
     # APP_DIR in dev is the package parent (repo root).
     if os.path.isdir(os.path.join(APP_DIR, ".git")):
         return APP_DIR
     return None
+
+
+def pull_source_update(root=None, timeout=90):
+    """``git fetch`` + ``git pull --ff-only`` in a source checkout.
+
+    Returns ``{"ok": bool, "message": str, "head": str}``.
+    """
+    import subprocess
+
+    root = root or source_checkout_root()
+    if not root:
+        return {"ok": False, "message": "Not a git checkout.", "head": ""}
+
+    def run(args, t=timeout):
+        kwargs = {
+            "cwd": root,
+            "capture_output": True,
+            "text": True,
+            "timeout": t,
+        }
+        if os.name == "nt" and hasattr(subprocess, "CREATE_NO_WINDOW"):
+            kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
+        return subprocess.run(args, **kwargs)
+
+    def ssh_auth_failed(proc):
+        err = (proc.stderr or proc.stdout or "")
+        return (
+            "Permission denied" in err
+            or "Could not read from remote" in err
+            or "Host key verification failed" in err
+        )
+
+    def https_rewrite_args():
+        """Map whatever SSH origin URL we have onto HTTPS for public fetch.
+
+        Remotes are often ``git@github.com-alias:owner/repo.git`` (custom SSH
+        host), so a hard-coded ``git@github.com:`` insteadOf does nothing.
+        """
+        origin = run(["git", "remote", "get-url", "origin"], t=15)
+        url = (origin.stdout or "").strip()
+        if not url or url.startswith("https://") or url.startswith("http://"):
+            return []
+        # git@host:owner/repo.git  OR  ssh://git@host/owner/repo.git
+        path = ""
+        if url.startswith("git@"):
+            # git@host:path
+            _, _, rest = url.partition(":")
+            path = rest
+        elif url.startswith("ssh://"):
+            # ssh://git@host/path
+            after = url.split("://", 1)[-1]
+            path = after.split("/", 1)[-1] if "/" in after else ""
+        path = path.removeprefix("/").removesuffix(".git")
+        if "/" not in path:
+            path = DEFAULT_REPO
+        https = "https://github.com/%s.git" % path
+        return ["-c", "url.%s.insteadOf=%s" % (https, url)]
+
+    try:
+        rewrite = []
+        fetch = run(["git", "fetch", "origin"])
+        if fetch.returncode != 0 and ssh_auth_failed(fetch):
+            # Dev machines often have SSH remotes without a key loaded.
+            rewrite = https_rewrite_args()
+            if rewrite:
+                fetch = run(["git"] + rewrite + ["fetch", "origin"])
+        if fetch.returncode != 0:
+            err = (fetch.stderr or fetch.stdout or "fetch failed").strip()
+            return {"ok": False, "message": err, "head": ""}
+        branch = run(["git", "rev-parse", "--abbrev-ref", "HEAD"], t=15)
+        name = (branch.stdout or "main").strip() or "main"
+        pull_cmd = ["git"] + rewrite + ["pull", "--ff-only", "origin", name]
+        pull = run(pull_cmd)
+        if pull.returncode != 0 and ssh_auth_failed(pull) and not rewrite:
+            rewrite = https_rewrite_args()
+            if rewrite:
+                pull = run(["git"] + rewrite + [
+                    "pull", "--ff-only", "origin", name])
+        head = run(["git", "log", "-1", "--oneline"], t=15)
+        head_line = (head.stdout or "").strip()
+        if pull.returncode != 0:
+            err = (pull.stderr or pull.stdout or "pull failed").strip()
+            return {"ok": False, "message": err, "head": head_line}
+        out = (pull.stdout or "").strip()
+        if "Already up to date" in out or "Already up-to-date" in out:
+            msg = "Already up to date (%s)." % (head_line or name)
+        else:
+            msg = "Updated to %s. Restart Nebula to load it." % (
+                head_line or name)
+        # Refresh the version badge cache after a successful pull.
+        try:
+            from . import version as version_mod
+            version_mod.git_describe(force=True)
+        except Exception:
+            pass
+        return {"ok": True, "message": msg, "head": head_line}
+    except FileNotFoundError:
+        return {"ok": False, "message": "git is not on PATH.", "head": ""}
+    except subprocess.TimeoutExpired:
+        return {"ok": False, "message": "git timed out.", "head": ""}
+    except Exception as exc:
+        return {"ok": False, "message": str(exc), "head": ""}
+
+
+def install_and_relaunch(update_path, target_path=None, pid=None):
+    """Replace the running packaged exe after this process exits, then relaunch.
+
+    Writes a tiny helper beside the exe, detaches it, and returns. The caller
+    must quit Nebula so the file lock drops. Windows cannot overwrite a running
+    image in place. Uses pythonw (not cmd) so no console window flashes.
+    """
+    import subprocess
+    import textwrap
+
+    if not is_frozen():
+        raise RuntimeError("install_and_relaunch is for packaged builds only")
+    update_path = os.path.abspath(update_path)
+    if not os.path.isfile(update_path):
+        raise RuntimeError("Update file missing: %s" % update_path)
+    target_path = os.path.abspath(target_path or sys.executable)
+    pid = int(pid or os.getpid())
+    work = os.path.dirname(target_path)
+    helper = os.path.join(work, "_nebula_apply_update.py")
+
+    script = textwrap.dedent("""\
+        import os, sys, time, shutil, subprocess
+        target, new, pid = sys.argv[1], sys.argv[2], int(sys.argv[3])
+        # Wait until the old process is gone (file lock released).
+        for _ in range(120):
+            try:
+                import ctypes
+                SYNCHRONIZE = 0x00100000
+                h = ctypes.windll.kernel32.OpenProcess(SYNCHRONIZE, False, pid)
+                if h:
+                    ctypes.windll.kernel32.CloseHandle(h)
+                    time.sleep(0.5)
+                    continue
+            except Exception:
+                pass
+            break
+        else:
+            sys.exit(1)
+        for _ in range(20):
+            try:
+                shutil.copyfile(new, target)
+                break
+            except OSError:
+                time.sleep(0.5)
+        else:
+            sys.exit(2)
+        try:
+            os.remove(new)
+        except OSError:
+            pass
+        flags = 0x00000008 | 0x00000200  # DETACHED | NEW_GROUP
+        subprocess.Popen([target], cwd=os.path.dirname(target),
+                         close_fds=True, creationflags=flags)
+        try:
+            os.remove(__file__)
+        except OSError:
+            pass
+        """)
+    with open(helper, "w", encoding="utf-8", newline="\n") as fh:
+        fh.write(script)
+
+    # Prefer pythonw.exe next to the frozen bootloader's embedded python,
+    # otherwise the same interpreter that packed us (dev) / sys.executable.
+    pyw = sys.executable
+    if pyw.lower().endswith("python.exe"):
+        candidate = pyw[:-len("python.exe")] + "pythonw.exe"
+        if os.path.isfile(candidate):
+            pyw = candidate
+
+    flags = 0
+    if hasattr(subprocess, "DETACHED_PROCESS"):
+        flags |= subprocess.DETACHED_PROCESS
+    if hasattr(subprocess, "CREATE_NEW_PROCESS_GROUP"):
+        flags |= subprocess.CREATE_NEW_PROCESS_GROUP
+    if hasattr(subprocess, "CREATE_NO_WINDOW"):
+        flags |= subprocess.CREATE_NO_WINDOW
+
+    subprocess.Popen(
+        [pyw, helper, target_path, update_path, str(pid)],
+        cwd=work,
+        close_fds=True,
+        creationflags=flags,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    return helper
