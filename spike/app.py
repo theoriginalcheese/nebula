@@ -1536,6 +1536,7 @@ def main():
 
     def _boot():
         host.start_tray()
+        host.start_taskbar_icon()
         host.start_replay()
         host.start_hotkeys()
         host.start_window_watch()

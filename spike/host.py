@@ -162,6 +162,9 @@ class NebulaHost:
         self._handshake_ms = None
         self._video_label = ""
         self._scene_name = ""
+        self._taskbar_icon_stop = threading.Event()
+        self._taskbar_icon_thread = None
+        self._taskbar_icon_handles = []  # keep HICONs alive
 
         self.hotkeys = HotkeyManager(on_log=self._log)
         self._windows = NebulaWindows(self, config)
@@ -291,6 +294,7 @@ class NebulaHost:
             return
         self._quitting = True
         self._abort_connect = True
+        self._taskbar_icon_stop.set()
         self._stop_poll()
         self._log("[App] Quitting.")
         self.hotkeys.unbind_all()
@@ -523,6 +527,16 @@ class NebulaHost:
     def start_tray(self):
         self._tray = tray_app.build_tray_icon(self, None)
         return self._tray
+
+    def start_taskbar_icon(self):
+        """Hover-only orbit on the taskbar / Alt-Tab icon.
+
+        Resting = static mark. Cursor on our taskbar button → orbit frames via
+        Form.Icon / WM_SETICON. Constant spin is too distracting and was
+        deliberately retired; see spike/taskbar_icon.py.
+        """
+        from spike import taskbar_icon
+        taskbar_icon.start(self)
 
     def tray_status(self):
         """Everything the menu and tooltip need, in one snapshot."""

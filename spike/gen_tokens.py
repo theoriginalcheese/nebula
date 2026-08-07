@@ -54,6 +54,10 @@ def scaled_density(px):
 
 
 MARK_PNG = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web", "mark.png")
+MARK_GIF = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web", "mark.gif")
+MARK_WEBP = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web", "mark.webp")
+ROOT_GIF = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                        "nebula_icon.gif")
 
 
 def write_mark_png(size=64):
@@ -72,6 +76,14 @@ def write_mark_png(size=64):
     os.makedirs(os.path.dirname(MARK_PNG), exist_ok=True)
     icon_art.generate_static_icon(size=size).save(MARK_PNG, format="PNG")
     print("wrote %s (%dx%d)" % (MARK_PNG, size, size))
+    # Titlebar uses WebP — true alpha so the mark is seamless on chrome.
+    icon_art.save_webp(MARK_WEBP, size=96, n_frames=60, duration_ms=36)
+    print("wrote %s" % MARK_WEBP)
+    # GIF kept as a fallback / showcase; chromakey transparent, hard cut.
+    icon_art.save_gif(MARK_GIF, size=96, n_frames=60, duration_ms=36)
+    print("wrote %s" % MARK_GIF)
+    icon_art.save_gif(ROOT_GIF, size=256, n_frames=60, duration_ms=36)
+    print("wrote %s" % ROOT_GIF)
 
 
 def main():

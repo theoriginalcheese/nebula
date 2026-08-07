@@ -176,20 +176,27 @@ html, body {
   border-bottom: 1px solid rgb(var(--hairline-rgb) / var(--hairline-a));
 }
 
-.brand { display: flex; align-items: center; gap: 10px; }
-/* The app icon, not a dot. The accent dot read nicely but threw the icon away;
-   the glow behind it was the part worth keeping, so it stays. Two background
-   layers - the icon over its own halo - rather than a pseudo-element, so there
-   is no stacking context to fight. mark.png is generated from icon_art by
-   spike/gen_tokens.py; it is the same art the .ico is built from.
-   ⚠️ Only THIS mark becomes the icon. Every other dot in the app - the rail's
-   active-tab dot, live dots, status dots - stays a dot. */
+.brand {
+  display: flex; align-items: center; gap: 10px;
+  cursor: default;
+}
+/* Always-on orbit mark at rest size — WebP has real alpha so it sits seamless
+   on the chrome (GIF baked an opaque square). Taskbar hover-orbit is separate
+   (spike/taskbar_icon.py). Reduced-motion falls back to the static PNG.
+   ⚠️ Only THIS mark becomes the icon. Every other dot in the app stays a dot. */
 .mark {
   width: 18px; height: 18px;
   background:
-    url("mark.png") center / contain no-repeat,
+    url("mark.webp") center / contain no-repeat,
     radial-gradient(closest-side, rgb(var(--accent-rgb) / .3), transparent 70%);
-  filter: drop-shadow(0 0 5px rgb(var(--accent-rgb) / .5));  /* static, never animated */
+  filter: drop-shadow(0 0 5px rgb(var(--accent-rgb) / .5));
+}
+@media (prefers-reduced-motion: reduce) {
+  .mark {
+    background:
+      url("mark.png") center / contain no-repeat,
+      radial-gradient(closest-side, rgb(var(--accent-rgb) / .3), transparent 70%);
+  }
 }
 .wordmark {
   font-size: var(--t-body-size); font-weight: var(--t-body-weight);
