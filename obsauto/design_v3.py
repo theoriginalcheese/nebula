@@ -319,6 +319,7 @@ ICONS = {
     "dashboard": "broadcast",
     "clips": "film-strip",
     "games": "game-controller",
+    "remote": "wifi-high",
     "macropad": "keyboard",
     "settings": "sliders-horizontal",
     # transport
@@ -680,17 +681,19 @@ BACKGROUND_MOTION_UNUSED = {
 # v2's "recordings" pane is v3's "clips"; "activity" is folded into the
 # dashboard as a block rather than being its own rail entry.
 
-PANES = ["dashboard", "clips", "games", "macropad", "settings"]
+PANES = ["dashboard", "clips", "games", "remote", "macropad", "settings"]
 
 PANE_TITLES = {
     "dashboard": "Dashboard",
     "clips": "Clips",
     "games": "Games",
+    "remote": "Remote streaming",
     "macropad": "Macropad",
     "settings": "Settings",
 }
 
 PANE_EYEBROWS = {
     "dashboard": "Live session",
+    "remote": "Moonlight · Tailscale",
     "settings": "Writes config.json on blur",
 }

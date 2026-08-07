@@ -158,14 +158,18 @@ def pull_source_update(root=None, timeout=90):
         return {"ok": False, "message": "Not a git checkout.", "head": ""}
 
     def run(args, t=timeout):
+        from .silent_proc import resolve_git, run_kwargs
+        # Rewrite bare "git" to the non-flashing binary (Git\cmd\git.exe
+        # re-execs and briefly pops a console under pythonw).
+        if args and args[0] == "git":
+            args = [resolve_git()] + list(args[1:])
         kwargs = {
             "cwd": root,
             "capture_output": True,
             "text": True,
             "timeout": t,
         }
-        if os.name == "nt" and hasattr(subprocess, "CREATE_NO_WINDOW"):
-            kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
+        kwargs.update(run_kwargs())
         return subprocess.run(args, **kwargs)
 
     def ssh_auth_failed(proc):

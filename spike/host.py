@@ -131,6 +131,7 @@ class NebulaHost:
         self.obs = None
         self.monitor = None
         self.classifier = None
+        self.offloader = None
         self._visible = False
         self._awake = True
         self._suspended = False
@@ -146,6 +147,7 @@ class NebulaHost:
         self._obs_connected = False
         self._is_recording = False
         self._is_paused = False
+        self._pause_reason = None   # "idle" | "session" | None — monitor auto-pause
         self._monitoring_on = False
         self._connecting = False
         self._abort_connect = False
@@ -162,6 +164,8 @@ class NebulaHost:
         self._handshake_ms = None
         self._video_label = ""
         self._scene_name = ""
+        self._offload_pending = 0
+        self._offload_reachability = None
         self._taskbar_icon_stop = threading.Event()
         self._taskbar_icon_thread = None
         self._taskbar_icon_handles = []  # keep HICONs alive
@@ -178,6 +182,7 @@ class NebulaHost:
     def attach_backend(self, classifier, offloader=None):
         """Wire OBSClient + Monitor. Call once before start_hotkeys/autostart."""
         self.classifier = classifier
+        self.offloader = offloader
         self.obs = OBSClient(
             self.config["obs_host"], self.config["obs_port"],
             self.config.get("obs_password", ""),
@@ -192,6 +197,37 @@ class NebulaHost:
             offloader=offloader,
             on_record_prompt=self._on_record_prompt,
         )
+
+    def on_offload_state(self, pending, reachability=None):
+        """Offloader worker callback — pending count + Tailscale-aware code."""
+        self._offload_pending = pending
+        if reachability is not None:
+            self._offload_reachability = reachability
+
+    def pause_reason(self):
+        return self._pause_reason
+
+    def offload_status(self):
+        """Snapshot for Settings → Offload. Prefer the offloader's full status."""
+        offloader = getattr(self, "offloader", None)
+        if offloader is not None:
+            try:
+                snap = offloader.status_snapshot()
+                self._offload_pending = snap.get("pending") or 0
+                reach = snap.get("reachability")
+                if reach:
+                    self._offload_reachability = reach
+                return snap
+            except Exception:
+                pass
+        pending = self._offload_pending
+        reach = self._offload_reachability
+        return {"pending": pending, "reachability": reach,
+                "enabled": bool(offloader and offloader.enabled),
+                "can_sync": False, "busy": False, "message": "",
+                "peer": "", "reach_label": "", "mode": "", "root": "",
+                "last_scan_ago": "", "last_success_ago": "",
+                "interval_hours": 0, "next_scan_in_s": None}
 
     # --- marshalling ----------------------------------------------------
 
@@ -543,7 +579,8 @@ class NebulaHost:
         state = self.hero_state()
         heading = {
             "recording": "Recording",
-            "paused": "Paused",
+            "paused": ("Paused — stream ended"
+                       if self._pause_reason == "session" else "Paused"),
             "idle": "Watching for a game",
             "disconnected": "OBS disconnected",
         }[state]
@@ -552,6 +589,8 @@ class NebulaHost:
         elapsed = self._tray_elapsed
         if state in ("recording", "paused") and game:
             detail = "%s \u00b7 %s" % (game, elapsed) if elapsed else game
+            if state == "paused" and self._pause_reason == "session":
+                detail = ("%s \u00b7 stream ended" % detail) if detail else "stream ended"
         elif state == "disconnected":
             detail = "%s:%s" % (self.config.get("obs_host", "localhost"),
                                 self.config.get("obs_port", 4455))
@@ -559,6 +598,16 @@ class NebulaHost:
             detail = game
         else:
             detail = "No game in focus"
+
+        pending = self._offload_pending
+        reach = self._offload_reachability
+        if pending and reach and str(reach).startswith("nas_down"):
+            wait = "%d clip%s waiting on NAS" % (
+                pending, "s" if pending != 1 else "")
+            if state == "idle" and detail == "No game in focus":
+                detail = wait
+            elif state == "idle":
+                detail = "%s \u00b7 %s" % (detail, wait)
 
         monitoring = bool(self.monitor and self.monitor._running)
         return {"state": state, "heading": heading, "detail": detail,
@@ -705,6 +754,11 @@ class NebulaHost:
         self.call_soon(apply)
 
     def _on_notify(self, event, display_name, details=None):
+        details = details or {}
+        if event == "pause" and "reason" in details:
+            self._pause_reason = details.get("reason")
+        elif event in ("resume", "stop", "start"):
+            self._pause_reason = None
         self._log("[Monitor] %s %s" % (event, display_name))
         # 2i: one slot for the whole process life - replace in place,
         # never stack. The window owns that rule; this only feeds it.
@@ -712,6 +766,7 @@ class NebulaHost:
             self._windows.toast_replace(event, display_name, details)
         except Exception as exc:
             self._log("[Toast] %s" % exc)
+        self.call_soon(self.refresh_tray_icon)
 
     # --- status poll ----------------------------------------------------
 

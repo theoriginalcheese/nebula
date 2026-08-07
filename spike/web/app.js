@@ -15,6 +15,8 @@ const PANE_META = {
     actions: "clips" },
   games:     { title: "Games", eyebrow: "What the classifier has learned",
     actions: [["btn-rescan", "Rescan library"]] },
+  remote:    { title: "Remote streaming", eyebrow: "Moonlight · Tailscale",
+    actions: [] },
   macropad:  { title: "Macropad", eyebrow: "No HID layer",
     actions: [] },
   settings:  { title: "Settings", eyebrow: "Writes config.json on blur",
@@ -1741,6 +1743,7 @@ const PALETTE_GLYPHS = {
     dashboard: "\uE704",
     clips: "\uE714",
     games: "\uE7FC",
+    remote: "\uE701",       /* Wifi */
     macropad: "\uE765",
     settings: "\uE9E9",
   },
@@ -1914,6 +1917,181 @@ function renderMacropad(d) {
   $("macropad-foot").textContent = m.foot;
 }
 
+function fillRemoteMeta(el, text) {
+  if (!el) return;
+  if (text) {
+    el.hidden = false;
+    el.textContent = text;
+  } else {
+    el.hidden = true;
+    el.textContent = "";
+  }
+}
+
+function fillRemotePeers(el, peers) {
+  if (!el) return;
+  el.innerHTML = "";
+  if (!peers || !peers.length) {
+    el.hidden = true;
+    return;
+  }
+  el.hidden = false;
+  for (const p of peers) {
+    const li = document.createElement("li");
+    if (p.online) li.classList.add("is-online");
+    if (p.active) li.classList.add("is-active");
+    if (p.nas) li.classList.add("is-nas");
+    const left = document.createElement("div");
+    left.className = "remote-peer-main";
+    const name = document.createElement("span");
+    name.className = "remote-peer-name";
+    name.textContent = p.name || "—";
+    left.appendChild(name);
+    if (p.ip) {
+      const ip = document.createElement("span");
+      ip.className = "remote-peer-ip";
+      ip.textContent = p.ip;
+      left.appendChild(ip);
+    }
+    const status = document.createElement("span");
+    status.className = "remote-peer-status";
+    status.textContent = p.status || "";
+    li.appendChild(left);
+    li.appendChild(status);
+    el.appendChild(li);
+  }
+}
+
+function renderRemote(d) {
+  const r = d.remote;
+  if (!r) return;
+  const blurb = $("remote-blurb");
+  if (blurb) blurb.textContent = r.blurb || "";
+
+  const moon = Object.assign({}, r.moonlight || {});
+  // Dev preview: ?moonlive=1 forces the live orb colours without a real stream.
+  if (/\bmoonlive=1\b/.test(location.search || "")) {
+    moon.state = "live";
+    moon.label = "Stream live";
+    moon.detail = "Preview — orb colours while a remote session is live.";
+  }
+  const moonState = moon.state || "unknown";
+  const moonDot = $("moon-dot");
+  if (moonDot) moonDot.dataset.state = moonState;
+  const moonOrb = $("moon-orb");
+  if (moonOrb) moonOrb.dataset.state = moonState;
+  $("moon-status").textContent = moon.label || "—";
+  $("moon-detail").textContent = moon.detail || "";
+  const moonNote = $("moon-note");
+  if (moonNote) {
+    if (moon.note) {
+      moonNote.hidden = false;
+      moonNote.textContent = moon.note;
+    } else {
+      moonNote.hidden = true;
+      moonNote.textContent = "";
+    }
+  }
+  const moonVer = $("moon-ver");
+  if (moonVer) {
+    if (moon.version) {
+      moonVer.hidden = false;
+      moonVer.textContent = moon.version;
+    } else {
+      moonVer.hidden = true;
+      moonVer.textContent = "";
+    }
+  }
+  const hostEl = $("moon-host");
+  const host = moon.host;
+  if (hostEl) {
+    if (host && (host.name || host.addr)) {
+      hostEl.hidden = false;
+      const hn = $("moon-host-name");
+      const ha = $("moon-host-addr");
+      if (hn) hn.textContent = host.name || "";
+      if (ha) {
+        ha.textContent = host.addr || "";
+        ha.hidden = !host.addr;
+      }
+    } else {
+      hostEl.hidden = true;
+    }
+  }
+
+  const ctrl = moon.control || {};
+  const target = $("moon-target");
+  if (target) {
+    if (ctrl.host) {
+      target.hidden = false;
+      target.textContent = `Connect · ${ctrl.host} · ${ctrl.app || "Desktop"} · ${ctrl.display_mode || "borderless"}`;
+    } else if (!ctrl.installed) {
+      target.hidden = false;
+      target.textContent = "Moonlight not found — set the path in Settings.";
+    } else {
+      target.hidden = false;
+      target.textContent = "Set a host in Settings to enable Connect.";
+    }
+  }
+  const btnConnect = $("btn-moon-connect");
+  const btnDisc = $("btn-moon-disconnect");
+  const btnOpen = $("btn-moon-open");
+  if (btnConnect) btnConnect.disabled = !ctrl.can_connect;
+  if (btnDisc) btnDisc.disabled = !ctrl.client_running && moon.state !== "live";
+  if (btnOpen) btnOpen.disabled = !ctrl.installed;
+
+  const tail = r.tailscale || {};
+  const tailDot = $("tail-dot");
+  if (tailDot) tailDot.dataset.state = tail.state || "unknown";
+  $("tail-status").textContent = tail.label || "—";
+  $("tail-detail").textContent = tail.detail || "";
+  fillRemoteMeta($("tail-meta"), tail.meta || "");
+  fillRemotePeers($("tail-peers"), tail.peers);
+
+  const offCard = $("remote-offload-card");
+  const offText = $("remote-offload");
+  if (offCard && offText) {
+    if (r.offload && r.offload.enabled && r.offload.text) {
+      offCard.hidden = false;
+      offText.textContent = r.offload.text;
+    } else {
+      offCard.hidden = true;
+      offText.textContent = "";
+    }
+  }
+}
+
+async function moonlightAction(kind) {
+  const msg = $("moon-action-msg");
+  const setMsg = (text, ok) => {
+    if (!msg) return;
+    if (!text) { msg.hidden = true; msg.textContent = ""; return; }
+    msg.hidden = false;
+    msg.textContent = text;
+    msg.classList.toggle("is-ok", !!ok);
+  };
+  try {
+    let r;
+    if (kind === "connect") r = await window.pywebview.api.moonlight_connect();
+    else if (kind === "disconnect") r = await window.pywebview.api.moonlight_disconnect();
+    else r = await window.pywebview.api.moonlight_open();
+    if (!r || !r.ok) {
+      setMsg((r && r.error) || "Moonlight action failed", false);
+    } else if (r.message) {
+      setMsg(r.message, true);
+    } else if (kind === "connect") {
+      setMsg(`Connecting to ${r.host} · ${r.app}…`, true);
+    } else if (kind === "disconnect") {
+      setMsg("Disconnect requested.", true);
+    } else {
+      setMsg("Moonlight UI opened.", true);
+    }
+    await load();
+  } catch (e) {
+    setMsg(String(e), false);
+  }
+}
+
 /* The appearance layer: four keys, and each one is an override of tokens that
    tokens.css already generates. No second stylesheet, no per-theme rules - the
    preference lands as a handful of variables on :root and everything that
@@ -1944,6 +2122,21 @@ function applyAppearance(a) {
   }
 }
 
+/* Settings fields write on blur. The 1–5s snapshot poll used to rebuild
+   #settings-fields from the last saved config while you were still typing,
+   which wiped the caret and snapped values back mid-edit. Freeze the field
+   DOM while focus (or an open listbox) is inside it; nav + footer still
+   refresh so Sync now / Updates stay live. */
+function settingsFieldsLocked() {
+  if (currentPane !== "settings") return false;
+  const host = $("settings-fields");
+  if (!host) return false;
+  const ae = document.activeElement;
+  if (ae && host.contains(ae)) return true;
+  if (listboxState.host && host.contains(listboxState.host)) return true;
+  return false;
+}
+
 function renderSettings(d) {
   const s = d.settings;
   applyAppearance(s.appearance);
@@ -1960,36 +2153,72 @@ function renderSettings(d) {
 
   const fields = s.fields.filter((f) => f.group === settingsGroup);
   const host = $("settings-fields");
+  const preserveFields = settingsFieldsLocked()
+    && host.dataset.group === settingsGroup
+    && host.childElementCount > 0;
 
-  // Pair host/port and password/reconnect when both present (frame 2c grid).
-  const used = new Set();
-  const chunks = [];
-  const pairWith = {
-    obs_host: "obs_port",
-    obs_password: "reconnect_interval_seconds",
-  };
-  for (const f of fields) {
-    if (used.has(f.key)) continue;
-    const mateKey = pairWith[f.key];
-    const mate = mateKey && fields.find((x) => x.key === mateKey);
-    if (mate) {
-      used.add(f.key); used.add(mate.key);
-      chunks.push(`<div class="field-row-2">${fieldHtml(f)}${fieldHtml(mate)}</div>`);
-    } else {
-      used.add(f.key);
-      chunks.push(fieldHtml(f));
+  if (!preserveFields) {
+    // Pair host/port and password/reconnect when both present (frame 2c grid).
+    const used = new Set();
+    const chunks = [];
+    const pairWith = {
+      obs_host: "obs_port",
+      obs_password: "reconnect_interval_seconds",
+    };
+    for (const f of fields) {
+      if (used.has(f.key)) continue;
+      const mateKey = pairWith[f.key];
+      const mate = mateKey && fields.find((x) => x.key === mateKey);
+      if (mate) {
+        used.add(f.key); used.add(mate.key);
+        chunks.push(`<div class="field-row-2">${fieldHtml(f)}${fieldHtml(mate)}</div>`);
+      } else {
+        used.add(f.key);
+        chunks.push(fieldHtml(f));
+      }
     }
+    host.innerHTML = chunks.join("");
+    host.dataset.group = settingsGroup;
+    host.querySelectorAll(".listbox").forEach(bindListboxValue);
   }
-  host.innerHTML = chunks.join("");
-  host.querySelectorAll(".listbox").forEach(bindListboxValue);
 
   const foot = $("settings-footer");
   if (settingsGroup === "obs") {
     foot.classList.remove("is-hidden");
+    foot.classList.remove("settings-footer-stack");
     foot.innerHTML = `
       <span>${esc(s.obs_footer.text)}</span>
       <button class="pill ghost no-drag" id="btn-test-obs">Test again</button>`;
+  } else if (settingsGroup === "offload") {
+    const sync = s.sync_footer || { text: "", rows: [], can_sync: false };
+    const rows = (sync.rows || []).map((r) =>
+      `<div class="offload-stat-row"><span class="offload-stat-k">${esc(r.label)}</span>`
+      + `<span class="offload-stat-v">${esc(r.value)}</span></div>`).join("");
+    const actions = [];
+    if (sync.can_sync) {
+      actions.push(`<button class="pill primary no-drag" id="btn-sync-offload"${sync.busy ? " disabled" : ""}>Sync now</button>`);
+    }
+    foot.classList.remove("is-hidden");
+    foot.classList.add("settings-footer-stack");
+    foot.innerHTML = `
+      <div class="offload-stat">
+        <div class="offload-stat-head">${esc(sync.headline || sync.text || "")}</div>
+        ${rows ? `<div class="offload-stat-rows">${rows}</div>` : ""}
+        ${sync.gamesync_note ? `<div class="offload-stat-note">${esc(sync.gamesync_note)}</div>` : ""}
+      </div>
+      <span class="settings-footer-actions">${actions.join("")}</span>`;
+  } else if (settingsGroup === "gamesync" || settingsGroup === "remote") {
+    const sync = s.sync_footer || { text: "" };
+    foot.classList.remove("settings-footer-stack");
+    if (settingsGroup === "remote") {
+      foot.classList.remove("is-hidden");
+      foot.innerHTML = `<span>Host and app are written on blur — then use Connect on Remote streaming.</span>`;
+    } else {
+      foot.classList.remove("is-hidden");
+      foot.innerHTML = `<span>${esc(sync.text || "")}</span>`;
+    }
   } else if (settingsGroup === "updates") {
+    foot.classList.remove("settings-footer-stack");
     const u = s.updates_footer || { text: "", kind: "source" };
     const actions = [];
     actions.push(`<button class="pill ghost no-drag" id="btn-check-update"${u.busy ? " disabled" : ""}>Check for updates</button>`);
@@ -2007,6 +2236,7 @@ function renderSettings(d) {
       <span class="settings-footer-actions">${actions.join("")}</span>`;
   } else {
     foot.classList.add("is-hidden");
+    foot.classList.remove("settings-footer-stack");
     foot.innerHTML = "";
   }
 
@@ -2078,6 +2308,7 @@ async function load() {
   renderGames(d);
   renderProfilePanel();
   renderMacropad(d);
+  renderRemote(d);
   renderSettings(d);
   ensureSpots();
 }
@@ -2392,8 +2623,8 @@ function fail(where, err) {
   await ready();
   try {
     bootCfg = await window.pywebview.api.config();
-    applyVersion(bootCfg.version);
     applyAppearance(bootCfg.appearance);
+    applyVersion(bootCfg.version);
     buildBackdrop(bootCfg.background, bootCfg.seed);
     initDashboard(bootCfg);
     wireDashCustomise();
@@ -2409,6 +2640,7 @@ function fail(where, err) {
     try {
       const r = await window.pywebview.api.consume_goto_pane();
       if (r && r.pane) bootPane = r.pane;
+      if (r && r.group) settingsGroup = r.group;
     } catch (_) { /* bridge not ready */ }
     showPane(bootPane);
     let pollMs = 5000;
@@ -2426,7 +2658,10 @@ function fail(where, err) {
     setInterval(async () => {
       try {
         const r = await window.pywebview.api.consume_goto_pane();
-        if (r && r.pane) showPane(r.pane);
+        if (r && r.pane) {
+          if (r.group) settingsGroup = r.group;
+          showPane(r.pane);
+        }
       } catch (_) { /* bridge not ready */ }
     }, 400);
     const bootQ = new URLSearchParams(location.search);
@@ -2536,6 +2771,15 @@ document.addEventListener("click", async (e) => {
     return;
   }
 
+  if (e.target.closest("#btn-moon-connect")) {
+    return moonlightAction("connect");
+  }
+  if (e.target.closest("#btn-moon-disconnect")) {
+    return moonlightAction("disconnect");
+  }
+  if (e.target.closest("#btn-moon-open")) {
+    return moonlightAction("open");
+  }
   if (e.target.closest("#btn-close")) return window.pywebview.api.close();
   if (e.target.closest("#btn-min")) return window.pywebview.api.minimise();
   if (e.target.closest("#btn-refresh")) return load();
@@ -2647,6 +2891,23 @@ document.addEventListener("click", async (e) => {
     return;
   }
 
+  if (e.target.closest("#btn-sync-offload")) {
+    const btn = e.target.closest("#btn-sync-offload");
+    if (btn) btn.disabled = true;
+    try {
+      const r = await window.pywebview.api.sync_offload_now();
+      if (lastSnapshot && r && r.sync_footer) {
+        lastSnapshot.settings.sync_footer = r.sync_footer;
+        renderSettings(lastSnapshot);
+      } else {
+        await load();
+      }
+    } finally {
+      if (btn) btn.disabled = false;
+    }
+    return;
+  }
+
   if (e.target.closest("#btn-check-update")) {
     const btn = e.target.closest("#btn-check-update");
     if (btn) btn.disabled = true;
@@ -2671,6 +2932,9 @@ document.addEventListener("click", async (e) => {
       if (lastSnapshot && r && r.updates_footer) {
         lastSnapshot.settings.updates_footer = r.updates_footer;
         renderSettings(lastSnapshot);
+      }
+      if (r && !r.ok && r.message) {
+        /* stay on the pane with the error text in the footer */
       }
     } catch (_) {
       if (btn) btn.disabled = false;

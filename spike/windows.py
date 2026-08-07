@@ -205,9 +205,11 @@ def _make_transparent(window, host=None):
         try:
             hwnd = int(window.native.Handle.ToInt64())
             pref = ctypes.c_int(2)   # DWMWCP_ROUND
+            # Plain Python ints for hwnd/attr — wrapping them in c_void_p /
+            # c_int blows up on some Python 3.12 builds with
+            # TypeError: 'c_long' object cannot be interpreted as an integer.
             ctypes.windll.dwmapi.DwmSetWindowAttribute(
-                ctypes.c_void_p(hwnd), ctypes.c_int(33),
-                ctypes.byref(pref), ctypes.sizeof(pref))
+                hwnd, 33, ctypes.byref(pref), ctypes.sizeof(pref))
         except Exception as exc:
             if host is not None and hasattr(host, "_log"):
                 host._log("[Windows] DWM round failed: %s" % exc)
@@ -591,6 +593,8 @@ def _toast_content(event, display_name, details):
         "error": "Something went wrong",
         "prompt": "Record again?",
     }.get(event) or _humanise(event)
+    if event == "pause" and isinstance(details, dict) and details.get("reason") == "session":
+        title = "Stream ended — paused"
     if isinstance(details, dict) and details.get("title"):
         title = details["title"]
     parts = []
@@ -927,8 +931,12 @@ class OverlayController:
                 self._window.hide()
             except Exception:
                 pass
+        # host.show() → _sleep(True) → evaluate_js on the MAIN window. We are
+        # on the GUI thread here (hide() uses _run_on_gui), so calling show()
+        # inline deadlocks the pump — Windows marks Nebula Not Responding and
+        # the overlay/toast stick on screen. Same trap as _show_gui → hide.
         if restore and self._host and hasattr(self._host, "show"):
-            self._host.show()
+            _off_gui(self._host.show)
 
     def sync(self):
         """Mirror host poll onto the overlay; close when recording ends."""

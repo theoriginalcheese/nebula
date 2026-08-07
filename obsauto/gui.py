@@ -1,3 +1,9 @@
+"""OBSOLETE — Tk / CustomTkinter shell.
+
+Shipping UI is the v4 WebView in ``spike/``. ``python main.py`` launches
+that path. This module remains so older GUI tests can import ``AppWindow``;
+do not add product features here.
+"""
 import contextlib
 import ctypes
 import math
@@ -539,6 +545,8 @@ class AppWindow:
         self._tray_icon_state = None  # last icon pushed, so we only swap on change
         self._is_recording = False  # tracked from OBS's own GetRecordStatus, not a client-side timestamp
         self._is_paused = False
+        self._pause_reason = None   # "idle" | "session" | None — from monitor auto-pause
+        self._offload_reachability = None  # last offloader diagnose() code
         # Defined before any builder runs: _set_hero_state consults it through
         # _hero_vis, and the dashboard's builder can reach it before
         # _build_views has finished assigning views.
@@ -3245,14 +3253,76 @@ class AppWindow:
             self._build_ffmpeg_notice()
 
         if self._settings_group in ("gamesync", "offload"):
-            # 6.3: "Sync status belongs in Settings -> Sync." It used to be a
-            # stat tile on the dashboard, where a live queue depth had no
-            # business sitting in a read-only display row.
-            self._settings_sync_label = ctk.CTkLabel(
-                self._settings_host, text=self._sync_status_text(), anchor="w",
-                justify="left", wraplength=520, text_color=ACCENT_LIGHT,
-                font=ctk.CTkFont(size=12))
-            self._settings_sync_label.pack(anchor="w", padx=12, pady=(16, 12))
+            # 6.3: "Sync status belongs in Settings -> Sync."
+            if self._settings_group == "offload":
+                self._build_settings_offload_footer()
+            else:
+                self._settings_sync_label = ctk.CTkLabel(
+                    self._settings_host, text=self._sync_status_text(), anchor="w",
+                    justify="left", wraplength=520, text_color=ACCENT_LIGHT,
+                    font=ctk.CTkFont(size=12))
+                self._settings_sync_label.pack(anchor="w", padx=12, pady=(16, 12))
+                self._settings_offload_btn = None
+
+    def _build_settings_offload_footer(self):
+        """NAS status card + Sync now — queue depth, Tailscale, last run."""
+        foot = ctk.CTkFrame(self._settings_host, fg_color=dv.over(ACCENT, 0.07, dv.CARD_CORE),
+                            corner_radius=dv.RADIUS_TILE, border_width=1,
+                            border_color=dv.over(ACCENT, 0.18, dv.CARD_CORE))
+        foot.pack(fill="x", padx=12, pady=(16, 12))
+        self._settings_sync_label = ctk.CTkLabel(
+            foot, text=self._sync_status_text(), anchor="w", justify="left",
+            wraplength=400, text_color=ACCENT_LIGHT, font=ctk.CTkFont(size=12))
+        self._settings_sync_label.pack(side="left", padx=14, pady=10, fill="x", expand=True)
+        self._settings_offload_btn = ctk.CTkButton(
+            foot, text="Sync now", command=self._sync_offload_now,
+            fg_color="transparent", hover_color=SURFACE_HOVER, text_color=TEXT,
+            border_width=1, border_color=dv.over(ACCENT, 0.42, dv.CARD_CORE),
+            corner_radius=999, font=ctk.CTkFont(size=12), width=110, height=34)
+        self._focus_ring(self._settings_offload_btn)
+        self._settings_offload_btn.pack(side="right", padx=8, pady=8)
+        if not (self.offloader and self.offloader.enabled):
+            try:
+                self._settings_offload_btn.configure(state="disabled")
+            except Exception:
+                pass
+
+    def _sync_offload_now(self):
+        if getattr(self, "_offload_sync_busy", False):
+            return
+        if not self.offloader or not self.offloader.enabled:
+            return
+        self._offload_sync_busy = True
+        btn = getattr(self, "_settings_offload_btn", None)
+        if btn is not None:
+            try:
+                btn.configure(state="disabled", text="Syncing…")
+            except Exception:
+                pass
+        self._log("[Offload] Sync now…")
+
+        def worker():
+            try:
+                result = self.offloader.sync_now(
+                    self.config.get("recording_root"))
+            except Exception as exc:
+                result = {"ok": False, "message": str(exc)}
+            self.root.after(0, lambda r=result: self._sync_offload_now_done(r))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _sync_offload_now_done(self, result):
+        self._offload_sync_busy = False
+        msg = result.get("message") or ("Done." if result.get("ok") else "Sync failed.")
+        self._log("[Offload] %s" % msg)
+        btn = getattr(self, "_settings_offload_btn", None)
+        if btn is not None:
+            try:
+                btn.configure(state="normal", text="Sync now")
+            except Exception:
+                pass
+        self._refresh_sync_status()
+        self._toast_replace("start" if result.get("ok") else "error", msg)
 
     def _build_ffmpeg_notice(self):
         """One dismissible row offering the ffmpeg download (7f).
@@ -3487,6 +3557,7 @@ class AppWindow:
                     label.configure(text=result["message"])
                 except Exception:
                     pass
+            # Helper is waiting for this process to exit.
             self.root.after(400, self.quit)
         else:
             self._log(f"[Update] {result['message']}")
@@ -4018,11 +4089,16 @@ class AppWindow:
             return
         tint = dv.HERO_STATES[state]["tint"] or CARD_BORDER
         light = EMBER if tint is EMBER else ACCENT_LIGHT
+        if state == "paused" and getattr(self, "_pause_reason", None) == "session":
+            paused_eyebrow = "Paused — stream ended"
+        else:
+            paused_eyebrow = (
+                f"Paused - idle {self.config.get('idle_timeout_seconds', 4)} s")
         eyebrow = {
             "disconnected": "OBS disconnected",
             "watching": "Idle - watching",
             "recording": "Recording",
-            "paused": f"Paused - idle {self.config.get('idle_timeout_seconds', 4)} s",
+            "paused": paused_eyebrow,
         }[state]
         sub = {
             "disconnected": "Can't reach OBS",
@@ -4092,11 +4168,17 @@ class AppWindow:
         # claiming "idle" while a recording is plainly running. Scene name is
         # real (GetCurrentProgramScene); res/fps only appear once fetched.
         scene = self._scene_name
+        if state == "paused" and getattr(self, "_pause_reason", None) == "session":
+            paused_info = (f"{scene} — stream ended" if scene
+                           else "Capture held — stream ended")
+        else:
+            paused_info = (f"{scene} — paused" if scene
+                           else "Capture held — paused")
         info = {
             "recording": (f"{scene} → {self._current_game}" if scene and self._current_game
                           else scene or (f"Capturing {self._current_game}"
                                          if self._current_game else "Capturing")),
-            "paused": (f"{scene} — paused" if scene else "Capture held — paused"),
+            "paused": paused_info,
             "watching": (f"Scene — {scene}" if scene else "Scene capture idle"),
             "disconnected": "No scene — OBS offline",
         }[state]
@@ -4253,27 +4335,73 @@ class AppWindow:
             # and agrees with it for anything recorded since midnight.
             self.bg.itemconfigure(self._stat_today_val, text=str(stats["clips"]))
 
-    def on_offload_state(self, pending):
+    def on_offload_state(self, pending, reachability=None):
         """Called (from the offloader's thread) as the NAS queue drains.
 
         6.3 moved this off the dashboard - "Sync status belongs in Settings ->
         Sync" - so the queue depth is held here and rendered by the Settings
-        pane rather than by a stat tile.
+        pane rather than by a stat tile. ``reachability`` is an optional
+        diagnose() code from the offloader (Tailscale-aware NAS status).
         """
         self._offload_pending = pending
+        if reachability is not None:
+            self._offload_reachability = reachability
         self._ui(self._refresh_sync_status)
 
     def _sync_status_text(self):
         pending = getattr(self, "_offload_pending", 0)
+        reach = getattr(self, "_offload_reachability", None)
+        if reach is None and self.offloader and self.offloader.enabled:
+            try:
+                reach = self.offloader.reachability()
+                self._offload_reachability = reach
+            except Exception:
+                reach = None
+
         if pending > 0:
             text = f"{pending} clip{'' if pending == 1 else 's'} queued for the NAS"
+            if reach and reach.startswith("nas_down"):
+                text = f"{pending} clip{'' if pending == 1 else 's'} waiting — NAS unreachable"
         elif self.offloader and self.offloader.enabled:
-            text = "NAS offload up to date"
+            if reach and reach.startswith("nas_down"):
+                text = "NAS unreachable"
+            else:
+                text = "NAS offload up to date"
         else:
             text = "NAS offload off"
+
+        from . import tailscale as ts
+        clause = ts.diagnose_label(reach) if reach else ""
+        if clause:
+            text = f"{text}  ·  {clause}"
+
+        if self.offloader and self.offloader.enabled:
+            try:
+                st = self.offloader.status_snapshot()
+                if st.get("peer"):
+                    peer = st["peer"]
+                    if st.get("peer_online") is True:
+                        peer += " online"
+                    elif st.get("peer_online") is False:
+                        peer += " offline"
+                    text = f"{text}  ·  {peer}"
+                if st.get("last_success_ago"):
+                    text = f"{text}  ·  verified {st['last_success_ago']}"
+                elif st.get("last_scan_ago"):
+                    text = f"{text}  ·  scanned {st['last_scan_ago']}"
+                hours = st.get("interval_hours")
+                if hours:
+                    text = f"{text}  ·  auto every {hours}h"
+                else:
+                    text = f"{text}  ·  auto off"
+                if st.get("message"):
+                    text = f"{text}\n{st['message']}"
+            except Exception:
+                pass
+
         if self.gamesync and self.gamesync.enabled:
-            return text + "  ·  game list synced with GitHub"
-        return text + "  ·  game list is local to this machine"
+            return text + "\nGame list synced with GitHub"
+        return text + "\nGame list is local to this machine"
 
     def _refresh_sync_status(self):
         label = getattr(self, "_settings_sync_label", None)
@@ -5719,6 +5847,8 @@ class AppWindow:
             "error": "Something went wrong",
             "prompt": "Record again?",
         }.get(event, str(event))
+        if event == "pause" and details and details.get("reason") == "session":
+            title = "Stream ended — paused"
         if details and details.get("title"):
             title = details["title"]
 
@@ -5737,7 +5867,21 @@ class AppWindow:
 
     def _show_notification(self, event, display_name, details=None):
         """Entry point - called from the monitor's thread, so it marshals."""
-        self._ui(lambda: self._toast_replace(event, display_name, details))
+        details = details or {}
+        if event == "pause" and "reason" in details:
+            self._pause_reason = details.get("reason")
+        elif event in ("resume", "stop", "start"):
+            self._pause_reason = None
+
+        def apply():
+            # Refresh the paused eyebrow as soon as the reason lands - don't
+            # wait for the next GetRecordStatus poll to re-enter _set_hero_state.
+            if event in ("pause", "resume") and self._hero_present():
+                self._set_hero_state(self._hero_state)
+            self._toast_replace(event, display_name, details)
+            self._update_tray_tooltip()
+
+        self._ui(apply)
 
     def _toast_replace(self, event, display_name, details=None, actions=None,
                        on_timeout=None):
@@ -6664,7 +6808,9 @@ class AppWindow:
 
         heading = {
             "recording": "Recording",
-            "paused": "Paused",
+            "paused": ("Paused — stream ended"
+                       if getattr(self, "_pause_reason", None) == "session"
+                       else "Paused"),
             "idle": "Watching for a game",
             "disconnected": "OBS disconnected",
         }[state]
@@ -6673,12 +6819,25 @@ class AppWindow:
         elapsed = getattr(self, "_tray_elapsed", "")
         if state in ("recording", "paused") and game:
             detail = f"{game} · {elapsed}" if elapsed else game
+            if state == "paused" and getattr(self, "_pause_reason", None) == "session":
+                detail = f"{detail} · stream ended" if detail else "stream ended"
         elif state == "disconnected":
             detail = f"{self.config.get('obs_host', 'localhost')}:{self.config.get('obs_port', 4455)}"
         elif game:
             detail = game
         else:
             detail = "No game in focus"
+
+        # Quiet offload wait signal when the tray is otherwise idle-ish and
+        # clips are stuck behind an unreachable NAS.
+        pending = getattr(self, "_offload_pending", 0)
+        reach = getattr(self, "_offload_reachability", None)
+        if pending and reach and str(reach).startswith("nas_down"):
+            wait = f"{pending} clip{'s' if pending != 1 else ''} waiting on NAS"
+            if state == "idle" and detail == "No game in focus":
+                detail = wait
+            elif state == "idle":
+                detail = f"{detail} · {wait}"
 
         return {
             "state": state,

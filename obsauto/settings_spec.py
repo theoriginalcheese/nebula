@@ -69,7 +69,12 @@ GROUPS = (
      "machine is known on the others. Blank repo or token = local only."),
     ("offload", "NAS offload",
      "Finished clips are copied to the NAS and byte-verified before anything "
-     "local is touched."),
+     "local is touched. A daily scan (when the NAS is online) and Sync now "
+     "catch anything that finished while you were offline."),
+    ("remote", "Remote streaming",
+     "Launch Moonlight from Nebula. Set the Sunshine host (Tailscale IP or "
+     "name) and the app to stream — usually Desktop. Nebula does not embed "
+     "the video; Moonlight opens as its own window."),
     ("storage", "Storage",
      "How long the disk lasts at your current rate, and the two things that "
      "change it. Culling moves files to the Recycle Bin - never a hard delete."),
@@ -187,14 +192,34 @@ FIELDS = (
     # ---- NAS offload ----
     Field("nas_offload_root", "NAS root", "path", "offload",
           hint="Destination for finished clips, e.g. Z:/OBS Recordings or a "
-               "UNC path. Blank turns offload off. Safe to set before the NAS "
-               "is reachable \u2014 clips queue and retry."),
+               "UNC path over Tailscale (\\\\nas\\share\\OBS). Blank turns "
+               "offload off. Safe to set before the NAS is reachable — clips "
+               "queue and retry; Tailscale status is shown when the CLI is "
+               "available."),
     Field("nas_offload_mode", "Mode", "choice", "offload",
           choices=("copy", "move"),
           hint="copy keeps both copies. move frees local space, but only ever "
                "deletes the original after the NAS copy is SHA-256 verified."),
+    Field("nas_offload_interval_hours", "Auto sync every", "int", "offload",
+          minimum=0, maximum=168,
+          hint="Hours between backlog scans when the NAS is reachable. "
+               "24 ≈ daily. 0 turns auto scan off — use Sync now. Clips "
+               "still queue the moment a recording finishes either way."),
 
-    # ---- Legacy ----
+    # ---- Remote streaming (Moonlight client) ----
+    Field("moonlight_path", "Moonlight.exe", "path", "remote",
+          hint="Path to Moonlight. Leave the default if you installed to "
+               "Program Files; blank falls back to PATH and known locations."),
+    Field("moonlight_host", "Host", "text", "remote",
+          hint="Sunshine PC — Tailscale IP or MagicDNS name, e.g. "
+               "100.90.134.9 or alien-pc. Must already be paired in Moonlight."),
+    Field("moonlight_app", "App", "text", "remote",
+          hint="Sunshine app to launch. Desktop is the full session; other "
+               "names must match Sunshine's app list exactly."),
+    Field("moonlight_display_mode", "Display mode", "choice", "remote",
+          choices=("borderless", "windowed", "fullscreen"),
+          hint="How Moonlight draws the stream on this machine."),
+
     # ---- Appearance ----
     # Choice, never text: the menu IS the constraint. A free hex field would
     # let the accent land somewhere it cannot be read against the ground, and

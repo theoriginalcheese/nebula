@@ -42,8 +42,12 @@ from obsauto.app_log import LOG_FILE, log_to_file, setup_logging
 from obsauto.classifier import Classifier
 from obsauto.obs_client import OBSClient
 from obsauto.config import CONFIG_FILE, load_config, save_config
+from obsauto.gamesync import GameSync
+from obsauto.offload import Offloader
 from obsauto.paths import RESOURCE_DIR
 from obsauto import thumbs
+from obsauto import steam_scanner
+from obsauto import classifier as classifier_module
 from spike import host as host_mod
 
 # Main script is flattened to _MEIPASS/app.py under PyInstaller onefile, so
@@ -77,6 +81,67 @@ SPIKE_DEFAULT_GRID = [
     {"id": "activity", "span": 12},
 ]
 _LEGACY_SPAN = {1: 6, 2: 12}
+
+
+def _apply_sync_folder(config):
+    """Legacy folder-based sync — repoint games.json before Classifier loads."""
+    sync_folder = config.get("sync_folder")
+    if not sync_folder:
+        return
+    if not os.path.isabs(sync_folder):
+        sync_folder = os.path.join(os.path.expanduser("~"), sync_folder)
+    os.makedirs(sync_folder, exist_ok=True)
+    classifier_module.DATA_FILE = os.path.join(sync_folder, "games.json")
+    steam_scanner.CACHE_FILE = os.path.join(sync_folder, "steam_appid_cache.json")
+
+
+class _GameListSync:
+    """Pull remote classifications at startup; debounce pushes on local save."""
+
+    def __init__(self, gamesync, classifier, log):
+        self._sync = gamesync
+        self._classifier = classifier
+        self._log = log
+        self._timer = None
+        self._lock = threading.Lock()
+
+    def pull_at_startup(self):
+        if not self._sync.enabled:
+            return
+
+        def worker():
+            remote = self._sync.fetch()
+            if remote:
+                added = self._classifier.absorb(remote)
+                if added:
+                    self._log("[Sync] Pulled %d classification(s) from GitHub."
+                              % added)
+            self._sync.push(self._classifier.snapshot())
+            self._log("[Sync] Game list synced with GitHub.")
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def on_saved(self, _data):
+        if not self._sync.enabled:
+            return
+        with self._lock:
+            if self._timer is not None:
+                self._timer.cancel()
+            self._timer = threading.Timer(3.0, self._push_now)
+            self._timer.daemon = True
+            self._timer.start()
+
+    def _push_now(self, attempt=0):
+        try:
+            result = self._sync.push(self._classifier.snapshot())
+        except Exception as exc:
+            self._log("[Sync] push failed: %s" % exc)
+            result = None
+        if result is None and attempt < 4:
+            delay = min(60.0, 5.0 * (2 ** attempt))
+            t = threading.Timer(delay, lambda: self._push_now(attempt + 1))
+            t.daemon = True
+            t.start()
 
 
 def normalise_dashboard_layout(saved):
@@ -166,6 +231,7 @@ class Api:
         # adding one would have re-run setup for every existing install.
         self._fresh_install = not os.path.exists(CONFIG_FILE)
         self.cfg = load_config()
+        _apply_sync_folder(self.cfg)
         # Underscore-prefixed on purpose. pywebview walks the api object's
         # public attributes to expose them to JS; a pywebview Window has a
         # .native.browser.webview whose COM properties throw when touched off
@@ -173,6 +239,8 @@ class Api:
         # api call then fails with no message on the JS side.
         self._window = None
         self._host = None
+        self._gamesync = None
+        self._moonlight_proc = None
         self._procs = _proc_tree()
         _sample(self._procs)                 # prime cpu_percent's baseline
         self.seed = random.randrange(1, 2 ** 31)
@@ -240,6 +308,7 @@ class Api:
             # At boot too, not only in the snapshot: the chrome should already
             # be the user's accent and density on the first paint.
             "appearance": self.appearance(),
+            "version": self._version_payload(),
             "setup": {
                 "needed": self.setup_needed(),
                 "values": {k: _settings_display(settings_spec.BY_KEY[k], self.cfg.get(k))
@@ -257,7 +326,6 @@ class Api:
                 "span_labels": dict(dv.SPAN_LABELS),
                 "layout": self._saved_dashboard_layout(),
             },
-            "version": self._version_payload(),
         }
 
     def _version_payload(self):
@@ -446,7 +514,8 @@ class Api:
                 "forecast": self._forecast(),
                 "games": self._games(),
                 "settings": self._settings_payload(),
-                "macropad": self._macropad()}
+                "macropad": self._macropad(),
+                "remote": self._remote()}
 
     def _obs(self):
         """One source of truth for connection state: the host.
@@ -501,12 +570,17 @@ class Api:
         spec = dv.HERO_STATES.get(hero_key, dv.HERO_STATES["disconnected"])
         idle = int(self.cfg.get("idle_timeout_seconds") or 4)
         reconnect = int(self.cfg.get("reconnect_interval_seconds") or 10)
+        pause_reason = self._host.pause_reason() if self._host else None
+        if state == "paused" and pause_reason == "session":
+            paused_eyebrow = "Paused — stream ended"
+        else:
+            paused_eyebrow = "Paused — idle %d s" % idle
 
         eyebrow = {
             "disconnected": "OBS disconnected",
             "idle": "Idle — watching",
             "recording": "Recording",
-            "paused": "Paused — idle %d s" % idle,
+            "paused": paused_eyebrow,
         }.get(state, spec["eyebrow"])
 
         title = s.get("heading") or {
@@ -528,7 +602,8 @@ class Api:
             detail = (s.get("detail") or "").strip()
             if detail and detail != "No game in focus":
                 source = detail
-
+        elif state == "paused" and pause_reason == "session":
+            source = "Moonlight stream ended — recording held"
         show_readouts = state in ("recording", "paused")
         scene = meta.get("scene") or ""
         video = meta.get("video_label") or ""
@@ -629,6 +704,294 @@ class Api:
             ),
         }
 
+    def _remote(self):
+        """Moonlight + Tailscale — honest status only, nothing fabricated."""
+        from obsauto import session_detect as sd
+        from obsauto import tailscale as ts
+        from obsauto import moonlight as moon_mod
+
+        moon = sd.moonlight_session_active()
+        log = moon_mod.log_details()
+        host_hint = log.get("last_host") or ""
+        addr_hint = log.get("last_address") or ""
+
+        if moon is True:
+            where = host_hint or addr_hint
+            moonlight = {
+                "state": "live",
+                "label": "Stream live",
+                "detail": (
+                    (("Streaming %s. " % where) if where else "Video stream is up. ")
+                    + "Recording follows the stream — local idle is ignored."
+                ),
+            }
+        elif moon is False:
+            moonlight = {
+                "state": "idle",
+                "label": "No live stream",
+                "detail": (
+                    "Moonlight is installed, but nothing is streaming right now."
+                ),
+            }
+        else:
+            moonlight = {
+                "state": "unknown",
+                "label": "Moonlight not seen",
+                "detail": (
+                    "No recent Moonlight log. Open Moonlight once so Nebula "
+                    "can see stream start/stop."
+                ),
+            }
+
+        pause_reason = self._host.pause_reason() if self._host else None
+        moonlight["note"] = (
+            "Recording is paused — stream ended."
+            if pause_reason == "session" else "")
+
+        path_cfg = (self.cfg.get("moonlight_path") or "").strip()
+        host_cfg = (self.cfg.get("moonlight_host") or "").strip()
+        app_cfg = (self.cfg.get("moonlight_app") or "").strip() or "Desktop"
+        mode_cfg = (self.cfg.get("moonlight_display_mode") or "borderless").strip()
+        exe = moon_mod.find_exe(path_cfg)
+        proc = self._moonlight_proc
+        client_running = bool(proc is not None and proc.poll() is None)
+        if proc is not None and proc.poll() is not None:
+            self._moonlight_proc = None
+            client_running = False
+
+        moonlight["control"] = {
+            "installed": bool(exe),
+            "exe": exe or "",
+            "host": host_cfg,
+            "app": app_cfg,
+            "display_mode": mode_cfg,
+            "can_connect": bool(exe and host_cfg),
+            "client_running": client_running or moon is True,
+            "needs_host": not bool(host_cfg),
+        }
+
+        # Quiet extras — version in the header, host as its own chip.
+        moonlight["version"] = log.get("version") or ""
+        moonlight["meta"] = log.get("log_age") or ""
+        host_chip = None
+        if host_hint or addr_hint:
+            host_chip = {
+                "name": host_hint,
+                "addr": addr_hint,
+            }
+        moonlight["host"] = host_chip
+        moonlight["log"] = {k: log[k] for k in (
+            "version", "last_host", "last_address", "stream", "log_age",
+            "tailscale_ips") if k in log}
+
+        def _peer_rows(st, highlight=""):
+            if not st:
+                return []
+            hi = (highlight or "").lower()
+            rows = []
+            for p in st.get("peer_list") or []:
+                name = p.get("hostname") or ""
+                ips = p.get("ips") or []
+                if p.get("active"):
+                    status = "Active"
+                elif p.get("online"):
+                    status = "Online"
+                else:
+                    status = "Offline"
+                rows.append({
+                    "name": name,
+                    "ip": ips[0] if ips else "",
+                    "status": status,
+                    "online": bool(p.get("online")),
+                    "active": bool(p.get("active")),
+                    "nas": bool(hi and (
+                        name.lower() == hi
+                        or hi in (p.get("dns") or "").lower()
+                        or hi in ips)),
+                })
+            return rows
+
+        def _tail_meta(st):
+            if not st:
+                return ""
+            bits = []
+            ver = st.get("version_short") or ""
+            if ver:
+                bits.append(ver)
+            self_info = st.get("self") or {}
+            ips = self_info.get("ips") or []
+            if ips:
+                bits.append(ips[0])
+            dns = self_info.get("dns") or ""
+            if dns:
+                bits.append(dns)
+            return " · ".join(bits)
+
+        if not ts.available():
+            tail = {
+                "state": "missing",
+                "label": "Tailscale not found",
+                "detail": (
+                    "CLI missing from PATH. Offload still checks the NAS path "
+                    "directly."
+                ),
+                "backend": "",
+                "peer": "",
+                "meta": "",
+                "peers": [],
+            }
+        else:
+            # Honour the 5s cache — snapshot polls every 1–5s while awake;
+            # force=True was shelling tailscale (+ conhost flash) every beat.
+            st = ts.status()
+            root = (self.cfg.get("nas_offload_root") or "").strip()
+            peer = ts.peer_for_path(root) if root else None
+            if st is None:
+                tail = {
+                    "state": "down",
+                    "label": "Tailscale unreachable",
+                    "detail": "CLI is there, but status did not return.",
+                    "backend": "",
+                    "peer": peer or "",
+                    "meta": "",
+                    "peers": [],
+                }
+            elif not st["self_online"] or (
+                    st["backend"] and st["backend"] != "Running"):
+                self_h = (st.get("self") or {}).get("hostname") or "This machine"
+                tail = {
+                    "state": "down",
+                    "label": "Tailscale down",
+                    "detail": "%s is offline on the tailnet." % self_h,
+                    "backend": st.get("backend") or "",
+                    "peer": peer or "",
+                    "meta": _tail_meta(st),
+                    "peers": _peer_rows(st, peer or ""),
+                }
+            else:
+                peer_online = ts.peer_online(peer, st) if peer else None
+                self_h = (st.get("self") or {}).get("hostname") or "This machine"
+                n_on = st.get("online_peers")
+                n_all = st.get("peer_count")
+                count = ""
+                if isinstance(n_on, int) and isinstance(n_all, int) and n_all:
+                    count = "%d of %d online" % (n_on, n_all)
+                if peer and peer_online is False:
+                    tail = {
+                        "state": "peer_down",
+                        "label": "NAS peer offline",
+                        "detail": (
+                            "%s is up, but %s is offline%s."
+                            % (self_h, peer,
+                               (" · " + count) if count else "")
+                        ),
+                        "backend": st.get("backend") or "Running",
+                        "peer": peer,
+                        "meta": _tail_meta(st),
+                        "peers": _peer_rows(st, peer),
+                    }
+                else:
+                    detail = self_h
+                    if count:
+                        detail = "%s · %s" % (self_h, count)
+                    if peer:
+                        detail += " · NAS %s" % peer
+                    tail = {
+                        "state": "up",
+                        "label": "Tailscale up",
+                        "detail": detail,
+                        "backend": st.get("backend") or "Running",
+                        "peer": peer or "",
+                        "meta": _tail_meta(st),
+                        "peers": _peer_rows(st, peer or ""),
+                    }
+
+        offload = {"enabled": False, "text": ""}
+        if self._host:
+            st_off = self._host.offload_status()
+            if st_off.get("enabled"):
+                offload["enabled"] = True
+                reach = st_off.get("reachability")
+                pending = st_off.get("pending") or 0
+                if pending:
+                    offload["text"] = (
+                        "%d clip%s waiting on the NAS."
+                        % (pending, "" if pending == 1 else "s"))
+                elif reach and str(reach).startswith("nas_down"):
+                    clause = ts.diagnose_label(reach)
+                    offload["text"] = (
+                        "NAS unreachable"
+                        + ((" · %s" % clause) if clause else "")
+                        + ".")
+                else:
+                    clause = ts.diagnose_label(reach) if reach else ""
+                    offload["text"] = "NAS offload ready" + (
+                        (" · %s." % clause) if clause else ".")
+
+        return {
+            "moonlight": moonlight,
+            "tailscale": tail,
+            "offload": offload,
+            "blurb": (
+                "Connect opens Moonlight in its own window. Nebula only "
+                "treats a live video stream as recording."
+            ),
+        }
+
+    def moonlight_connect(self):
+        """Start streaming the configured host/app via Moonlight CLI."""
+        from obsauto import moonlight as moon_mod
+
+        host = (self.cfg.get("moonlight_host") or "").strip()
+        app = (self.cfg.get("moonlight_app") or "").strip() or "Desktop"
+        path = (self.cfg.get("moonlight_path") or "").strip()
+        mode = (self.cfg.get("moonlight_display_mode") or "borderless").strip()
+        if not host:
+            return {"ok": False,
+                    "error": "Set moonlight_host in Settings → Remote streaming."}
+        if self._moonlight_proc is not None and self._moonlight_proc.poll() is None:
+            return {"ok": True, "already": True,
+                    "message": "Moonlight is already running from Nebula."}
+        proc, err = moon_mod.start_stream(
+            host, app, configured_path=path, display_mode=mode)
+        if err:
+            self._api_log("[Moonlight] Connect failed: %s" % err)
+            return {"ok": False, "error": err}
+        self._moonlight_proc = proc
+        self._api_log("[Moonlight] Streaming %s → %s (%s)." % (host, app, mode))
+        return {"ok": True, "host": host, "app": app}
+
+    def moonlight_disconnect(self):
+        """Close the Moonlight client we started, and ask the host to quit the app."""
+        from obsauto import moonlight as moon_mod
+
+        host = (self.cfg.get("moonlight_host") or "").strip()
+        path = (self.cfg.get("moonlight_path") or "").strip()
+        closed = moon_mod.disconnect_client(self._moonlight_proc)
+        self._moonlight_proc = None
+        quit_err = None
+        if host:
+            quit_err = moon_mod.quit_host_app(host, configured_path=path)
+            if quit_err:
+                self._api_log("[Moonlight] Host quit: %s" % quit_err)
+            else:
+                self._api_log("[Moonlight] Asked host to quit the running app.")
+        if closed:
+            self._api_log("[Moonlight] Client closed.")
+        return {"ok": True, "client_closed": closed,
+                "host_quit_error": quit_err}
+
+    def moonlight_open(self):
+        """Open Moonlight's UI for pairing / host list."""
+        from obsauto import moonlight as moon_mod
+
+        path = (self.cfg.get("moonlight_path") or "").strip()
+        proc, err = moon_mod.open_ui(configured_path=path)
+        if err:
+            return {"ok": False, "error": err}
+        self._api_log("[Moonlight] Opened UI.")
+        return {"ok": True}
+
     # --- Settings (frame 2c) -------------------------------------------
 
     def _settings_payload(self):
@@ -657,6 +1020,7 @@ class Api:
             "config_path": CONFIG_FILE,
             "saved_at": saved,
             "obs_footer": self._settings_obs_footer(),
+            "sync_footer": self._settings_sync_footer(),
             "updates_footer": self._settings_updates_footer(),
             "appearance": self.appearance(),
         }
@@ -715,8 +1079,7 @@ class Api:
         if last:
             blurb = last
         can_install = bool(
-            pending.get("status") == "update"
-            and pending.get("release", {}).get("asset_url")
+            pending.get("status") == "update" and pending.get("release", {}).get("asset_url")
             and frozen)
         can_pull = (not frozen) and bool(updater_mod.source_checkout_root())
         return {
@@ -731,6 +1094,191 @@ class Api:
             "can_pull": can_pull,
             "busy": bool(getattr(self, "_update_busy", False)),
         }
+
+    def _settings_sync_footer(self):
+        """NAS offload status for Settings → Offload (and gamesync note)."""
+        from obsauto import tailscale as ts
+
+        gamesync = getattr(self, "_gamesync", None)
+        if self._host:
+            st = self._host.offload_status()
+        else:
+            st = {"pending": 0, "reachability": None, "enabled": False,
+                  "can_sync": False}
+
+        pending = st.get("pending") or 0
+        reach = st.get("reachability") or ""
+        enabled = bool(st.get("enabled"))
+        peer = st.get("peer") or ""
+        peer_online = st.get("peer_online")
+        reach_label = st.get("reach_label") or (
+            ts.diagnose_label(reach) if reach else "")
+
+        if pending > 0:
+            headline = "%d clip%s queued" % (
+                pending, "" if pending == 1 else "s")
+            if str(reach).startswith("nas_down"):
+                headline = "%d waiting — NAS unreachable" % pending
+        elif enabled:
+            if str(reach).startswith("nas_down"):
+                headline = "NAS unreachable"
+            else:
+                headline = "Up to date"
+        else:
+            headline = "Offload off"
+
+        rows = []
+        if enabled and st.get("root"):
+            rows.append({"label": "NAS", "value": st.get("root")})
+        if enabled and st.get("mode"):
+            rows.append({"label": "Mode", "value": st.get("mode")})
+        if enabled and st.get("transfer"):
+            rows.append({"label": "Transfer", "value": st.get("transfer")})
+        if peer:
+            if peer_online is True:
+                peer_val = "%s · online" % peer
+            elif peer_online is False:
+                peer_val = "%s · offline" % peer
+            else:
+                peer_val = peer
+            rows.append({"label": "Tailscale peer", "value": peer_val})
+        elif enabled and reach_label:
+            rows.append({"label": "Tailscale", "value": reach_label})
+        if enabled:
+            last = st.get("last_success_ago") or st.get("last_scan_ago") or ""
+            if st.get("last_success_ago"):
+                rows.append({"label": "Last verified",
+                             "value": st["last_success_ago"]})
+            elif st.get("last_scan_ago"):
+                rows.append({"label": "Last scan",
+                             "value": st["last_scan_ago"]})
+            hours = st.get("interval_hours")
+            if hours:
+                nxt = st.get("next_scan_in_s")
+                if nxt is None:
+                    auto = "every %dh" % hours
+                elif nxt <= 0:
+                    auto = "every %dh · due now" % hours
+                else:
+                    auto = "every %dh · next in %s" % (hours, _ago(nxt))
+                rows.append({"label": "Auto sync", "value": auto})
+            else:
+                rows.append({"label": "Auto sync", "value": "off (manual only)"})
+        if st.get("message"):
+            rows.append({"label": "Last run", "value": st["message"]})
+
+        gamesync_note = (
+            "Game list synced with GitHub"
+            if gamesync and gamesync.enabled
+            else "Game list is local to this machine")
+
+        text = headline
+        if reach_label and "Tailscale" not in "".join(r["label"] for r in rows):
+            text = "%s  ·  %s" % (text, reach_label)
+        text = "%s  ·  %s" % (text, gamesync_note.lower())
+
+        return {
+            "text": text,
+            "headline": headline,
+            "rows": rows,
+            "gamesync_note": gamesync_note,
+            "can_sync": bool(st.get("can_sync")),
+            "busy": bool(st.get("busy")),
+            "pending": pending,
+            "reachability": reach,
+            "enabled": enabled,
+            "can_test": False,
+        }
+
+    def sync_offload_now(self):
+        """Settings → Offload → Sync now. Scans the recording root onto the NAS."""
+        offloader = None
+        if self._host:
+            offloader = getattr(self._host, "offloader", None)
+        if offloader is None:
+            return {"ok": False, "message": "Offloader not running.",
+                    "sync_footer": self._settings_sync_footer()}
+        result = offloader.sync_now(self.cfg.get("recording_root"))
+        if self._host:
+            try:
+                self._host.on_offload_state(
+                    offloader.pending_count(), offloader.reachability())
+            except Exception:
+                pass
+        out = dict(result)
+        out["sync_footer"] = self._settings_sync_footer()
+        return out
+
+
+    def hero_action(self, label):
+        """Route a hero button press to the host transport layer."""
+        if not self._host:
+            return {"ok": False, "error": "no host"}
+        label = (label or "").strip()
+        routes = {
+            "Retry now": self._host.autostart,
+            "Record anyway": self._host._toggle_record,
+            "Pause monitoring": self._host._toggle_monitoring,
+            "Stop recording": self._host._toggle_record,
+            "Pause": self._host._toggle_pause,
+            "Resume": self._host._toggle_pause,
+            "Stop & save": self._host._toggle_record,
+        }
+        fn = routes.get(label)
+        if not fn:
+            return {"ok": False, "error": "unknown action"}
+        self._host.call_soon(fn)
+        return {"ok": True}
+
+    def set_setting(self, key, raw):
+        """Write on blur. Merge over the live dict; never drop unknown keys."""
+        field = settings_spec.BY_KEY.get(key)
+        if field is None:
+            return {"ok": False, "error": "unknown key"}
+        old = self.cfg.get(key)
+        if isinstance(raw, str) and field.key.endswith("_seconds"):
+            # The field shows "10 s"; strip the unit before parse.
+            raw = raw.strip()
+            if raw.endswith(" s"):
+                raw = raw[:-2].strip()
+            elif len(raw) > 1 and raw[-1] in "sS" and raw[:-1].strip().isdigit():
+                raw = raw[:-1].strip()
+        if field.kind == "bool":
+            text = str(raw).strip().lower()
+            value = text in ("1", "true", "yes", "on")
+            error = None
+        else:
+            value, error = settings_spec.parse(field, raw)
+        if error:
+            return {"ok": False, "error": error,
+                    "value": _settings_display(field, old)}
+        if value == old:
+            return {"ok": True, "unchanged": True,
+                    "value": _settings_display(field, old)}
+        self.cfg[key] = value
+        save_config(self.cfg)
+        self._settings_saved_at = time.time()
+        self._api_log("[Manual] %s = %r" % (key, value))
+        # Hotkeys that claim live apply: rebind through the host when we can.
+        if (self._host and key in (
+                "toggle_hotkey", "toggle_hotkey_scancode",
+                "replay_hotkey", "replay_hotkey_scancode",
+                "palette_hotkey")):
+            try:
+                self._host.start_replay()
+                self._host.start_hotkeys()
+            except Exception as exc:
+                self._api_log("[Manual] Couldn't rebind after %s: %s" % (key, exc))
+        if key.startswith("nas_offload") and self._host and getattr(
+                self._host, "offloader", None):
+            try:
+                self._host.offloader.refresh()
+            except Exception as exc:
+                self._api_log("[Manual] Offload refresh after %s: %s" % (key, exc))
+        return {"ok": True, "value": _settings_display(field, value),
+                "saved_at": time.strftime("%H:%M:%S",
+                                          time.localtime(self._settings_saved_at)),
+                "restart": bool(field.restart)}
 
     def check_for_update(self):
         """Hit GitHub Releases. Safe to call from the UI thread — short timeout."""
@@ -837,7 +1385,6 @@ class Api:
             self._update_busy = False
         out["updates_footer"] = self._settings_updates_footer()
         return out
-
     def open_releases_page(self):
         import webbrowser
         pending = self._update_pending or {}
@@ -846,70 +1393,6 @@ class Api:
                or "https://github.com/theoriginalcheese/nebula/releases/latest")
         webbrowser.open(url)
         return {"ok": True}
-
-    def hero_action(self, label):
-        """Route a hero button press to the host transport layer."""
-        if not self._host:
-            return {"ok": False, "error": "no host"}
-        label = (label or "").strip()
-        routes = {
-            "Retry now": self._host.autostart,
-            "Record anyway": self._host._toggle_record,
-            "Pause monitoring": self._host._toggle_monitoring,
-            "Stop recording": self._host._toggle_record,
-            "Pause": self._host._toggle_pause,
-            "Resume": self._host._toggle_pause,
-            "Stop & save": self._host._toggle_record,
-        }
-        fn = routes.get(label)
-        if not fn:
-            return {"ok": False, "error": "unknown action"}
-        self._host.call_soon(fn)
-        return {"ok": True}
-
-    def set_setting(self, key, raw):
-        """Write on blur. Merge over the live dict; never drop unknown keys."""
-        field = settings_spec.BY_KEY.get(key)
-        if field is None:
-            return {"ok": False, "error": "unknown key"}
-        old = self.cfg.get(key)
-        if isinstance(raw, str) and field.key.endswith("_seconds"):
-            # The field shows "10 s"; strip the unit before parse.
-            raw = raw.strip()
-            if raw.endswith(" s"):
-                raw = raw[:-2].strip()
-            elif len(raw) > 1 and raw[-1] in "sS" and raw[:-1].strip().isdigit():
-                raw = raw[:-1].strip()
-        if field.kind == "bool":
-            text = str(raw).strip().lower()
-            value = text in ("1", "true", "yes", "on")
-            error = None
-        else:
-            value, error = settings_spec.parse(field, raw)
-        if error:
-            return {"ok": False, "error": error,
-                    "value": _settings_display(field, old)}
-        if value == old:
-            return {"ok": True, "unchanged": True,
-                    "value": _settings_display(field, old)}
-        self.cfg[key] = value
-        save_config(self.cfg)
-        self._settings_saved_at = time.time()
-        self._api_log("[Manual] %s = %r" % (key, value))
-        # Hotkeys that claim live apply: rebind through the host when we can.
-        if (self._host and key in (
-                "toggle_hotkey", "toggle_hotkey_scancode",
-                "replay_hotkey", "replay_hotkey_scancode",
-                "palette_hotkey")):
-            try:
-                self._host.start_replay()
-                self._host.start_hotkeys()
-            except Exception as exc:
-                self._api_log("[Manual] Couldn't rebind after %s: %s" % (key, exc))
-        return {"ok": True, "value": _settings_display(field, value),
-                "saved_at": time.strftime("%H:%M:%S",
-                                          time.localtime(self._settings_saved_at)),
-                "restart": bool(field.restart)}
 
     # --- 7e: command palette -------------------------------------------
 
@@ -1066,12 +1549,20 @@ class Api:
             return {"pane": None}
         try:
             with open(path, "r", encoding="utf-8") as f:
-                pane = f.read().strip().lower()
+                raw = f.read().strip().lower()
             os.remove(path)
         except OSError:
             return {"pane": None}
-        if pane in ("dashboard", "clips", "games", "macropad", "settings"):
-            return {"pane": pane}
+        group = None
+        pane = raw
+        if ":" in raw:
+            pane, group = raw.split(":", 1)
+            pane, group = pane.strip(), group.strip()
+        if pane in ("dashboard", "clips", "games", "remote", "macropad", "settings"):
+            out = {"pane": pane}
+            if group:
+                out["group"] = group
+            return out
         return {"pane": None}
 
     def open_recording_root(self):
@@ -1650,10 +2141,39 @@ def main():
     # master window.
     dpi_level = _set_dpi_awareness()
 
+    # Group the taskbar under Nebula, not "Python". Without this (and without
+    # webview.start(icon=…)), Windows uses python.exe's icon.
+    try:
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("Nebula.App")
+    except Exception:
+        pass
+
+    # Drop a spare console when launched as python.exe (Start-Process / double
+    # click). Keep it with --console for debugging. Real day-to-day is pythonw.
+    if os.name == "nt" and "--console" not in sys.argv:
+        try:
+            ctypes.windll.kernel32.FreeConsole()
+        except Exception:
+            pass
+
     # Before anything else: log_to_file() is a silent no-op until this runs,
     # and v4 inherits v3's real deployment - pythonw, no console, so a
     # traceback that does not reach the file reaches nobody.
     setup_logging()
+
+    # Keep Windows Search / Start Menu pointed at this checkout's spike UI —
+    # idempotent, fails soft if the shell won't cooperate.
+    try:
+        import importlib.util
+        _repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        _mod_path = os.path.join(_repo, "tools", "install_nebula_shortcut.py")
+        _spec = importlib.util.spec_from_file_location(
+            "install_nebula_shortcut", _mod_path)
+        _mod = importlib.util.module_from_spec(_spec)
+        _spec.loader.exec_module(_mod)
+        _mod.install_start_menu_shortcut(repo_root=_repo, show=True)
+    except Exception as exc:
+        log_to_file("[Launch] Start Menu shortcut: %s" % exc)
 
     dev = "--dev" in sys.argv
     if not dev and not host_mod.claim_single_instance():
@@ -1665,8 +2185,23 @@ def main():
 
     api = Api()
     host = host_mod.NebulaHost(api.cfg)
-    host.attach_backend(api._classifier)
+
+    def route(msg):
+        try:
+            host._log(msg)
+        except Exception:
+            log_to_file(msg)
+
+    gamesync = GameSync(api.cfg, on_log=route)
+    offloader = Offloader(api.cfg, on_log=route)
+    api._gamesync = gamesync
+    coordinator = _GameListSync(gamesync, api._classifier, route)
+    api._classifier.on_saved = coordinator.on_saved
+
+    host.attach_backend(api._classifier, offloader=offloader)
     api._host = host
+    offloader.start(on_state=host.on_offload_state)
+    coordinator.pull_at_startup()
 
     # 2j: start hidden. Nebula is a tray app; the window is a thing you open,
     # not the thing that is running. `--show` is for development.
@@ -1725,7 +2260,15 @@ def main():
 
     # gui=None lets pywebview pick; on Windows that is EdgeChromium (WebView2),
     # which is the runtime Tauri would also use. Measuring this measures both.
-    webview.start(_boot, debug="--debug" in sys.argv)
+    # icon= is what stops the taskbar showing python.exe's logo on source runs.
+    icon_path = os.path.join(RESOURCE_DIR, "nebula_icon.ico")
+    if not os.path.isfile(icon_path):
+        icon_path = None
+    webview.start(
+        _boot,
+        debug="--debug" in sys.argv,
+        icon=icon_path,
+    )
     host.quit()
     return 0
 

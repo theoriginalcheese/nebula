@@ -26,8 +26,8 @@
 
       <!-- Titlebar. pywebview-drag-region makes it move the window. -->
       <header class="titlebar pywebview-drag-region">
-        <div class="brand">
-          <span class="mark"></span>
+        <div class="brand no-drag" id="brand">
+          <span class="mark" id="brand-mark" aria-hidden="true"></span>
           <span class="wordmark">Nebula</span>
           <span class="build" id="build-badge" title="">…</span>
         </div>
@@ -46,6 +46,7 @@
             <button class="rail-item is-active" data-pane="dashboard"><span class="ri"></span>Dashboard</button>
             <button class="rail-item" data-pane="clips"><span class="ri"></span>Clips</button>
             <button class="rail-item" data-pane="games"><span class="ri"></span>Games</button>
+            <button class="rail-item" data-pane="remote"><span class="ri"></span>Remote streaming</button>
             <button class="rail-item" data-pane="macropad"><span class="ri"></span>Macropad</button>
             <button class="rail-item" data-pane="settings"><span class="ri"></span>Settings</button>
             <button class="rail-item palette-trigger no-drag" id="btn-palette" type="button"
@@ -267,6 +268,63 @@
                   </div>
                 </section>
               </div>
+            </div>
+
+            <!-- Remote streaming — Moonlight + Tailscale -->
+            <div class="pane-body" data-pane="remote" id="pane-remote" hidden>
+              <p class="remote-blurb" id="remote-blurb"></p>
+              <div class="remote-grid">
+                <section class="card remote-card remote-card--moon">
+                  <div class="card-core">
+                    <div class="remote-card-head">
+                      <span class="remote-dot" id="moon-dot" data-state="unknown"></span>
+                      <span class="eyebrow">Moonlight</span>
+                      <span class="remote-ver" id="moon-ver" hidden></span>
+                    </div>
+                    <div class="moon-stage">
+                      <div class="moon-orb" id="moon-orb" data-state="unknown" aria-hidden="true">
+                        <span class="moon-orb-ring"></span>
+                        <span class="moon-orb-core"></span>
+                      </div>
+                      <div class="moon-copy">
+                        <div class="remote-status" id="moon-status">—</div>
+                        <div class="remote-detail" id="moon-detail"></div>
+                        <div class="remote-note" id="moon-note" hidden></div>
+                      </div>
+                    </div>
+                    <div class="moon-host" id="moon-host" hidden>
+                      <span class="moon-host-k">Last host</span>
+                      <span class="moon-host-name" id="moon-host-name"></span>
+                      <span class="moon-host-addr" id="moon-host-addr"></span>
+                    </div>
+                    <div class="remote-target" id="moon-target" hidden></div>
+                    <div class="remote-actions" id="moon-actions">
+                      <button class="pill primary no-drag" id="btn-moon-connect" type="button" disabled>Connect</button>
+                      <button class="pill ghost no-drag" id="btn-moon-disconnect" type="button" disabled>Disconnect</button>
+                      <button class="pill ghost no-drag" id="btn-moon-open" type="button" disabled>Open Moonlight</button>
+                    </div>
+                    <div class="remote-action-msg" id="moon-action-msg" hidden></div>
+                  </div>
+                </section>
+                <section class="card remote-card">
+                  <div class="card-core">
+                    <div class="remote-card-head">
+                      <span class="remote-dot" id="tail-dot" data-state="unknown"></span>
+                      <span class="eyebrow">Tailscale</span>
+                    </div>
+                    <div class="remote-status" id="tail-status">—</div>
+                    <div class="remote-detail" id="tail-detail"></div>
+                    <div class="remote-meta" id="tail-meta" hidden></div>
+                    <ul class="remote-peers" id="tail-peers" hidden></ul>
+                  </div>
+                </section>
+              </div>
+              <section class="card remote-foot-card" id="remote-offload-card" hidden>
+                <div class="card-core">
+                  <span class="eyebrow">NAS offload</span>
+                  <div class="remote-detail" id="remote-offload"></div>
+                </div>
+              </section>
             </div>
 
             <!-- 2e Macropad — honest empty -->

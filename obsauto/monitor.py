@@ -116,9 +116,11 @@ def _launch_via_scheduled_task(log):
     doesn't exist on this machine - callers should fall back to a normal
     launch attempt."""
     try:
+        from .silent_proc import run_kwargs
         result = subprocess.run(
             ["schtasks", "/run", "/tn", OBS_LAUNCH_TASK_NAME],
             capture_output=True, text=True, timeout=10,
+            **run_kwargs(),
         )
         return result.returncode == 0
     except (OSError, subprocess.TimeoutExpired):
@@ -526,7 +528,7 @@ class Monitor:
                 name = self._recording_target[2] if self._recording_target else "unknown"
                 detail = "idle" if reason == "idle" else "session ended"
                 self.log(f"[OBS] Paused recording ({name}) - {detail}.")
-                self.on_notify("pause", name)
+                self.on_notify("pause", name, {"reason": reason})
                 session_log.append("idle_in", game=name, reason=reason)
         except OBSError as e:
             self.log(f"[OBS] Failed to pause: {e}")

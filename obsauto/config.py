@@ -72,6 +72,17 @@ DEFAULTS = {
     # path); set it per-machine. "copy" keeps both copies, "move" frees local.
     "nas_offload_root": "",
     "nas_offload_mode": "copy",
+    # Hours between automatic backlog scans when the NAS path is reachable
+    # (Tailscale online / mapped drive up). 0 = manual Sync now only; the
+    # per-clip queue from finished recordings still drains either way.
+    "nas_offload_interval_hours": 24,
+    # ---- Moonlight remote play (client) ----
+    # Nebula launches Moonlight's CLI; it does not embed the stream. Blank
+    # host disables Connect. App is usually "Desktop" for a full session.
+    "moonlight_path": "C:/Program Files/Moonlight Game Streaming/Moonlight.exe",
+    "moonlight_host": "",
+    "moonlight_app": "Desktop",
+    "moonlight_display_mode": "borderless",
     # Used to auto-launch OBS if it isn't already running (at startup, and
     # again if it crashes/closes mid-session). Skipped silently if this path
     # doesn't exist on this machine - just set it per-machine if different.

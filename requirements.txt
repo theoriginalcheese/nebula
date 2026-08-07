@@ -8,3 +8,4 @@ Pillow
 pycaw
 comtypes
 keyboard
+pywebview
