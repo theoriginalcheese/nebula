@@ -86,8 +86,20 @@ def run():
     check("age: minutes", moon._age_label(125) == "2m ago")
     check("age: just now", moon._age_label(2) == "just now")
 
-
-
+    # ---- wait_until_streaming helpers (no live Moonlight) ----
+    import tempfile
+    work2 = tempfile.mkdtemp(prefix="nebula-moon-wait-")
+    log2 = os.path.join(work2, "Moonlight-wait.log")
+    with open(log2, "w", encoding="utf-8") as f:
+        f.write("boot\n")
+    baseline = os.path.getsize(log2)
+    check("stream not started yet",
+          moon._stream_started_since(log2, baseline) is False)
+    with open(log2, "a", encoding="utf-8") as f:
+        f.write("00:00:10 - Starting video stream...\n")
+    check("stream started after baseline",
+          moon._stream_started_since(log2, baseline) is True)
+    check("log grew", moon._log_grew(log2, baseline) is True)
 run()
 passed_all = all(p for _, p, _ in results)
 for name, passed, detail in results:

@@ -205,6 +205,31 @@ FIELDS = (
           hint="Hours between backlog scans when the NAS is reachable. "
                "24 ≈ daily. 0 turns auto scan off — use Sync now. Clips "
                "still queue the moment a recording finishes either way."),
+    Field("nas_offload_use_teracopy", "Use TeraCopy", "bool", "offload",
+          hint="On when TeraCopy helps (fast wired NAS). Off uses Nebula's "
+               "built-in copier — often faster over WiFi/Tailscale. SHA-256 "
+               "verify still always runs before any local delete."),
+    Field("nas_offload_ssh_host", "SSH verify host", "text", "offload",
+          hint="Optional. SSH alias/host for cheese@NAS (e.g. nas). When set "
+               "with Unix root, dest SHA runs on the NAS — no SMB re-read. "
+               "Blank keeps the old verify-over-SMB path. Direct to NAS only."),
+    Field("nas_offload_unix_root", "SSH Unix root", "text", "offload",
+          hint="Linux path that mirrors NAS root, e.g. "
+               "/srv/.../50tb/OBS. Required with SSH verify host."),
+    Field("teracopy_path", "TeraCopy.exe", "path", "offload",
+          hint="Optional. Blank auto-finds TeraCopy when Use TeraCopy is on."),
+    Field("nas_offload_auto_lan", "Auto LAN / remote path", "bool", "offload",
+          hint="On: switch between LAN root (at mum's) and remote Tailscale "
+               "root (at dad's) using Tailscale's live endpoint — not Deco "
+               "subnet alone (both houses share 192.168.68.x). Off: use NAS "
+               "root only. Leave Off on Alien-PC (fixed Z: over 5GbE)."),
+    Field("nas_offload_root_lan", "LAN root (home)", "path", "offload",
+          hint="Fast path when colocated with the NAS, e.g. "
+               "\\\\192.168.68.59\\50tb\\OBS. Used only when Auto is on."),
+    Field("nas_offload_root_remote", "Remote root (Tailscale)", "path", "offload",
+          hint="Path when away, e.g. \\\\100.84.207.58\\50tb\\OBS. Used only "
+               "when Auto is on. Prefer Tailscale IP — avoids dad's Deco "
+               "colliding with mum's 192.168.68.59."),
 
     # ---- Remote streaming (Moonlight client) ----
     Field("moonlight_path", "Moonlight.exe", "path", "remote",

@@ -23,19 +23,25 @@ Config keys (absent/blank root = feature off, a pure no-op):
   nas_offload_root             destination base dir
   nas_offload_mode             "move" or "copy"
   nas_offload_interval_hours   auto backlog scan cadence (0 = manual only)
+  nas_offload_use_teracopy     prefer TeraCopy when installed (default True)
+  nas_offload_ssh_host         optional SSH host for dest SHA (BatchMode)
+  nas_offload_unix_root        Linux path mirroring nas_offload_root
+  teracopy_path                optional absolute TeraCopy.exe
 """
-
 from __future__ import annotations
 
 import hashlib
 import json
 import os
+import shlex
 import shutil
+import subprocess
 import threading
 import time
 
 from . import tailscale as ts
 from . import teracopy as tc
+from .silent_proc import run_kwargs
 
 _CHUNK = 4 * 1024 * 1024  # 4 MiB
 _RETRY_BACKOFF = 10       # seconds to wait before retrying a failed item
@@ -44,6 +50,8 @@ _IDLE_PROBE_S = 10.0
 _FRESH_CLIP_S = 60.0      # skip files still being written (mtime too new)
 _VIDEO_EXTS = (".mkv", ".mp4", ".mov", ".flv", ".ts", ".m4v")
 _DEFAULT_INTERVAL_H = 24
+_SSH_HASH_TIMEOUT = 600   # large clips hashed on-NAS; generous wall clock
+_PATH_PROBE_TTL = 30.0    # how long a LAN/remote choice sticks
 
 
 def _sanitize(name):
@@ -111,12 +119,13 @@ class Offloader:
         self._last_success_at = 0.0
         self._last_message = ""
         self._scan_busy = False
+        self._path_choice = ("", "", 0.0)  # (norm_root, reason, monotonic)
         self._load_state()
 
     # ---- config (re-read each item so a live config edit is picked up) ----
-    @property
-    def root(self):
-        raw = (self._config.get("nas_offload_root") or "").strip()
+    @staticmethod
+    def _normalize_root(raw):
+        raw = (raw or "").strip()
         if not raw:
             return ""
         # Windows quirk: os.path.join("Z:", "Game") → "Z:Game" (cwd-relative on
@@ -124,6 +133,66 @@ class Offloader:
         if len(raw) == 2 and raw[1] == ":":
             raw = raw + os.sep
         return os.path.normpath(raw)
+
+    @property
+    def root(self):
+        return self._resolve_root()
+
+    def _auto_lan_enabled(self):
+        return bool(self._config.get("nas_offload_auto_lan"))
+
+    def _resolve_root(self):
+        """Active offload destination — manual root, or LAN/remote auto pick."""
+        manual = self._normalize_root(self._config.get("nas_offload_root"))
+        lan = self._normalize_root(self._config.get("nas_offload_root_lan"))
+        remote = self._normalize_root(self._config.get("nas_offload_root_remote"))
+        if not self._auto_lan_enabled() or not lan or not remote:
+            return manual
+
+        now = time.monotonic()
+        cached_root, cached_reason, cached_at = self._path_choice
+        if cached_root and (now - cached_at) < _PATH_PROBE_TTL:
+            return cached_root
+
+        if ts.home_lan_preferred(lan):
+            chosen, reason = lan, "lan"
+        else:
+            chosen, reason = remote, "remote"
+
+        # Preferred side may not be mounted (SMB creds are per-host). Fall
+        # back carefully: when *away*, never prefer the LAN UNC just because
+        # dad's Deco also has 192.168.68.x — use the manual root (often Z:)
+        # first. When *home*, remote Tailscale UNC is a safe second choice.
+        if chosen and not os.path.isdir(chosen):
+            manual_ok = manual if (manual and os.path.isdir(manual)) else ""
+            if reason == "remote":
+                if manual_ok:
+                    chosen, reason = manual_ok, "manual_fallback"
+                elif lan and os.path.isdir(lan) and ts.home_lan_preferred(lan):
+                    chosen, reason = lan, "lan_fallback"
+            else:
+                if remote and os.path.isdir(remote):
+                    chosen, reason = remote, "remote_fallback"
+                elif manual_ok:
+                    chosen, reason = manual_ok, "manual_fallback"
+
+        if not chosen:
+            chosen, reason = manual, "manual"
+
+        prev_root, prev_reason, _ = self._path_choice
+        self._path_choice = (chosen, reason, now)
+        if chosen and (chosen != prev_root or reason != prev_reason):
+            self._log("[Offload] Path %s → %s" % (reason, chosen))
+        return chosen
+
+    def path_mode(self):
+        """``lan`` / ``remote`` / ``manual`` / ``off`` — for Settings status."""
+        if not self._auto_lan_enabled():
+            return "manual" if self._normalize_root(
+                self._config.get("nas_offload_root")) else "off"
+        # Force a resolve so the cache matches what root would return.
+        self._resolve_root()
+        return self._path_choice[1] or "remote"
 
     @property
     def mode(self):
@@ -145,6 +214,20 @@ class Offloader:
     @property
     def recording_root(self):
         return (self._config.get("recording_root") or "").strip()
+
+    def _use_teracopy(self):
+        flag = self._config.get("nas_offload_use_teracopy")
+        if flag is None:
+            flag = True
+        if not flag:
+            return False
+        return tc.available(self._config.get("teracopy_path") or "")
+
+    def _ssh_host(self):
+        return (self._config.get("nas_offload_ssh_host") or "").strip()
+
+    def _unix_root(self):
+        return (self._config.get("nas_offload_unix_root") or "").strip().rstrip("/")
 
     def start(self, on_state=None):
         self._on_state = on_state
@@ -169,6 +252,7 @@ class Offloader:
         effect - what this adds is waking the worker, so a queue that had backed
         off against an unset/unreachable root retries immediately instead of
         sitting out the rest of its backoff."""
+        self._path_choice = ("", "", 0.0)
         self._wake.set()
         self._notify()
 
@@ -250,8 +334,9 @@ class Offloader:
             "message": message,
             "busy": busy,
             "can_sync": self.enabled,
-            "transfer": "TeraCopy" if tc.available(
-                self._config.get("teracopy_path")) else "built-in",
+            "transfer": "TeraCopy" if self._use_teracopy() else "built-in",
+            "path_mode": self.path_mode() if self.enabled else "off",
+            "auto_lan": self._auto_lan_enabled(),
         }
 
     def sync_now(self, recording_root=None):
@@ -593,14 +678,15 @@ class Offloader:
         part = dest + ".part"
         self._cleanup(part)
         try:
-            self._transfer_to_part(src, part, dest_dir)
+            src_hash = self._transfer_to_part(src, part, dest_dir)
         except (OSError, RuntimeError) as exc:
             self._log(f"[Offload] Copy failed ({os.path.basename(src)}): {exc}")
             self._cleanup(part)
             return False
 
-        src_hash = self._hash(src)
-        dest_hash = self._hash(part)
+        if not src_hash:
+            src_hash = self._hash(src)
+        dest_hash = self._hash_dest(part)
         if not src_hash or src_hash != dest_hash:
             self._log(f"[Offload] CHECKSUM MISMATCH for {os.path.basename(src)} - "
                       "kept local, will retry.")
@@ -612,9 +698,9 @@ class Offloader:
             self._log(f"[Offload] Rename failed ({os.path.basename(src)}): {exc}")
             self._cleanup(part)
             return False
-        engine = "TeraCopy" if tc.available(
-            self._config.get("teracopy_path")) else "built-in"
-        self._log(f"[Offload] Verified on NAS via {engine}: "
+        engine = "TeraCopy" if self._use_teracopy() else "built-in"
+        verify = "SSH" if self._ssh_host() and self._unix_root() else "local"
+        self._log(f"[Offload] Verified on NAS via {engine}/{verify}: "
                   f"{os.path.basename(src)} -> {dest_dir}")
         return self._finalize(src, dest)
 
@@ -634,13 +720,14 @@ class Offloader:
 
     # ---- io helpers ----
     def _transfer_to_part(self, src, part, dest_dir):
-        """Bulk-copy ``src`` onto ``part``. Prefer TeraCopy; fall back to SHA stream.
+        """Bulk-copy ``src`` onto ``part``.
 
-        TeraCopy's CLI writes into a folder under the source basename, so we
-        stage into a temp subdir, then rename into the ``.part`` sidecar.
+        Returns the source SHA-256 hex digest when the built-in streamer ran
+        (hashed during the single local read), else ``None`` so the caller
+        hashes separately. Prefer TeraCopy only when enabled in config.
         """
-        configured = self._config.get("teracopy_path") or ""
-        if tc.available(configured):
+        if self._use_teracopy():
+            configured = self._config.get("teracopy_path") or ""
             stage = os.path.join(
                 dest_dir, ".nebula-tc-%s" % os.getpid())
             try:
@@ -650,7 +737,7 @@ class Offloader:
                 staged = tc.copy_into(
                     src, stage, configured=configured, log=self._log)
                 os.replace(staged, part)
-                return
+                return None
             except (OSError, RuntimeError) as exc:
                 self._log("[Offload] TeraCopy unavailable for this file "
                           "(%s) — using built-in copy." % exc)
@@ -665,7 +752,7 @@ class Offloader:
                         os.rmdir(stage)
                 except OSError:
                     pass
-        self._copy_hashing(src, part)
+        return self._copy_hashing(src, part)
 
     def _copy_hashing(self, src, dst):
         h = hashlib.sha256()
@@ -680,6 +767,76 @@ class Offloader:
             os.fsync(fout.fileno())
         shutil.copystat(src, dst, follow_symlinks=False)
         return h.hexdigest()
+
+    def _unix_path_for(self, windows_path):
+        """Map a path under ``nas_offload_root`` to ``nas_offload_unix_root``.
+
+        Returns ``None`` when SSH verify isn't configured or the file sits
+        outside the offload root (never invent a remote path).
+        """
+        host = self._ssh_host()
+        unix_root = self._unix_root()
+        root = self.root
+        if not host or not unix_root or not root or not windows_path:
+            return None
+        try:
+            abs_file = os.path.abspath(windows_path)
+            abs_root = os.path.abspath(root)
+            prefix = abs_root.rstrip("\\/") + os.sep
+            if not abs_file.lower().startswith(prefix.lower()):
+                # .part lives next to dest under the same root — allow exact root
+                if abs_file.lower().rstrip("\\/") != abs_root.lower().rstrip("\\/"):
+                    return None
+                rel = ""
+            else:
+                rel = abs_file[len(prefix):]
+        except (OSError, ValueError):
+            return None
+        rel_unix = rel.replace("\\", "/").lstrip("/")
+        if not rel_unix:
+            return unix_root
+        return unix_root + "/" + rel_unix
+
+    def _hash_dest(self, path):
+        """SHA-256 of the destination — prefer on-NAS SSH, else SMB re-read."""
+        unix = self._unix_path_for(path)
+        if unix:
+            remote = self._ssh_sha256(unix)
+            if remote:
+                return remote
+            self._log("[Offload] SSH verify unavailable — falling back to "
+                      "hash over the mapped path.")
+        return self._hash(path)
+
+    def _ssh_sha256(self, unix_path):
+        """Run ``sha256sum`` on the NAS. Direct SSH only (no jump host)."""
+        host = self._ssh_host()
+        if not host or not unix_path:
+            return None
+        # Refuse shell metacharacters in the remote path — game folders are
+        # plain names, and we quote anyway via shlex.
+        if any(ch in unix_path for ch in ("\n", "\r", "\x00")):
+            return None
+        remote = "sha256sum -b -- %s" % shlex.quote(unix_path)
+        try:
+            result = subprocess.run(
+                ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=8",
+                 host, remote],
+                capture_output=True, timeout=_SSH_HASH_TIMEOUT, check=False,
+                **run_kwargs(),
+            )
+        except (OSError, subprocess.SubprocessError):
+            return None
+        if not result or result.returncode != 0 or not result.stdout:
+            return None
+        # sha256sum -b → "<hex> *path" or "<hex>  path"
+        line = result.stdout.decode("utf-8", errors="replace").strip().splitlines()
+        if not line:
+            return None
+        digest = line[0].split()[0].strip().lower()
+        if len(digest) != 64 or any(c not in "0123456789abcdef" for c in digest):
+            return None
+        return digest
 
     def _hash(self, path):
         h = hashlib.sha256()
@@ -697,7 +854,10 @@ class Offloader:
                 return False
         except OSError:
             return False
-        return self._hash(a) == self._hash(b)
+        # Prefer SSH for the destination side when configured.
+        hb = self._hash_dest(b)
+        ha = self._hash(a)
+        return bool(ha and hb and ha == hb)
 
     def _cleanup(self, path):
         try:

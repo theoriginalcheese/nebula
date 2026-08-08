@@ -281,6 +281,45 @@ def run():
           "\\" in os.path.join(bare.root, "Game") or "/" in os.path.join(bare.root, "Game"),
           os.path.join(bare.root, "Game"))
 
+    # ---- auto LAN / remote path pick (no Tailscale CLI required) ----
+    lan_dir = os.path.join(work, "lan-root")
+    remote_dir = os.path.join(work, "remote-root")
+    os.makedirs(lan_dir)
+    os.makedirs(remote_dir)
+    from obsauto import tailscale as ts_mod
+    real_home = ts_mod.home_lan_preferred
+    try:
+        ts_mod.home_lan_preferred = lambda root, peer="nas": True
+        off_auto, _ = new_offloader({
+            "nas_offload_root": "",
+            "nas_offload_auto_lan": True,
+            "nas_offload_root_lan": lan_dir,
+            "nas_offload_root_remote": remote_dir,
+        })
+        check("auto: picks LAN when home", off_auto.root == os.path.normpath(lan_dir),
+              off_auto.root)
+        check("auto: path_mode lan", off_auto.path_mode().startswith("lan"),
+              off_auto.path_mode())
+
+        ts_mod.home_lan_preferred = lambda root, peer="nas": False
+        off_auto.refresh()
+        check("auto: picks remote when away",
+              off_auto.root == os.path.normpath(remote_dir), off_auto.root)
+        check("auto: path_mode remote", off_auto.path_mode().startswith("remote"),
+              off_auto.path_mode())
+
+        off_manual, _ = new_offloader({
+            "nas_offload_root": nas,
+            "nas_offload_auto_lan": False,
+            "nas_offload_root_lan": lan_dir,
+            "nas_offload_root_remote": remote_dir,
+        })
+        check("auto off: desktop uses manual root",
+              off_manual.root == os.path.normpath(nas), off_manual.root)
+        check("auto off: path_mode manual", off_manual.path_mode() == "manual")
+    finally:
+        ts_mod.home_lan_preferred = real_home
+
     paths_module.APP_DIR = original_app_dir
 
 

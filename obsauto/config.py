@@ -76,6 +76,25 @@ DEFAULTS = {
     # (Tailscale online / mapped drive up). 0 = manual Sync now only; the
     # per-clip queue from finished recordings still drains either way.
     "nas_offload_interval_hours": 24,
+    # Prefer TeraCopy for the bulk write when installed. On WiFi/Tailscale the
+    # built-in streamer is often faster; set false on those machines. Empty /
+    # missing teracopy_path still auto-discovers when this is true.
+    "nas_offload_use_teracopy": True,
+    # Optional: after the copy, SHA-256 the destination on the NAS itself via
+    # SSH (BatchMode) instead of reading the file back over SMB. Same safety,
+    # roughly half the network cost. Both blank = SMB re-read (old behaviour).
+    # unix_root is the absolute Linux path that mirrors nas_offload_root.
+    "nas_offload_ssh_host": "",
+    "nas_offload_unix_root": "",
+    # Optional absolute path to TeraCopy.exe; blank = auto-discover.
+    "teracopy_path": "",
+    # When true, pick between nas_offload_root_lan (mum's Deco / same site)
+    # and nas_offload_root_remote (Tailscale UNC) using Tailscale CurAddr /
+    # ping RTT — not the overlapping 192.168.68.x subnet alone. Default
+    # false so Alien-PC keeps a fixed Z: (5GbE) via nas_offload_root.
+    "nas_offload_auto_lan": False,
+    "nas_offload_root_lan": "",
+    "nas_offload_root_remote": "",
     # ---- Moonlight remote play (client) ----
     # Nebula launches Moonlight's CLI; it does not embed the stream. Blank
     # host disables Connect. App is usually "Desktop" for a full session.

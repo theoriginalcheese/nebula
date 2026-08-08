@@ -204,6 +204,19 @@ def start_stream(host, app, configured_path="", display_mode="borderless",
         return None, str(exc)
 
 
+def _hidden_startupinfo():
+    """STARTUPINFO that keeps a brief Moonlight helper from flashing a window."""
+    if os.name != "nt":
+        return None
+    try:
+        info = subprocess.STARTUPINFO()
+        info.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        info.wShowWindow = 0  # SW_HIDE
+        return info
+    except (AttributeError, OSError):
+        return None
+
+
 def quit_host_app(host, configured_path=""):
     """Ask the host (Sunshine) to quit the running app. Returns error or None."""
     exe = find_exe(configured_path)
@@ -213,13 +226,18 @@ def quit_host_app(host, configured_path=""):
     if not host:
         return "moonlight_host is blank"
     try:
-        subprocess.Popen(
-            [exe, "quit", host],
-            cwd=os.path.dirname(exe) or None,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            creationflags=_CREATE_NO_WINDOW,
-        )
+        # ``quit`` is a one-shot helper — hide it hard. CREATE_NO_WINDOW alone
+        # is not enough for Qt; without SW_HIDE the Moonlight chrome flashes.
+        kwargs = {
+            "cwd": os.path.dirname(exe) or None,
+            "stdout": subprocess.DEVNULL,
+            "stderr": subprocess.DEVNULL,
+            "creationflags": _CREATE_NO_WINDOW,
+        }
+        startup = _hidden_startupinfo()
+        if startup is not None:
+            kwargs["startupinfo"] = startup
+        subprocess.Popen([exe, "quit", host], **kwargs)
         return None
     except OSError as exc:
         return str(exc)
@@ -242,18 +260,262 @@ def open_ui(configured_path=""):
         return None, str(exc)
 
 
+def _hide_pid_windows(pid):
+    """SW_HIDE every top-level window owned by ``pid`` (best-effort, Windows)."""
+    if os.name != "nt" or not pid:
+        return
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        user32 = ctypes.windll.user32
+        SW_HIDE = 0
+        handles = []
+
+        @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+        def _enum(hwnd, _lp):
+            proc_id = wintypes.DWORD()
+            user32.GetWindowThreadProcessId(hwnd, ctypes.byref(proc_id))
+            if proc_id.value == int(pid) and user32.IsWindowVisible(hwnd):
+                handles.append(hwnd)
+            return True
+
+        user32.EnumWindows(_enum, 0)
+        for hwnd in handles:
+            user32.ShowWindow(hwnd, SW_HIDE)
+    except (AttributeError, OSError, ValueError, TypeError):
+        pass
+
+
 def disconnect_client(proc=None):
-    """End the local Moonlight process we started, if still running."""
+    """End the local Moonlight process we started, if still running.
+
+    Hide first, then kill — ``terminate()`` posts WM_CLOSE and Moonlight's
+    home UI often flashes for a beat before exit.
+    """
     if proc is None:
         return False
     try:
-        if proc.poll() is None:
+        if proc.poll() is not None:
+            return False
+        pid = getattr(proc, "pid", None)
+        _hide_pid_windows(pid)
+        try:
+            proc.kill()
+        except OSError:
             proc.terminate()
+        try:
+            proc.wait(timeout=3)
+        except subprocess.TimeoutExpired:
             try:
-                proc.wait(timeout=3)
-            except subprocess.TimeoutExpired:
                 proc.kill()
-            return True
+            except OSError:
+                pass
+        return True
     except OSError:
         pass
     return False
+
+
+def _moonlight_pids(configured_path=""):
+    """PIDs whose image is Moonlight.exe (best-effort)."""
+    exe = (find_exe(configured_path) or "").lower()
+    want = {"moonlight.exe"}
+    if exe:
+        want.add(os.path.basename(exe))
+    pids = []
+    try:
+        import psutil
+    except ImportError:
+        return pids
+    for proc in psutil.process_iter(["pid", "name", "exe"]):
+        try:
+            name = (proc.info.get("name") or "").lower()
+            path = (proc.info.get("exe") or "").lower()
+            if name in want or (exe and path == exe):
+                pids.append(int(proc.info["pid"]))
+        except (psutil.Error, TypeError, ValueError):
+            continue
+    return pids
+
+
+def kill_all_clients(configured_path=""):
+    """Hide every Moonlight window, then force-kill all Moonlight.exe.
+
+    Nebula-started sessions often respawn the host-list UI after the stream
+    process dies — one more flash. Ending *all* Moonlight processes is the
+    quiet path Disconnect wants.
+    """
+    pids = _moonlight_pids(configured_path)
+    for pid in pids:
+        _hide_pid_windows(pid)
+    killed = False
+    try:
+        import psutil
+    except ImportError:
+        psutil = None
+    for pid in pids:
+        if psutil is None:
+            break
+        try:
+            p = psutil.Process(pid)
+            p.kill()
+            killed = True
+        except (psutil.Error, OSError):
+            continue
+    if os.name == "nt":
+        # Belt-and-braces: anything we missed (short-lived quit helper, etc.).
+        try:
+            kwargs = {
+                "capture_output": True,
+                "timeout": 5,
+                "creationflags": _CREATE_NO_WINDOW,
+            }
+            startup = _hidden_startupinfo()
+            if startup is not None:
+                kwargs["startupinfo"] = startup
+            result = subprocess.run(
+                ["taskkill", "/F", "/IM", "Moonlight.exe", "/T"], **kwargs)
+            if result.returncode == 0:
+                killed = True
+        except (OSError, subprocess.SubprocessError):
+            pass
+    return killed
+
+
+def wait_until_streaming(proc=None, timeout=60.0, abort_event=None,
+                         hide=True, poll=0.05, baseline_len=None):
+    """Hold Moonlight back until the video stream is actually live.
+
+    While waiting, optionally keep every Moonlight window hidden so it never
+    steals the foreground before the stream is ready. Returns one of
+    ``\"live\"``, ``\"timeout\"``, ``\"dead\"``, ``\"aborted\"``.
+
+    ``baseline_len`` should be the Moonlight log size *before* ``start_stream``
+    so a fast start still counts as new.
+    """
+    from . import session_detect as sd
+
+    deadline = time.monotonic() + max(1.0, float(timeout))
+    log_path = sd._newest_moonlight_log()
+    if baseline_len is None:
+        start_len = 0
+        if log_path:
+            try:
+                start_len = os.path.getsize(log_path)
+            except OSError:
+                start_len = 0
+    else:
+        start_len = max(0, int(baseline_len))
+
+    while time.monotonic() < deadline:
+        if abort_event is not None and abort_event.is_set():
+            return "aborted"
+        if proc is not None and proc.poll() is not None:
+            return "dead"
+        if hide:
+            hide_client_windows()
+        # Fresh "Starting video stream" after we connected?
+        if _stream_started_since(log_path, start_len):
+            return "live"
+        # Fallback: session_detect says live and the log moved.
+        if sd.moonlight_session_active() is True and _log_grew(log_path, start_len):
+            return "live"
+        time.sleep(max(0.02, float(poll)))
+    return "timeout"
+
+
+def _log_grew(path, start_len):
+    if not path:
+        return False
+    try:
+        return os.path.getsize(path) > int(start_len)
+    except OSError:
+        return False
+
+
+def _stream_started_since(path, start_len):
+    """True if a Starting marker appears after ``start_len`` bytes."""
+    if not path:
+        return False
+    try:
+        with open(path, "r", encoding="utf-8", errors="ignore") as f:
+            f.seek(max(0, int(start_len)))
+            chunk = f.read()
+    except OSError:
+        return False
+    return "Starting video stream" in chunk
+
+
+def hide_client_windows(configured_path=""):
+    """SW_HIDE every visible Moonlight top-level window."""
+    for pid in _moonlight_pids(configured_path):
+        _hide_pid_windows(pid)
+
+
+def reveal_client_windows(configured_path=""):
+    """Show Moonlight windows and try to bring the stream to the front.
+
+    Called only after ``wait_until_streaming`` reports live, so the user sees
+    the remote desktop rather than Moonlight's host list.
+    """
+    if os.name != "nt":
+        return False
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        user32 = ctypes.windll.user32
+        SW_SHOW = 5
+        SW_RESTORE = 9
+        pids = set(_moonlight_pids(configured_path))
+        if not pids:
+            return False
+        shown = []
+
+        @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+        def _enum(hwnd, _lp):
+            proc_id = wintypes.DWORD()
+            user32.GetWindowThreadProcessId(hwnd, ctypes.byref(proc_id))
+            if proc_id.value in pids and user32.IsWindow(hwnd):
+                shown.append(hwnd)
+            return True
+
+        user32.EnumWindows(_enum, 0)
+        target = None
+        for hwnd in shown:
+            # Prefer a visible-or-restorable window with a title (the stream).
+            length = user32.GetWindowTextLengthW(hwnd)
+            if length <= 0:
+                continue
+            user32.ShowWindow(hwnd, SW_RESTORE)
+            user32.ShowWindow(hwnd, SW_SHOW)
+            target = hwnd
+        if target is None and shown:
+            target = shown[0]
+            user32.ShowWindow(target, SW_SHOW)
+        if target is not None:
+            try:
+                user32.SetForegroundWindow(target)
+            except Exception:
+                pass
+            return True
+    except (AttributeError, OSError, ValueError, TypeError):
+        pass
+    return False
+
+
+def end_session(proc=None, host="", configured_path=""):
+    """Quiet teardown: hide → kill client(s) → ask Sunshine to quit the app.
+
+    Returns ``{"client_closed": bool, "host_quit_error": str|None}``.
+    """
+    closed = disconnect_client(proc)
+    # Stream process may have already exited, or Moonlight may have respawned
+    # its chrome — sweep either way.
+    if kill_all_clients(configured_path):
+        closed = True
+    quit_err = None
+    if (host or "").strip():
+        quit_err = quit_host_app(host, configured_path=configured_path)
+    return {"client_closed": closed, "host_quit_error": quit_err}

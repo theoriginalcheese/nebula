@@ -228,6 +228,125 @@ def peer_online(host, st=None):
     return st["peers"].get(host.lower())
 
 
+def peer_cur_addr(host, st=None):
+    """Live WireGuard endpoint for ``host`` (e.g. ``192.168.68.59:41641``).
+
+    Empty when the peer has no active path yet. Used to tell same-LAN
+    (private CurAddr) from cross-site (public CurAddr) without trusting the
+    overlapping Deco ``192.168.68.0/24`` at dad's house.
+    """
+    if not host:
+        return None
+    # Fresh CLI JSON — CurAddr isn't in the slim status() cache.
+    payload = _run_status_json()
+    if not isinstance(payload, dict):
+        return None
+    want = host.lower().strip().rstrip(".")
+    want_short = want.split(".", 1)[0]
+    for peer in (payload.get("Peer") or {}).values():
+        if not isinstance(peer, dict):
+            continue
+        names = []
+        for key in ("DNSName", "HostName"):
+            val = (peer.get(key) or "").rstrip(".").lower()
+            if val:
+                names.append(val)
+                names.append(val.split(".", 1)[0])
+        for ip in peer.get("TailscaleIPs") or []:
+            if ip:
+                names.append(str(ip).lower())
+        if want not in names and want_short not in names:
+            continue
+        cur = (peer.get("CurAddr") or "").strip()
+        return cur or None
+    return None
+
+
+def _endpoint_looks_lan(cur_addr):
+    """True when Tailscale's CurAddr is a private/site-local endpoint."""
+    if not cur_addr:
+        return False
+    text = cur_addr.strip()
+    # "[fd7a:…]:port" — Tailscale IPv6, not evidence of home LAN SMB.
+    if text.startswith("["):
+        return False
+    host = text.rsplit(":", 1)[0]
+    if host.startswith("192.168.") or host.startswith("10."):
+        return True
+    if host.startswith("172."):
+        try:
+            second = int(host.split(".", 2)[1])
+        except (ValueError, IndexError):
+            return False
+        return 16 <= second <= 31
+    return False
+
+
+# Same-site Tailscale ping is a few ms; mum↔dad was ~29ms in vault notes.
+_HOME_RTT_MS = 12.0
+_PING_TIMEOUT = 4
+
+
+def ping_rtt_ms(host, count=1):
+    """Best RTT in ms from ``tailscale ping``, or None on failure."""
+    if not host or not available():
+        return None
+    exe = shutil.which("tailscale") if _which_cache is None else _which_cache
+    if not exe:
+        return None
+    try:
+        result = subprocess.run(
+            [exe, "ping", "-c", str(max(1, int(count))), host],
+            capture_output=True,
+            timeout=_PING_TIMEOUT,
+            check=False,
+            **run_kwargs(),
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if not result or not result.stdout:
+        return None
+    text = result.stdout.decode("utf-8", errors="replace")
+    # "pong from nas (100.x) via 192.168.68.59:41641 in 2ms"
+    best = None
+    for line in text.splitlines():
+        line = line.strip().lower()
+        if " in " not in line or "ms" not in line:
+            continue
+        try:
+            part = line.rsplit(" in ", 1)[1]
+            num = part.replace("ms", "").strip().split()[0]
+            val = float(num)
+        except (IndexError, ValueError):
+            continue
+        if best is None or val < best:
+            best = val
+    return best
+
+
+def home_lan_preferred(lan_root, peer="nas"):
+    """Should offload use the LAN UNC instead of the Tailscale one?
+
+    Cheap and conservative:
+      1. ``lan_root`` must already be reachable (``isdir``).
+      2. Prefer Tailscale ``CurAddr`` — private endpoint ⇒ same site.
+         Public endpoint ⇒ remote site (dad's Virgin → mum's NAS).
+      3. If no CurAddr yet, fall back to ping RTT ≤ ``_HOME_RTT_MS``.
+
+    Never invents "home" from overlapping Deco subnets alone.
+    """
+    lan_root = (lan_root or "").strip()
+    if not lan_root or not os.path.isdir(lan_root):
+        return False
+    cur = peer_cur_addr(peer)
+    if cur:
+        return _endpoint_looks_lan(cur)
+    rtt = ping_rtt_ms(peer)
+    if rtt is None:
+        return False
+    return rtt <= _HOME_RTT_MS
+
+
 def diagnose(root):
     """Honest short code for UI/logs. Never invents a healthy NAS.
 

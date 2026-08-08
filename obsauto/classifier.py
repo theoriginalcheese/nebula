@@ -36,6 +36,8 @@ DENYLIST = {
     "msedgewebview2.exe", "widgets.exe", "widgetservice.exe",
     "armourycrate.exe", "armourycrateservice.exe", "aurasyncutility.exe",
     "blender.exe",
+    # AMD Relive / overlay helpers that pop while Moonlighting — never games.
+    "amdow.exe", "radeonsoftware.exe", "amddvr.exe",
     # Source engine SDK/map-compiler tools bundled with Source-engine games -
     # never the game itself.
     "vbsp.exe", "vrad.exe", "vvis.exe", "vconsole2.exe",

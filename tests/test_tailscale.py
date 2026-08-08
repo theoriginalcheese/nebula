@@ -209,6 +209,38 @@ def run():
         ts.available = real_available
         ts._reset_cache()
 
+    # ---- home_lan_preferred / endpoint heuristics ----
+    check("endpoint: private LAN",
+          ts._endpoint_looks_lan("192.168.68.59:41641") is True)
+    check("endpoint: public remote",
+          ts._endpoint_looks_lan("88.97.207.10:7578") is False)
+    check("endpoint: empty", ts._endpoint_looks_lan("") is False)
+    check("endpoint: ipv6 tailnet ignored",
+          ts._endpoint_looks_lan("[fd7a:115c:a1e0::1]:41641") is False)
+
+    real_cur = ts.peer_cur_addr
+    real_ping = ts.ping_rtt_ms
+    try:
+        ts.peer_cur_addr = lambda host, st=None: "192.168.68.59:1"
+        check("home: CurAddr private + isdir",
+              ts.home_lan_preferred(real_root) is True)
+        ts.peer_cur_addr = lambda host, st=None: "82.11.1.1:1"
+        check("home: CurAddr public rejects",
+              ts.home_lan_preferred(real_root) is False)
+        ts.peer_cur_addr = lambda host, st=None: None
+        ts.ping_rtt_ms = lambda host, count=1: 4.0
+        check("home: RTT fallback same-site",
+              ts.home_lan_preferred(real_root) is True)
+        ts.ping_rtt_ms = lambda host, count=1: 29.0
+        check("home: RTT fallback cross-site",
+              ts.home_lan_preferred(real_root) is False)
+        check("home: missing lan root",
+              ts.home_lan_preferred(missing) is False)
+    finally:
+        ts.peer_cur_addr = real_cur
+        ts.ping_rtt_ms = real_ping
+        ts._reset_cache()
+
     # ---- available() with which monkeypatch ----
     import shutil
     real_which = shutil.which

@@ -913,10 +913,16 @@ class Api:
                 offload["enabled"] = True
                 reach = st_off.get("reachability")
                 pending = st_off.get("pending") or 0
+                mode = (st_off.get("path_mode") or "").strip()
+                mode_bit = ""
+                if st_off.get("auto_lan") and mode.startswith("lan"):
+                    mode_bit = " · LAN"
+                elif st_off.get("auto_lan") and mode.startswith("remote"):
+                    mode_bit = " · Tailscale"
                 if pending:
                     offload["text"] = (
-                        "%d clip%s waiting on the NAS."
-                        % (pending, "" if pending == 1 else "s"))
+                        "%d clip%s waiting on the NAS%s."
+                        % (pending, "" if pending == 1 else "s", mode_bit))
                 elif reach and str(reach).startswith("nas_down"):
                     clause = ts.diagnose_label(reach)
                     offload["text"] = (
@@ -925,7 +931,7 @@ class Api:
                         + ".")
                 else:
                     clause = ts.diagnose_label(reach) if reach else ""
-                    offload["text"] = "NAS offload ready" + (
+                    offload["text"] = "NAS offload ready" + mode_bit + (
                         (" · %s." % clause) if clause else ".")
 
         return {
@@ -933,13 +939,14 @@ class Api:
             "tailscale": tail,
             "offload": offload,
             "blurb": (
-                "Connect opens Moonlight in its own window. Nebula only "
-                "treats a live video stream as recording."
+                "Connect starts Moonlight hidden and only shows it once the "
+                "stream is live. Disconnect kills the client quietly — no "
+                "home-screen flash."
             ),
         }
 
     def moonlight_connect(self):
-        """Start streaming the configured host/app via Moonlight CLI."""
+        """Start Moonlight hidden; reveal only once the video stream is live."""
         from obsauto import moonlight as moon_mod
 
         host = (self.cfg.get("moonlight_host") or "").strip()
@@ -952,30 +959,100 @@ class Api:
         if self._moonlight_proc is not None and self._moonlight_proc.poll() is None:
             return {"ok": True, "already": True,
                     "message": "Moonlight is already running from Nebula."}
-        proc, err = moon_mod.start_stream(
-            host, app, configured_path=path, display_mode=mode)
-        if err:
-            self._api_log("[Moonlight] Connect failed: %s" % err)
-            return {"ok": False, "error": err}
-        self._moonlight_proc = proc
-        self._api_log("[Moonlight] Streaming %s → %s (%s)." % (host, app, mode))
-        return {"ok": True, "host": host, "app": app}
+        if getattr(self, "_moonlight_connecting", False):
+            return {"ok": True, "pending": True,
+                    "message": "Already connecting…"}
+
+        # Moonlight is a session-gated "game" — pre-mark so Connect never
+        # trips the unrecognized-app review toast mid-stream.
+        if self._classifier is not None:
+            try:
+                kind, _ = self._classifier.classify(
+                    path or "Moonlight.exe", "moonlight.exe")
+                if kind == "unknown":
+                    self._classifier.mark_game(
+                        "moonlight.exe", "Moonlight", source="remote")
+            except Exception as exc:
+                self._api_log("[Moonlight] Classifier seed skipped: %s" % exc)
+
+        self._moonlight_connecting = True
+        abort = threading.Event()
+        self._moonlight_abort = abort
+
+        def worker():
+            try:
+                from obsauto import session_detect as sd
+                log_path = sd._newest_moonlight_log()
+                baseline = 0
+                if log_path:
+                    try:
+                        baseline = os.path.getsize(log_path)
+                    except OSError:
+                        baseline = 0
+                proc, err = moon_mod.start_stream(
+                    host, app, configured_path=path, display_mode=mode)
+                if err:
+                    self._api_log("[Moonlight] Connect failed: %s" % err)
+                    return
+                self._moonlight_proc = proc
+                # Hide immediately — Qt often maps a window before the stream.
+                moon_mod.hide_client_windows(path)
+                result = moon_mod.wait_until_streaming(
+                    proc, timeout=60.0, abort_event=abort, hide=True,
+                    baseline_len=baseline)
+                if abort.is_set() or result == "aborted":
+                    self._api_log("[Moonlight] Connect cancelled.")
+                    moon_mod.end_session(
+                        self._moonlight_proc, host=host, configured_path=path)
+                    self._moonlight_proc = None
+                    return
+                if result != "live":
+                    msg = {
+                        "timeout": "Timed out waiting for the remote desktop.",
+                        "dead": "Moonlight exited before the stream started.",
+                    }.get(result, "Could not start the stream.")
+                    self._api_log("[Moonlight] Connect %s: %s" % (result, msg))
+                    moon_mod.end_session(
+                        self._moonlight_proc, host=host, configured_path=path)
+                    self._moonlight_proc = None
+                    return
+                moon_mod.reveal_client_windows(path)
+                self._api_log(
+                    "[Moonlight] Streaming %s → %s (%s)." % (host, app, mode))
+            except Exception as exc:
+                self._api_log("[Moonlight] Connect error: %s" % exc)
+                try:
+                    moon_mod.end_session(
+                        self._moonlight_proc, host=host, configured_path=path)
+                except Exception:
+                    pass
+                self._moonlight_proc = None
+            finally:
+                self._moonlight_connecting = False
+
+        threading.Thread(
+            target=worker, name="moonlight-connect", daemon=True).start()
+        return {"ok": True, "pending": True,
+                "message": "Connecting — Moonlight stays hidden until live…"}
 
     def moonlight_disconnect(self):
-        """Close the Moonlight client we started, and ask the host to quit the app."""
+        """Quiet end: hide Moonlight, kill every client process, quit host app."""
         from obsauto import moonlight as moon_mod
 
+        abort = getattr(self, "_moonlight_abort", None)
+        if abort is not None:
+            abort.set()
         host = (self.cfg.get("moonlight_host") or "").strip()
         path = (self.cfg.get("moonlight_path") or "").strip()
-        closed = moon_mod.disconnect_client(self._moonlight_proc)
+        result = moon_mod.end_session(
+            self._moonlight_proc, host=host, configured_path=path)
         self._moonlight_proc = None
-        quit_err = None
-        if host:
-            quit_err = moon_mod.quit_host_app(host, configured_path=path)
-            if quit_err:
-                self._api_log("[Moonlight] Host quit: %s" % quit_err)
-            else:
-                self._api_log("[Moonlight] Asked host to quit the running app.")
+        quit_err = result.get("host_quit_error")
+        closed = bool(result.get("client_closed"))
+        if quit_err:
+            self._api_log("[Moonlight] Host quit: %s" % quit_err)
+        elif host:
+            self._api_log("[Moonlight] Asked host to quit the running app.")
         if closed:
             self._api_log("[Moonlight] Client closed.")
         return {"ok": True, "client_closed": closed,
@@ -1130,6 +1207,15 @@ class Api:
         rows = []
         if enabled and st.get("root"):
             rows.append({"label": "NAS", "value": st.get("root")})
+        if enabled and st.get("auto_lan"):
+            mode = (st.get("path_mode") or "").strip() or "?"
+            if mode.startswith("lan"):
+                path_val = "LAN (home)"
+            elif mode.startswith("remote"):
+                path_val = "Tailscale (away)"
+            else:
+                path_val = mode
+            rows.append({"label": "Path", "value": path_val})
         if enabled and st.get("mode"):
             rows.append({"label": "Mode", "value": st.get("mode")})
         if enabled and st.get("transfer"):
