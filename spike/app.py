@@ -995,10 +995,8 @@ class Api:
                     self._api_log("[Moonlight] Connect failed: %s" % err)
                     return
                 self._moonlight_proc = proc
-                # Hide immediately — Qt often maps a window before the stream.
-                moon_mod.hide_client_windows(path)
                 result = moon_mod.wait_until_streaming(
-                    proc, timeout=60.0, abort_event=abort, hide=True,
+                    proc, timeout=90.0, abort_event=abort, hide=True,
                     baseline_len=baseline)
                 if abort.is_set() or result == "aborted":
                     self._api_log("[Moonlight] Connect cancelled.")
@@ -1007,6 +1005,8 @@ class Api:
                     self._moonlight_proc = None
                     return
                 if result != "live":
+                    # Quiet fail — do NOT flash-reveal then kill (looks like
+                    # "opened for a second then disappeared").
                     msg = {
                         "timeout": "Timed out waiting for the remote desktop.",
                         "dead": "Moonlight exited before the stream started.",
@@ -1016,7 +1016,13 @@ class Api:
                         self._moonlight_proc, host=host, configured_path=path)
                     self._moonlight_proc = None
                     return
-                moon_mod.reveal_client_windows(path)
+                if not moon_mod.reveal_client_windows(path):
+                    self._api_log(
+                        "[Moonlight] Stream live but window reveal failed — "
+                        "try Alt+Tab to Moonlight.")
+                # Keep tucking the blank host-list chrome if Moonlight
+                # respawns it over the stream.
+                moon_mod.start_chrome_guard(path)
                 self._api_log(
                     "[Moonlight] Streaming %s → %s (%s)." % (host, app, mode))
             except Exception as exc:

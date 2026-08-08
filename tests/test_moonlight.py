@@ -100,6 +100,54 @@ def run():
     check("stream started after baseline",
           moon._stream_started_since(log2, baseline) is True)
     check("log grew", moon._log_grew(log2, baseline) is True)
+    check("stream title detected",
+          moon._is_stream_window("Alien-Pc - Moonlight", 1920 * 1080) is True)
+    check("host list not stream",
+          moon._is_stream_window("Moonlight", 900 * 600) is False)
+    check("host chrome exact title",
+          moon._is_host_chrome("Moonlight", 900 * 600) is True)
+
+    moon.stop_chrome_guard()
+    moon.start_chrome_guard(poll=0.05)
+    check("chrome guard starts", moon._chrome_guard_stop is not None
+          and not moon._chrome_guard_stop.is_set())
+    moon.start_chrome_guard(poll=0.05)  # idempotent
+    first = moon._chrome_guard_stop
+    moon.start_chrome_guard(poll=0.05)
+    check("chrome guard single-flight", moon._chrome_guard_stop is first)
+    moon.stop_chrome_guard()
+    check("chrome guard stops", moon._chrome_guard_stop is None)
+
+    # New log file mid-wait (Moonlight's real behaviour per launch).
+    from obsauto import session_detect as sd
+    old_log = os.path.join(work2, "Moonlight-old.log")
+    new_log = os.path.join(work2, "Moonlight-new.log")
+    with open(old_log, "w", encoding="utf-8") as f:
+        f.write("old session\nStopping video stream...\n")
+    with open(new_log, "w", encoding="utf-8") as f:
+        f.write("boot\n")
+    paths = {"cur": old_log}
+    real_newest = sd._newest_moonlight_log
+    real_hide = moon.hide_client_windows
+    try:
+        sd._newest_moonlight_log = lambda: paths["cur"]
+        moon.hide_client_windows = lambda configured_path="", host_chrome_only=False: None
+        # Flip to the new log + Starting marker after a beat.
+        import threading
+        def _flip():
+            import time as _t
+            _t.sleep(0.15)
+            with open(new_log, "a", encoding="utf-8") as f:
+                f.write("Starting video stream...\n")
+            paths["cur"] = new_log
+        threading.Thread(target=_flip, daemon=True).start()
+        result = moon.wait_until_streaming(
+            proc=None, timeout=2.0, hide=True,
+            baseline_len=os.path.getsize(old_log), poll=0.05)
+        check("wait follows new log file", result == "live", result)
+    finally:
+        sd._newest_moonlight_log = real_newest
+        moon.hide_client_windows = real_hide
 run()
 passed_all = all(p for _, p, _ in results)
 for name, passed, detail in results:

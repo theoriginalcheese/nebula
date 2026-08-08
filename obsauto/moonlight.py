@@ -19,6 +19,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+import threading
 import time
 
 _CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
@@ -192,7 +193,9 @@ def start_stream(host, app, configured_path="", display_mode="borderless",
     except ValueError as exc:
         return None, str(exc)
     try:
-        # Stream needs a real window — do not CREATE_NO_WINDOW.
+        # Do not CREATE_NO_WINDOW / SW_HIDE the process — Qt needs a normal
+        # show path for the stream surface. Host-list chrome is tucked by
+        # hide_client_windows during wait_until_streaming instead.
         proc = subprocess.Popen(
             args,
             cwd=os.path.dirname(exe) or None,
@@ -260,8 +263,68 @@ def open_ui(configured_path=""):
         return None, str(exc)
 
 
-def _hide_pid_windows(pid):
-    """SW_HIDE every top-level window owned by ``pid`` (best-effort, Windows)."""
+# Host list is titled exactly "Moonlight". Live stream is "Alien-Pc - Moonlight".
+_STREAM_MIN_AREA = 800 * 600
+_chrome_guard_stop = None
+_chrome_guard_lock = threading.Lock()
+
+
+def _window_title(user32, hwnd):
+    try:
+        import ctypes
+        length = user32.GetWindowTextLengthW(hwnd)
+        if length <= 0:
+            return ""
+        buf = ctypes.create_unicode_buffer(length + 1)
+        user32.GetWindowTextW(hwnd, buf, length + 1)
+        return buf.value or ""
+    except Exception:
+        return ""
+
+
+def _window_area(user32, hwnd):
+    try:
+        import ctypes
+        from ctypes import wintypes
+        rect = wintypes.RECT()
+        if not user32.GetWindowRect(hwnd, ctypes.byref(rect)):
+            return 0
+        return max(0, rect.right - rect.left) * max(0, rect.bottom - rect.top)
+    except Exception:
+        return 0
+
+
+def _is_stream_window(title, area):
+    """Live stream surface — never SW_HIDE this."""
+    title = title or ""
+    if " - Moonlight" in title:
+        return True
+    if area >= _STREAM_MIN_AREA and title not in (
+            "", "Moonlight", "Default IME", "MSCTFIME UI"):
+        return True
+    return False
+
+
+def _is_host_chrome(title, area):
+    """Pre-stream host list / boot UI to tuck away."""
+    title = title or ""
+    if _is_stream_window(title, area):
+        return False
+    if title in ("Default IME", "MSCTFIME UI"):
+        return False
+    if title == "Moonlight":
+        return True
+    if not title and 0 < area < _STREAM_MIN_AREA:
+        return True
+    return False
+
+
+def _hide_pid_windows(pid, host_chrome_only=True):
+    """SW_HIDE Moonlight windows owned by ``pid``.
+
+    Default skips the live stream (``\"Host - Moonlight\"``). Pass
+    ``host_chrome_only=False`` only for Disconnect teardown.
+    """
     if os.name != "nt" or not pid:
         return
     try:
@@ -276,8 +339,15 @@ def _hide_pid_windows(pid):
         def _enum(hwnd, _lp):
             proc_id = wintypes.DWORD()
             user32.GetWindowThreadProcessId(hwnd, ctypes.byref(proc_id))
-            if proc_id.value == int(pid) and user32.IsWindowVisible(hwnd):
-                handles.append(hwnd)
+            if proc_id.value != int(pid) or not user32.IsWindowVisible(hwnd):
+                return True
+            title = _window_title(user32, hwnd)
+            area = _window_area(user32, hwnd)
+            if _is_stream_window(title, area):
+                return True
+            if host_chrome_only and not _is_host_chrome(title, area):
+                return True
+            handles.append(hwnd)
             return True
 
         user32.EnumWindows(_enum, 0)
@@ -285,6 +355,38 @@ def _hide_pid_windows(pid):
             user32.ShowWindow(hwnd, SW_HIDE)
     except (AttributeError, OSError, ValueError, TypeError):
         pass
+
+
+def _stream_window_present(configured_path=""):
+    """True if a stream surface HWND exists (even while SW_HIDE'd)."""
+    if os.name != "nt":
+        return False
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        user32 = ctypes.windll.user32
+        pids = set(_moonlight_pids(configured_path))
+        if not pids:
+            return False
+        found = []
+
+        @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+        def _enum(hwnd, _lp):
+            proc_id = wintypes.DWORD()
+            user32.GetWindowThreadProcessId(hwnd, ctypes.byref(proc_id))
+            if proc_id.value not in pids or not user32.IsWindow(hwnd):
+                return True
+            title = _window_title(user32, hwnd)
+            area = _window_area(user32, hwnd)
+            if _is_stream_window(title, area):
+                found.append(hwnd)
+            return True
+
+        user32.EnumWindows(_enum, 0)
+        return bool(found)
+    except (AttributeError, OSError, ValueError, TypeError):
+        return False
 
 
 def disconnect_client(proc=None):
@@ -346,9 +448,10 @@ def kill_all_clients(configured_path=""):
     process dies — one more flash. Ending *all* Moonlight processes is the
     quiet path Disconnect wants.
     """
+    stop_chrome_guard()
     pids = _moonlight_pids(configured_path)
     for pid in pids:
-        _hide_pid_windows(pid)
+        _hide_pid_windows(pid, host_chrome_only=False)
     killed = False
     try:
         import psutil
@@ -387,40 +490,59 @@ def wait_until_streaming(proc=None, timeout=60.0, abort_event=None,
                          hide=True, poll=0.05, baseline_len=None):
     """Hold Moonlight back until the video stream is actually live.
 
-    While waiting, optionally keep every Moonlight window hidden so it never
-    steals the foreground before the stream is ready. Returns one of
-    ``\"live\"``, ``\"timeout\"``, ``\"dead\"``, ``\"aborted\"``.
+    While waiting, keep Moonlight windows hidden so the host-list / boot UI
+    never steals the foreground. Returns ``live`` / ``timeout`` / ``dead`` /
+    ``aborted``.
 
-    ``baseline_len`` should be the Moonlight log size *before* ``start_stream``
-    so a fast start still counts as new.
+    Live = log ``Starting video stream`` (re-resolving the newest log each
+    poll — Moonlight often creates a new ``%TEMP%\\Moonlight-*.log`` per
+    launch) or ``session_detect`` agreeing the session is up.
     """
     from . import session_detect as sd
 
     deadline = time.monotonic() + max(1.0, float(timeout))
-    log_path = sd._newest_moonlight_log()
+    initial_path = sd._newest_moonlight_log()
     if baseline_len is None:
         start_len = 0
-        if log_path:
+        if initial_path:
             try:
-                start_len = os.path.getsize(log_path)
+                start_len = os.path.getsize(initial_path)
             except OSError:
                 start_len = 0
     else:
         start_len = max(0, int(baseline_len))
+
+    # Tuck host-list chrome in the first beat (Qt is racey at launch).
+    # Never touches "Host - Moonlight" stream surfaces.
+    if hide:
+        burst_end = time.monotonic() + 1.5
+        while time.monotonic() < burst_end:
+            if abort_event is not None and abort_event.is_set():
+                return "aborted"
+            if proc is not None and proc.poll() is not None:
+                return "dead"
+            if _stream_window_present():
+                return "live"
+            hide_client_windows(host_chrome_only=True)
+            time.sleep(0.03)
 
     while time.monotonic() < deadline:
         if abort_event is not None and abort_event.is_set():
             return "aborted"
         if proc is not None and proc.poll() is not None:
             return "dead"
+        log_path = sd._newest_moonlight_log()
+        baseline = 0 if (log_path and log_path != initial_path) else start_len
+        if _stream_started_since(log_path, baseline):
+            return "live"
+        if sd.moonlight_session_active() is True and _log_grew(log_path, baseline):
+            return "live"
+        # CLI streams often never write a fresh Starting marker — the HWND
+        # title "Alien-Pc - Moonlight" is the reliable live signal.
+        if _stream_window_present():
+            return "live"
         if hide:
-            hide_client_windows()
-        # Fresh "Starting video stream" after we connected?
-        if _stream_started_since(log_path, start_len):
-            return "live"
-        # Fallback: session_detect says live and the log moved.
-        if sd.moonlight_session_active() is True and _log_grew(log_path, start_len):
-            return "live"
+            hide_client_windows(host_chrome_only=True)
         time.sleep(max(0.02, float(poll)))
     return "timeout"
 
@@ -447,18 +569,50 @@ def _stream_started_since(path, start_len):
     return "Starting video stream" in chunk
 
 
-def hide_client_windows(configured_path=""):
-    """SW_HIDE every visible Moonlight top-level window."""
+def hide_client_windows(configured_path="", host_chrome_only=True):
+    """SW_HIDE Moonlight host-list chrome. Stream surfaces are left alone."""
     for pid in _moonlight_pids(configured_path):
-        _hide_pid_windows(pid)
+        _hide_pid_windows(pid, host_chrome_only=host_chrome_only)
+
+
+def start_chrome_guard(configured_path="", poll=0.35):
+    """Keep tucking blank host-list chrome while a stream session is live.
+
+    Moonlight often respawns a titled-``Moonlight`` window on top of the
+    stream; this never touches ``Host - Moonlight`` surfaces.
+    """
+    global _chrome_guard_stop
+    with _chrome_guard_lock:
+        if _chrome_guard_stop is not None and not _chrome_guard_stop.is_set():
+            return
+        stop = threading.Event()
+        _chrome_guard_stop = stop
+
+    def _run():
+        while not stop.wait(max(0.1, float(poll))):
+            if not _moonlight_pids(configured_path):
+                break
+            hide_client_windows(configured_path, host_chrome_only=True)
+        with _chrome_guard_lock:
+            if _chrome_guard_stop is stop:
+                _chrome_guard_stop = None
+
+    threading.Thread(
+        target=_run, name="moonlight-chrome-guard", daemon=True).start()
+
+
+def stop_chrome_guard():
+    """Stop the host-chrome tuck loop (Disconnect / teardown)."""
+    global _chrome_guard_stop
+    with _chrome_guard_lock:
+        stop = _chrome_guard_stop
+        _chrome_guard_stop = None
+    if stop is not None:
+        stop.set()
 
 
 def reveal_client_windows(configured_path=""):
-    """Show Moonlight windows and try to bring the stream to the front.
-
-    Called only after ``wait_until_streaming`` reports live, so the user sees
-    the remote desktop rather than Moonlight's host list.
-    """
+    """Show only the stream surface; keep host-list chrome hidden."""
     if os.name != "nt":
         return False
     try:
@@ -468,38 +622,69 @@ def reveal_client_windows(configured_path=""):
         user32 = ctypes.windll.user32
         SW_SHOW = 5
         SW_RESTORE = 9
-        pids = set(_moonlight_pids(configured_path))
-        if not pids:
-            return False
-        shown = []
-
-        @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
-        def _enum(hwnd, _lp):
-            proc_id = wintypes.DWORD()
-            user32.GetWindowThreadProcessId(hwnd, ctypes.byref(proc_id))
-            if proc_id.value in pids and user32.IsWindow(hwnd):
-                shown.append(hwnd)
-            return True
-
-        user32.EnumWindows(_enum, 0)
-        target = None
-        for hwnd in shown:
-            # Prefer a visible-or-restorable window with a title (the stream).
-            length = user32.GetWindowTextLengthW(hwnd)
-            if length <= 0:
+        SW_SHOWNA = 8
+        SW_HIDE = 0
+        HWND_TOPMOST = -1
+        HWND_NOTOPMOST = -2
+        SWP_NOMOVE = 0x0002
+        SWP_NOSIZE = 0x0001
+        SWP_SHOWWINDOW = 0x0040
+        deadline = time.monotonic() + 4.0
+        while time.monotonic() < deadline:
+            pids = set(_moonlight_pids(configured_path))
+            if not pids:
+                time.sleep(0.1)
                 continue
-            user32.ShowWindow(hwnd, SW_RESTORE)
-            user32.ShowWindow(hwnd, SW_SHOW)
-            target = hwnd
-        if target is None and shown:
-            target = shown[0]
-            user32.ShowWindow(target, SW_SHOW)
-        if target is not None:
-            try:
-                user32.SetForegroundWindow(target)
-            except Exception:
-                pass
-            return True
+            windows = []
+
+            @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+            def _enum(hwnd, _lp):
+                proc_id = wintypes.DWORD()
+                user32.GetWindowThreadProcessId(hwnd, ctypes.byref(proc_id))
+                if proc_id.value in pids and user32.IsWindow(hwnd):
+                    windows.append(hwnd)
+                return True
+
+            user32.EnumWindows(_enum, 0)
+            target = None
+            best_area = -1
+            for hwnd in windows:
+                title = _window_title(user32, hwnd)
+                if title in ("Default IME", "MSCTFIME UI"):
+                    continue
+                area = _window_area(user32, hwnd)
+                if _is_host_chrome(title, area):
+                    user32.ShowWindow(hwnd, SW_HIDE)
+                    continue
+                if not _is_stream_window(title, area):
+                    continue
+                user32.ShowWindow(hwnd, SW_RESTORE)
+                user32.ShowWindow(hwnd, SW_SHOW)
+                user32.ShowWindow(hwnd, SW_SHOWNA)
+                if area >= best_area:
+                    best_area = area
+                    target = hwnd
+            if target is not None:
+                try:
+                    user32.SetWindowPos(
+                        target, HWND_TOPMOST, 0, 0, 0, 0,
+                        SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW)
+                    user32.SetForegroundWindow(target)
+                    user32.SetWindowPos(
+                        target, HWND_NOTOPMOST, 0, 0, 0, 0,
+                        SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW)
+                except Exception:
+                    try:
+                        user32.SetForegroundWindow(target)
+                    except Exception:
+                        pass
+                if user32.IsWindowVisible(target) or _stream_window_present(
+                        configured_path):
+                    start_chrome_guard(configured_path)
+                    return True
+            # Stream HWND may still be SW_HIDE'd — keep tucking chrome.
+            hide_client_windows(configured_path, host_chrome_only=True)
+            time.sleep(0.15)
     except (AttributeError, OSError, ValueError, TypeError):
         pass
     return False
@@ -510,6 +695,7 @@ def end_session(proc=None, host="", configured_path=""):
 
     Returns ``{"client_closed": bool, "host_quit_error": str|None}``.
     """
+    stop_chrome_guard()
     closed = disconnect_client(proc)
     # Stream process may have already exited, or Moonlight may have respawned
     # its chrome — sweep either way.
