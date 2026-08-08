@@ -10,6 +10,11 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from tools.nebula_identity import banner
+
+print(banner())
+print()
+
 from obsauto import gui, hotkey
 
 hotkey.register = lambda *a, **k: None

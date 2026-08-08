@@ -1,0 +1,30 @@
+---
+description: Never confuse frozen Nebula.exe with the git source checkout when judging UI (especially toasts)
+alwaysApply: true
+---
+
+# Nebula identity — exe vs source
+
+Two installs on Alien-PC must never be mixed when judging toast/UI style:
+
+| | Path | What it is |
+|---|---|---|
+| **Source** | `C:\Users\antho\Downloads\nebula` | git checkout — `python main.py` / `python spike/app.py` |
+| **Frozen data/exe** | `C:\Users\antho\Nebula\` (e.g. `Nebula (1).exe`) | packaged build; **its own** `config.json` / logs; UI is whatever was baked at build time |
+
+## Hard rules for agents
+
+1. **Before claiming toast (or any UI) is "old" or "new", run**
+   `python tools/nebula_identity.py` in the checkout you are editing and
+   quote `kind`, `git_head`, and `app_dir` in the report.
+2. **Never** use screenshots or behaviour from the frozen exe directory to
+   decide whether source needs a toast re-apply.
+3. **Tk capsule toast** lives in `obsauto/gui.py` + `obsauto/design_v3.py`
+   `TOAST_*`. **Spike** `spike/web/toast.css` is a separate squared DWM card —
+   last content change can lag the capsule; that is not proof the Tk toast
+   regressed.
+4. Demo / audit only against the process you just launched:
+   `python tools/demo_toast.py`, `python tools/_demo_toasts.py`,
+   `python tools/audit_toasts.py`.
+
+Durable note: Obsidian `nebula-capsule-toast-reapply` / `nebula-update-workflow`.

@@ -5862,7 +5862,7 @@ class AppWindow:
             if size is not None:
                 parts.append(_format_bytes(size))
         return {"tint": tint, "glyph": glyph, "title": title,
-                "sub": display_name, "detail": "  ·  ".join(parts),
+                "sub": display_name, "detail": " · ".join(parts),
                 "event": event}
 
     def _show_notification(self, event, display_name, details=None):
@@ -6143,7 +6143,12 @@ class AppWindow:
         return toast
 
     def _toast_layout_row(self, toast):
-        """Pack title · sub · detail on one baseline; ellipsize to the pill."""
+        """Pack title · sub · detail on one baseline; ellipsize to the pill.
+
+        Duration / size (detail) outranks the game name when space is tight —
+        a stop toast that keeps "Helldivers 2" but drops "01:35 · 420 MB" is
+        the wrong trade.
+        """
         canvas = toast["canvas"]
         x = toast["text_x"]
         y = toast["row_y"]
@@ -6160,55 +6165,108 @@ class AppWindow:
             except Exception:
                 return x
 
-        def _ellipsize(item, text, left):
-            """Trim from the end until the item's right edge is ≤ max_x."""
+        def _width(item):
+            try:
+                bbox = canvas.bbox(item)
+                if not bbox:
+                    return 0.0
+                return (bbox[2] - bbox[0]) / self.scale
+            except Exception:
+                return 0.0
+
+        def _ellipsize(item, text, left, limit):
+            """Trim from the end until the item's right edge is ≤ limit."""
             if not text:
-                canvas.itemconfigure(item, text="")
+                canvas.itemconfigure(item, text="", state="hidden")
                 return
             candidate = text
             while True:
                 shown = candidate if candidate == text else (candidate.rstrip() + "…")
-                canvas.itemconfigure(item, text=shown)
+                canvas.itemconfigure(item, text=shown, state="normal")
                 canvas.coords(item, left, y)
-                if _right(item) <= max_x or len(candidate) <= 1:
-                    if _right(item) > max_x:
-                        canvas.itemconfigure(item, text="")
+                if _right(item) <= limit or len(candidate) <= 1:
+                    if _right(item) > limit:
+                        canvas.itemconfigure(item, text="", state="hidden")
                     return
                 candidate = candidate[:-1]
 
-        canvas.coords(toast["title"], x, y)
-        _ellipsize(toast["title"], canvas.itemcget(toast["title"], "text") or "", x)
-        tx = _right(toast["title"]) + gap
-
+        title_text = canvas.itemcget(toast["title"], "text") or ""
         sub_text = canvas.itemcget(toast["sub"], "text") or ""
-        # Prefer keeping the title; drop the tail if there's no room left.
-        has_tail = bool(sub_text) or (toast["has_detail"] and detail_text)
-        if has_tail and tx + 24 > max_x:
-            canvas.itemconfigure(toast["sep"], state="hidden")
-            canvas.itemconfigure(toast["sub"], text="", state="hidden")
-            canvas.itemconfigure(toast["detail"], text="", state="hidden")
+        has_detail = bool(toast.get("has_detail") and detail_text)
+
+        canvas.itemconfigure(toast["sep"], state="hidden")
+        canvas.itemconfigure(toast["sub"], text="", state="hidden")
+        canvas.itemconfigure(toast["detail"], text="", state="hidden")
+
+        _ellipsize(toast["title"], title_text, x, max_x)
+        tx = _right(toast["title"]) + gap
+        if tx + 12 > max_x:
             return
 
-        if has_tail:
+        # Reserve room for the full detail string on the right when present.
+        # Include the middot prefix we'll add when a sub is also shown.
+        detail_w = 0.0
+        detail_reserve = ""
+        if has_detail:
+            detail_reserve = (("·  " if sub_text else "") + detail_text)
+            canvas.itemconfigure(toast["detail"], text=detail_reserve, state="normal")
+            canvas.coords(toast["detail"], tx, y)
+            detail_w = _width(toast["detail"])
+            # If detail alone cannot fit after the title, drop the sub and
+            # ellipsize detail against the remaining width.
+            if tx + detail_w > max_x and not sub_text:
+                _ellipsize(toast["detail"], detail_text, tx, max_x)
+                return
+            if tx + detail_w > max_x and sub_text:
+                # Prefer full meta over any game name when they cannot coexist.
+                sub_text = ""
+                detail_reserve = detail_text
+                canvas.itemconfigure(toast["detail"], text=detail_reserve)
+                detail_w = _width(toast["detail"])
+                if tx + detail_w > max_x:
+                    _ellipsize(toast["detail"], detail_text, tx, max_x)
+                    return
+
+        if sub_text:
             canvas.itemconfigure(toast["sep"], state="normal")
             canvas.coords(toast["sep"], tx, y)
             tx = _right(toast["sep"]) + gap
+            # Sub fills the middle; leave gap + detail_w for the trailing meta.
+            sub_limit = max_x - ((detail_w + gap) if has_detail else 0)
+            if tx < sub_limit:
+                _ellipsize(toast["sub"], sub_text, tx, sub_limit)
+                shown = canvas.itemcget(toast["sub"], "text") or ""
+                # A 1–3 glyph stub ("He…") reads as broken — hide it instead.
+                bare = shown.rstrip("…").strip()
+                if canvas.itemcget(toast["sub"], "state") == "hidden" or len(bare) < 4:
+                    canvas.itemconfigure(toast["sep"], state="hidden")
+                    canvas.itemconfigure(toast["sub"], text="", state="hidden")
+                    tx = _right(toast["title"]) + gap
+                else:
+                    tx = _right(toast["sub"]) + gap
+            else:
+                canvas.itemconfigure(toast["sep"], state="hidden")
+                canvas.itemconfigure(toast["sub"], text="", state="hidden")
+                tx = _right(toast["title"]) + gap
         else:
             canvas.itemconfigure(toast["sep"], state="hidden")
 
-        if sub_text:
-            canvas.itemconfigure(toast["sub"], state="normal")
-            _ellipsize(toast["sub"], sub_text, tx)
-            tx = _right(toast["sub"]) + gap
-        else:
-            canvas.itemconfigure(toast["sub"], text="", state="hidden")
-
-        if toast["has_detail"] and detail_text:
-            prefix = "·  " if sub_text else ""
-            canvas.itemconfigure(toast["detail"], state="normal")
-            _ellipsize(toast["detail"], prefix + detail_text, tx)
-        else:
-            canvas.itemconfigure(toast["detail"], text="", state="hidden")
+        if has_detail:
+            shown_sub = canvas.itemcget(toast["sub"], "state") != "hidden" and (
+                canvas.itemcget(toast["sub"], "text") or "")
+            text = (("·  " if shown_sub else "") + detail_text)
+            canvas.itemconfigure(toast["detail"], text=text, state="normal")
+            if shown_sub:
+                left = max(tx, max_x - _width(toast["detail"]))
+                canvas.coords(toast["detail"], left, y)
+                if _right(toast["detail"]) > max_x + 0.5:
+                    # Sub ate the reservation — drop sub, keep full meta.
+                    canvas.itemconfigure(toast["sep"], state="hidden")
+                    canvas.itemconfigure(toast["sub"], text="", state="hidden")
+                    tx = _right(toast["title"]) + gap
+                    _ellipsize(toast["detail"], detail_text, tx, max_x)
+            else:
+                _ellipsize(toast["detail"], detail_text, tx, max_x)
 
     def _toast_apply(self, toast, content):
         canvas = toast["canvas"]
