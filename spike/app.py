@@ -1157,8 +1157,8 @@ class Api:
             blurb = ("Running Nebula %s (packaged). Check GitHub Releases and "
                      "install over this exe." % info["display"])
         else:
-            blurb = ("Running Nebula %s. Pull the latest from GitHub, then "
-                     "restart." % info["display"])
+            blurb = ("Running Nebula %s. Pull always syncs the main branch "
+                     "from GitHub, then restart." % info["display"])
         if last:
             blurb = last
         can_install = bool(

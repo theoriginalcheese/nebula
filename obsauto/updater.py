@@ -17,6 +17,9 @@ from . import __version__
 from .paths import APP_DIR
 
 DEFAULT_REPO = "theoriginalcheese/nebula"
+# Source "Pull from GitHub" always tracks this branch — feature branches
+# staying checked out was why Updates said "up to date" after a desktop push.
+SYNC_BRANCH = "main"
 USER_AGENT = f"Nebula/{__version__} (+https://github.com/{DEFAULT_REPO})"
 
 
@@ -146,8 +149,12 @@ def source_checkout_root():
     return None
 
 
-def pull_source_update(root=None, timeout=90):
-    """``git fetch`` + ``git pull --ff-only`` in a source checkout.
+def pull_source_update(root=None, timeout=90, branch=None):
+    """Fetch and fast-forward the sync branch (``main`` by default).
+
+    Always targets :data:`SYNC_BRANCH`, not whatever feature branch happens to
+    be checked out — that mismatch is what made Updates claim "up to date"
+    after work landed on another branch.
 
     Returns ``{"ok": bool, "message": str, "head": str}``.
     """
@@ -156,6 +163,7 @@ def pull_source_update(root=None, timeout=90):
     root = root or source_checkout_root()
     if not root:
         return {"ok": False, "message": "Not a git checkout.", "head": ""}
+    sync = (branch or SYNC_BRANCH or "main").strip() or "main"
 
     def run(args, t=timeout):
         from .silent_proc import resolve_git, run_kwargs
@@ -217,15 +225,33 @@ def pull_source_update(root=None, timeout=90):
         if fetch.returncode != 0:
             err = (fetch.stderr or fetch.stdout or "fetch failed").strip()
             return {"ok": False, "message": err, "head": ""}
-        branch = run(["git", "rev-parse", "--abbrev-ref", "HEAD"], t=15)
-        name = (branch.stdout or "main").strip() or "main"
-        pull_cmd = ["git"] + rewrite + ["pull", "--ff-only", "origin", name]
+
+        current = run(["git", "rev-parse", "--abbrev-ref", "HEAD"], t=15)
+        current_name = (current.stdout or "").strip() or "HEAD"
+        switched = False
+        if current_name != sync:
+            # Move onto the sync branch so the working tree matches what Pull
+            # claims to update. Refuse if checkout is blocked by local edits.
+            co = run(["git", "checkout", sync], t=30)
+            if co.returncode != 0:
+                err = (co.stderr or co.stdout or "checkout failed").strip()
+                return {
+                    "ok": False,
+                    "message": (
+                        "Pull syncs %s, but checkout failed (you are on %s): %s"
+                        % (sync, current_name, err)
+                    ),
+                    "head": "",
+                }
+            switched = True
+
+        pull_cmd = ["git"] + rewrite + ["pull", "--ff-only", "origin", sync]
         pull = run(pull_cmd)
         if pull.returncode != 0 and ssh_auth_failed(pull) and not rewrite:
             rewrite = https_rewrite_args()
             if rewrite:
                 pull = run(["git"] + rewrite + [
-                    "pull", "--ff-only", "origin", name])
+                    "pull", "--ff-only", "origin", sync])
         head = run(["git", "log", "-1", "--oneline"], t=15)
         head_line = (head.stdout or "").strip()
         if pull.returncode != 0:
@@ -233,10 +259,17 @@ def pull_source_update(root=None, timeout=90):
             return {"ok": False, "message": err, "head": head_line}
         out = (pull.stdout or "").strip()
         if "Already up to date" in out or "Already up-to-date" in out:
-            msg = "Already up to date (%s)." % (head_line or name)
+            if switched:
+                msg = "Switched to %s — already up to date (%s)." % (
+                    sync, head_line or sync)
+            else:
+                msg = "Already up to date on %s (%s)." % (
+                    sync, head_line or sync)
         else:
-            msg = "Updated to %s. Restart Nebula to load it." % (
-                head_line or name)
+            prefix = ("Switched to %s and updated" % sync
+                      if switched else "Updated")
+            msg = "%s to %s. Restart Nebula to load it." % (
+                prefix, head_line or sync)
         # Refresh the version badge cache after a successful pull.
         try:
             from . import version as version_mod
