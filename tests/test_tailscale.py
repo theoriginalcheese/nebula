@@ -2,7 +2,6 @@
 
     python tests/test_tailscale.py
 """
-import json
 import os
 import sys
 import tempfile

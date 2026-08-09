@@ -3383,9 +3383,8 @@ class AppWindow:
     def _build_settings_updates_footer(self):
         """Check GitHub Releases (exe) or point at the git-pull script (source)."""
         from . import updater as updater_mod
-        from .version import display_version, version_info
+        from .version import display_version
 
-        info = version_info()
         foot = ctk.CTkFrame(self._settings_host, fg_color=dv.over(ACCENT, 0.07, dv.CARD_CORE),
                             corner_radius=dv.RADIUS_TILE, border_width=1,
                             border_color=dv.over(ACCENT, 0.18, dv.CARD_CORE))
@@ -5974,11 +5973,51 @@ class AppWindow:
             return to_photo(flat)
         return to_photo(surface)
 
+    def _toast_canvas_pill(self, canvas, x, y, w, h, fill, tags=()):
+        """Draw a filled capsule (oval caps + body) in design units."""
+        r = h / 2.0
+        ids = [
+            canvas.create_oval(
+                x, y, x + h, y + h, fill=fill, outline="", tags=tags),
+            canvas.create_oval(
+                x + w - h, y, x + w, y + h, fill=fill, outline="", tags=tags),
+            canvas.create_rectangle(
+                x + r, y, x + w - r, y + h, fill=fill, outline="", tags=tags),
+        ]
+        return ids
+
+    def _toast_draw_action_pill(self, canvas, x, y, w, h, label,
+                                primary=True, tag="toast_btn"):
+        """Nested pill CTA — outer shell + inner core (Nebula two-layer)."""
+        # Outer shell: hairline wash so the button reads as machined, not flat.
+        shell_fill = EDGE
+        shell = self._toast_canvas_pill(
+            canvas, x, y, w, h, shell_fill, tags=(tag,))
+        inset = 2
+        if primary:
+            # Stronger wash than ACCENT_TINT so the primary CTA reads on the
+            # dark capsule core (flat tint was disappearing into the glass).
+            core_fill = dv.over(dv.ACCENT, 0.32, dv.CARD_CORE)
+            text_fill = TEXT
+        else:
+            core_fill = dv.over(dv.TEXT, 0.045, dv.CARD_CORE)
+            text_fill = MUTED
+        core = self._toast_canvas_pill(
+            canvas, x + inset, y + inset, w - 2 * inset, h - 2 * inset,
+            core_fill, tags=(tag,))
+        text = canvas.create_text(
+            x + w / 2, y + h / 2, text=label, fill=text_fill,
+            font=dv.font(12, 500), tags=(tag,))
+        return shell, core, text
+
     def _toast_build(self, prompt=False):
         w = self.TOAST_PROMPT_W if prompt else self.TOAST_W
         h = self.TOAST_PROMPT_H if prompt else self.TOAST_H
         sw, sh = self._S(w), self._S(h)
-        radius = sh // 2          # capsule: full pill ends
+        # Standard toasts are true capsules (r = H/2). Prompt toasts are taller
+        # for stacked copy + actions — full H/2 there reads as a bulb. Soft
+        # squircle keeps the family resemblance without the peanut silhouette.
+        radius = sh // 2 if not prompt else self._S(dv.CARD_LAYERS["tray"][0])
         key = dv.TOAST_KEY
 
         popup = ctk.CTkToplevel(self.root)
@@ -6032,25 +6071,32 @@ class AppWindow:
         self._keep_image(photo)
         canvas.create_image(0, 0, anchor="nw", image=photo)
 
-        # Single-row capsule: chip + title · game · detail.
-        cy = h / 2 if not prompt else 30
+        # Standard toasts: one baseline (chip + title · game · detail).
+        # Prompt toasts: stacked title / game, then nested pill actions.
+        if prompt:
+            cy = 40
+        else:
+            cy = h / 2
         chip_r = 14
-        chip_cx, chip_cy = 24, cy
+        chip_cx, chip_cy = (32, cy) if prompt else (28, cy)
         chip = canvas.create_oval(
             chip_cx - chip_r, chip_cy - chip_r,
             chip_cx + chip_r, chip_cy + chip_r,
             fill=ACCENT_TINT, outline="")
         icon = canvas.create_text(
             chip_cx, chip_cy, text="", fill=ACCENT, font=(ICON_FONT, -13))
+        title_y = (cy - 10) if prompt else cy
+        sub_y = (cy + 13) if prompt else cy
+        text_x = 58 if prompt else 54
         title = canvas.create_text(
-            50, cy, anchor="w", text="", fill=TEXT, font=dv.font(14, 500))
+            text_x, title_y, anchor="w", text="", fill=TEXT, font=dv.font(14, 500))
         sep = canvas.create_text(
-            50, cy, anchor="w", text="·", fill=FAINT, font=dv.font(14, 500),
+            text_x, cy, anchor="w", text="·", fill=FAINT, font=dv.font(14, 500),
             state="hidden")
         sub = canvas.create_text(
-            50, cy, anchor="w", text="", fill=MUTED, font=dv.type_font("meta"))
+            text_x, sub_y, anchor="w", text="", fill=MUTED, font=dv.type_font("meta"))
         detail = canvas.create_text(
-            50, cy, anchor="w", text="", fill=FAINT,
+            text_x, cy, anchor="w", text="", fill=FAINT,
             font=dv.font(12, mono=True), state="hidden")
 
         # Soft Nebula dust near the chip - event-tint, motion on the tick.
@@ -6067,25 +6113,29 @@ class AppWindow:
             dust_base.append(alpha)
             dust_home.append((dx, dy, r))
 
-        # Action chips (prompt toasts only). Hit-testing via tagged rects.
+        # Action pills (prompt toasts only). Double-bezel: outer shell + core.
         btn_items = []
         if prompt:
-            by = h - 40
-            specs = [("Record", 16, 108), ("Not now", 132, 108)]
-            for i, (label, bx, bw) in enumerate(specs):
-                rect = canvas.create_rectangle(
-                    bx, by, bx + bw, by + 26,
-                    fill=ACCENT_TINT if i == 0 else EDGE, outline="",
-                    tags=(f"toast_btn_{i}",))
-                text = canvas.create_text(
-                    bx + bw / 2, by + 13, text=label,
-                    fill=TEXT if i == 0 else MUTED,
-                    font=dv.font(12, 500), tags=(f"toast_btn_{i}",))
-                btn_items.append({"rect": rect, "text": text, "tag": f"toast_btn_{i}"})
+            by = h - 52
+            bx = 28
+            specs = [
+                ("Record", dv.TOAST_PROMPT_PRIMARY_W, True),
+                ("Not now", dv.TOAST_PROMPT_SECONDARY_W, False),
+            ]
+            bh = dv.TOAST_PROMPT_BTN_H
+            for i, (label, bw, primary) in enumerate(specs):
+                tag = f"toast_btn_{i}"
+                shell, core, text = self._toast_draw_action_pill(
+                    canvas, bx, by, bw, bh, label, primary=primary, tag=tag)
+                btn_items.append({
+                    "shell": shell, "core": core, "text": text, "tag": tag,
+                    "x": bx, "y": by, "w": bw, "h": bh, "primary": primary,
+                })
+                bx += bw + dv.TOAST_PROMPT_BTN_GAP
 
         # 2px drain, inset, left-anchored (spec: scaleX 1→0, origin left).
-        track_x0, track_x1 = 18, w - 18
-        bar_y = h - 7
+        track_x0, track_x1 = 22, w - 22
+        bar_y = h - 9
         canvas.create_rectangle(
             track_x0, bar_y, track_x1, bar_y + dv.TOAST_DRAIN_H,
             fill=EDGE, outline="")
@@ -6101,7 +6151,7 @@ class AppWindow:
             "dust_style": "drift", "dust_phase": [], "dust_speed": 1.0,
             "dust_amp": 1.0, "dust_t0": time.time(),
             "track": (track_x0, track_x1, bar_y), "geom": (sw, sh, x, y_end),
-            "row_y": cy, "text_x": 50,
+            "row_y": cy, "title_y": title_y, "sub_y": sub_y, "text_x": text_x,
             "remaining": dv.TOAST_LIFE_MS, "life": dv.TOAST_LIFE_MS,
             "hovering": False, "ticking": False, "dismissing": False,
             "has_detail": False, "actions": [], "buttons": btn_items,
@@ -6147,8 +6197,11 @@ class AppWindow:
 
         Duration / size (detail) outranks the game name when space is tight —
         a stop toast that keeps "Helldivers 2" but drops "01:35 · 420 MB" is
-        the wrong trade.
+        the wrong trade. Prompt toasts use the stacked layout instead.
         """
+        if toast.get("prompt"):
+            self._toast_layout_prompt(toast)
+            return
         canvas = toast["canvas"]
         x = toast["text_x"]
         y = toast["row_y"]
@@ -6268,6 +6321,42 @@ class AppWindow:
             else:
                 _ellipsize(toast["detail"], detail_text, tx, max_x)
 
+    def _toast_layout_prompt(self, toast):
+        """Stacked title over game name — no middot collision, full game name."""
+        canvas = toast["canvas"]
+        x = toast["text_x"]
+        title_y = toast.get("title_y", toast["row_y"] - 9)
+        sub_y = toast.get("sub_y", toast["row_y"] + 12)
+        max_x = self.TOAST_PROMPT_W - dv.TOAST_TEXT_INSET
+
+        def _fit(item, text, left, y, limit):
+            if not text:
+                canvas.itemconfigure(item, text="", state="hidden")
+                return
+            candidate = text
+            while True:
+                shown = (candidate if candidate == text
+                         else (candidate.rstrip() + "…"))
+                canvas.itemconfigure(item, text=shown, state="normal")
+                canvas.coords(item, left, y)
+                try:
+                    bbox = canvas.bbox(item)
+                    right = (bbox[2] / self.scale) if bbox else left
+                except Exception:
+                    right = left
+                if right <= limit or len(candidate) <= 1:
+                    if right > limit:
+                        canvas.itemconfigure(item, text="", state="hidden")
+                    return
+                candidate = candidate[:-1]
+
+        canvas.itemconfigure(toast["sep"], state="hidden")
+        canvas.itemconfigure(toast["detail"], text="", state="hidden")
+        title_text = canvas.itemcget(toast["title"], "text") or ""
+        sub_text = canvas.itemcget(toast["sub"], "text") or ""
+        _fit(toast["title"], title_text, x, title_y, max_x)
+        _fit(toast["sub"], sub_text, x, sub_y, max_x)
+
     def _toast_apply(self, toast, content):
         canvas = toast["canvas"]
         tint = content["tint"]
@@ -6285,7 +6374,10 @@ class AppWindow:
             label = actions[i][0] if i < len(actions) else ""
             state = "normal" if i < len(actions) else "hidden"
             canvas.itemconfigure(btn["text"], text=label, state=state)
-            canvas.itemconfigure(btn["rect"], state=state)
+            for part in list(btn.get("shell") or []) + list(btn.get("core") or []):
+                canvas.itemconfigure(part, state=state)
+            if btn.get("rect") is not None:
+                canvas.itemconfigure(btn["rect"], state=state)
         canvas.itemconfigure(toast["drain"], fill=tint)
         self._toast_layout_row(toast)
         self._toast_set_drain(toast, 1.0)
@@ -6915,9 +7007,11 @@ class AppWindow:
         icon_state = "recording" if status["state"] in ("recording", "paused") else (
             "disconnected" if status["state"] == "disconnected" else "idle")
         try:
-            icons = getattr(self.tray_icon, "_nebula_icons", None)
-            if icons and getattr(self, "_tray_icon_state", None) != icon_state:
-                self.tray_icon.icon = icons[icon_state]
+            if getattr(self, "_tray_icon_state", None) != icon_state:
+                # tray_app owns the swap so the recording arc has one
+                # implementation for both renderers - see set_tray_state.
+                from .tray_app import set_tray_state
+                set_tray_state(self.tray_icon, icon_state)
                 self._tray_icon_state = icon_state
         except Exception:
             pass

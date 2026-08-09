@@ -621,10 +621,10 @@ class NebulaHost:
                       "disconnected" if state == "disconnected" else "idle")
         if icon_state == self._tray_state:
             return
-        icons = getattr(self._tray, "_nebula_icons", None)
-        if icons and icon_state in icons:
-            self._tray.icon = icons[icon_state]
-            self._tray_state = icon_state
+        # tray_app owns the swap so the recording arc has one implementation
+        # for both renderers - see set_tray_state.
+        tray_app.set_tray_state(self._tray, icon_state)
+        self._tray_state = icon_state
 
     # --- OBS connect ----------------------------------------------------
 
@@ -927,7 +927,7 @@ class NebulaHost:
         self._poll_now()
 
     def _on_record_prompt(self, basename, display_name, reason, target):
-        b, n, r, t = basename, display_name, reason, target
+        b, n, r = basename, display_name, reason
 
         def show():
             if reason == "same":

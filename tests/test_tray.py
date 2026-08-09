@@ -111,6 +111,43 @@ check("paused reports its own state", status["state"] == "paused", status["state
 check("paused keeps the recording icon", app._tray_icon_state == "recording",
       app._tray_icon_state)
 
+# ---- the recording arc ----
+# Motion is the state. The arc runs only while recording, and the important
+# half of that sentence is "only": a stopped animator that paints one late
+# frame leaves the tray claiming to record after the recording ended.
+import time
+
+from obsauto import tray_app
+
+arc_icon = StubIcon()
+tray_app.set_tray_state(arc_icon, "idle")
+check("idle uses the static icon",
+      arc_icon.icon is arc_icon._nebula_icons["idle"])
+
+tray_app.set_tray_state(arc_icon, "recording")
+first = arc_icon.icon
+check("recording lands on a frame immediately, not after a tick",
+      first is not None and first is not arc_icon._nebula_icons["recording"])
+from obsauto.icon_art import ARC_PERIOD_S
+check("the arc is a cached loop, not a live draw",
+      len(getattr(arc_icon, "_nebula_arc_frames", [])) ==
+      max(int(round(ARC_PERIOD_S * tray_app.RECORDING_FPS)), 1),
+      len(getattr(arc_icon, "_nebula_arc_frames", [])))
+
+seen = {first.tobytes()}
+deadline = time.time() + 1.5
+while time.time() < deadline and len(seen) < 2:
+    time.sleep(0.05)
+    seen.add(arc_icon.icon.tobytes())
+check("the arc advances while recording", len(seen) > 1, len(seen))
+
+tray_app.set_tray_state(arc_icon, "idle")
+settled = arc_icon.icon
+check("leaving recording restores the static icon",
+      settled is arc_icon._nebula_icons["idle"])
+time.sleep(0.4)
+check("the stopped animator paints no late frame", arc_icon.icon is settled)
+
 # ---- the menu (built against the stub, never registered) ----
 import pystray
 from obsauto.tray_app import build_tray_icon

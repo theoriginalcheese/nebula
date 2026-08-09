@@ -1237,7 +1237,6 @@ class Api:
         elif enabled and reach_label:
             rows.append({"label": "Tailscale", "value": reach_label})
         if enabled:
-            last = st.get("last_success_ago") or st.get("last_scan_ago") or ""
             if st.get("last_success_ago"):
                 rows.append({"label": "Last verified",
                              "value": st["last_success_ago"]})

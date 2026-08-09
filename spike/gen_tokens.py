@@ -103,6 +103,16 @@ def main():
     # Triplets for the layers that need real alpha.
     for name in ("ground", "accent", "ember", "card_core", "panel", "raised"):
         add("  --%s-rgb: %s;" % (name.replace("_", "-"), rgb_triplet(dv.COLORS[name])))
+    # The mark's gold. Not a design_v3 COLORS entry on purpose - BUILD-SPEC's
+    # colour table is the v3 palette and test_design_v3 asserts the two match
+    # exactly, so adding a hue there would be a lie about the spec. This is the
+    # icon's own ring colour, and the moonlight orb borrows it deliberately;
+    # emitting it here is what stops that borrowing being a hard-coded literal
+    # in the stylesheet.
+    from obsauto import icon_art as _icon_art
+    _gold = _icon_art.GOLD[:3]
+    add("  --gold: #%02X%02X%02X;" % _gold)
+    add("  --gold-rgb: %s;" % " ".join(str(c) for c in _gold))
     add("  --hairline-rgb: %s;" % " ".join(str(c) for c in dv.HAIRLINE_RGB))
     add("  --hairline-a: %s;" % (sum(dv.HAIRLINE_ALPHA) / 2.0))
     add("  --shell-fill-a: %s;" % dv.SHELL_FILL_ALPHA)

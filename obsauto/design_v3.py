@@ -411,10 +411,16 @@ TOAST_OUT_MS = 320
 # Capsule silhouette (design C): pill radius = height / 2. Width tuned so a
 # title + middot + game name fit without wrapping.
 TOAST_W, TOAST_H = 384, 60
-TOAST_PROMPT_W, TOAST_PROMPT_H = 404, 116
+# Prompt toasts stack title over the game name and carry two pill actions —
+# taller / wider so neither line ellipsizes into a stub ("He…").
+TOAST_PROMPT_W, TOAST_PROMPT_H = 448, 136
 TOAST_PAD = 3                        # shell → core inset (two-layer card)
 # Keep text clear of the capsule's curved ends (radius ≈ H/2).
-TOAST_TEXT_INSET = 32
+TOAST_TEXT_INSET = 36
+TOAST_PROMPT_BTN_H = 30
+TOAST_PROMPT_BTN_GAP = 10
+TOAST_PROMPT_PRIMARY_W = 118
+TOAST_PROMPT_SECONDARY_W = 118
 # Chromakey for true pill corners on the frameless toplevel (not in the
 # Nebula Deep palette, so it never punches holes in the glass).
 TOAST_KEY = "#00FF01"

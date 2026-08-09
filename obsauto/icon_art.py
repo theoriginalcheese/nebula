@@ -15,6 +15,30 @@ GOLD = (245, 166, 35, 255)      # matches gui.py's AMBER
 GOLD_SOFT = (255, 200, 110, 220)
 WHITE = (245, 243, 255, 255)    # matches gui.py's TEXT
 
+# --- one geometry, every size -------------------------------------------
+# Everything here is a ratio of `size`, so the mark is identical at 16px and
+# 256px rather than being one drawing scaled twice.
+RING_RX = 0.46          # x size - gold ring
+RING_RATIO = 0.60       # ry / rx
+RING_TILT = 22
+RING_W = 0.053          # x size - stroke width
+INNER_RX = 0.406        # x size - thin violet ring under the gold one
+INNER_RATIO = 0.404
+INNER_TILT = -48
+INNER_W = 0.023
+SPARK_R = 0.34          # x size
+
+ARC_SPAN = 56           # degrees of the ring lit while recording
+ARC_PERIOD_S = 3.8      # seconds for one full tour
+
+GOLD_LIT = (255, 232, 188, 255)   # the arc itself
+SLASH = (183, 177, 208, 255)      # disconnected stroke
+
+
+def _mix(c1, c2, t):
+    """Blend two RGBA colours, keeping c1's alpha."""
+    return tuple(int(a + (b - a) * t) for a, b in zip(c1[:3], c2[:3])) + (c1[3],)
+
 
 def _four_point_star(cx, cy, outer_r, inner_r, rotation_deg=0):
     """8 alternating points (tip, notch, tip, notch...) around a center -
@@ -46,6 +70,23 @@ def _draw_tilted_ellipse(base_img, cx, cy, rx, ry, tilt_deg, color, width):
     base_img.alpha_composite(layer, (int(cx - pad / 2), int(cy - pad / 2)))
 
 
+def _draw_tilted_arc(base_img, cx, cy, rx, ry, tilt_deg, start, end, color, width):
+    """A lit segment of the orbit. Angles are degrees, 0 deg at 3 o'clock,
+    measured before the tilt is applied.
+
+    Same trick as _draw_tilted_ellipse - draw upright on its own layer, rotate
+    the layer, composite - but with `arc` instead of `ellipse`. This is the
+    only new drawing primitive the recording state needs.
+    """
+    pad = int(max(rx, ry) * 2.4)
+    layer = Image.new("RGBA", (pad, pad), (0, 0, 0, 0))
+    d = ImageDraw.Draw(layer)
+    l = pad / 2
+    d.arc([l - rx, l - ry, l + rx, l + ry], start, end, fill=color, width=width)
+    layer = layer.rotate(tilt_deg, resample=Image.BICUBIC, expand=False)
+    base_img.alpha_composite(layer, (int(cx - pad / 2), int(cy - pad / 2)))
+
+
 def _ellipse_point(cx, cy, rx, ry, tilt_deg, angle_deg):
     """Point on a tilted ellipse — for the traveling orbit bead."""
     a = math.radians(angle_deg)
@@ -64,17 +105,30 @@ def _with_alpha(rgba, a):
 
 
 def render_frame(size=256, ring_rotation=0.0, supersample=4):
-    """Resting mark: sparkle + one gold orbit. Used for .ico / mark.png."""
+    """Resting mark: sparkle + one gold orbit. mark.png and the hover frames.
+
+    Reads the same RING_/SPARK_ ratios as the tray and tile, so there is one
+    geometry rather than a second copy that drifts. What it deliberately does
+    *not* draw is the thin inner ring: this is the mark for the web titlebar,
+    where a 64px render is displayed at ~18 CSS px, and a second ring at that
+    size is a smudge rather than a detail. render_state_icon's detail gate
+    makes the same call from the other direction.
+
+    ``ring_rotation`` offsets the orbit tilt. Nothing in the app passes it any
+    more - the hover animation is render_animation_frame's job - but it costs
+    nothing to keep for a caller that wants a tilted still.
+    """
     s = size * supersample
     img = Image.new("RGBA", (s, s), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
     cx = cy = s / 2
 
-    ring_w = max(int(s * 0.05), 2)
+    ring_w = max(int(s * RING_W), 2)
     _draw_tilted_ellipse(
-        img, cx, cy, s * 0.46, s * 0.46 * 0.6, 22 + ring_rotation, GOLD, ring_w)
+        img, cx, cy, s * RING_RX, s * RING_RX * RING_RATIO,
+        RING_TILT + ring_rotation, GOLD, ring_w)
 
-    _draw_sparkle(draw, cx, cy, s * 0.34, VIOLET)
+    _draw_sparkle(draw, cx, cy, s * SPARK_R, VIOLET)
     return img.resize((size, size), Image.LANCZOS)
 
 
@@ -187,48 +241,143 @@ def render_animation_frame(size=256, t=0.0, supersample=4):
 # nothing while redrawing the icon 12 times a second forever. Three static
 # icons, swapped on state change, carry more information for no ongoing cost.
 
-EMBER = (255, 92, 122, 255)      # matches design_v3.EMBER
 NEUTRAL = (154, 147, 196, 255)   # matches design_v3.TEXT_SECONDARY
 
 TRAY_STATES = ("idle", "recording", "disconnected")
 
+# No red anywhere in the mark. In the web chrome ember means *something is
+# wrong* - `.card.hero.is-ember` is the disconnected state, and tokens.css
+# keeps --ember out of the accent presets so a real disconnection still reads
+# as one. Using the same red for "recording" in the tray gave one colour two
+# opposite meanings. What changes between states now is motion and saturation:
+# still at rest, a lit arc touring the gold ring while recording, chroma
+# drained and slashed when the connection drops. The sparkle stays violet
+# throughout, which is the one thing the brand should never trade away.
 
-def render_state_icon(state, size=64, supersample=4):
-    """The tray mark in one of the three v3 states."""
+
+def render_state_icon(state, size=64, t=0.0, supersample=4, detail_size=None):
+    """The tray mark, transparent ground.
+
+    ``t`` in [0, 1) drives the recording arc and is ignored by the other two
+    states, so idle and disconnected still render once and cache.
+
+    ``detail_size`` is the size the result will actually be *looked at*, when
+    that differs from the size it is drawn at. render_tile_icon draws the mark
+    at supersampled resolution with supersample=1, so `size` there is ~43px
+    for a 16px tile - and judging "can this resolve a second ring?" on 43
+    rather than on 11 put the thin ring into exactly the entries the spec says
+    it should drop out of.
+    """
     if state not in TRAY_STATES:
         raise ValueError(f"unknown tray state: {state!r}")
     s = size * supersample
     img = Image.new("RGBA", (s, s), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
     cx = cy = s / 2
-    ring_w = max(int(s * 0.05), 2)
+    # Below 32px, one ring only - the second cannot resolve and reads as smear.
+    detailed = (size if detail_size is None else detail_size) >= 32
+    dead = state == "disconnected"
 
-    color = {"idle": VIOLET, "recording": EMBER, "disconnected": NEUTRAL}[state]
+    spark = _mix(VIOLET, NEUTRAL, 0.78) if dead else VIOLET
+    ring = _mix(GOLD, NEUTRAL, 0.85) if dead else GOLD
 
-    _draw_tilted_ellipse(img, cx, cy, s * 0.46, s * 0.46 * 0.6, 22, color, ring_w)
+    rx, ry = s * RING_RX, s * RING_RX * RING_RATIO
+    ring_w = max(int(s * RING_W), 2)
+
+    if detailed:
+        _draw_tilted_ellipse(img, cx, cy, s * INNER_RX, s * INNER_RX * INNER_RATIO,
+                             INNER_TILT, _with_alpha(spark, 128),
+                             max(int(s * INNER_W), 1))
 
     if state == "recording":
-        # Filled: the one state that should read as "live" at a glance.
-        _draw_sparkle(draw, cx, cy, s * 0.34, color)
+        # The ring dims and one lit segment tours it. Motion is the state.
+        _draw_tilted_ellipse(img, cx, cy, rx, ry, RING_TILT,
+                             _with_alpha(ring, 140), ring_w)
+        head = 360.0 * (t % 1.0)
+        _draw_tilted_arc(img, cx, cy, rx, ry, RING_TILT,
+                         head, head + ARC_SPAN, GOLD_LIT, ring_w)
     else:
-        # Outline: same silhouette, drawn as a stroke. PIL's polygon has no
-        # outline width, so stroke it as a closed line loop.
-        points = _four_point_star(cx, cy, s * 0.34, s * 0.34 * 0.34)
-        draw.line(points + [points[0]], fill=color, width=max(int(s * 0.035), 2),
-                  joint="curve")
+        _draw_tilted_ellipse(img, cx, cy, rx, ry, RING_TILT, ring, ring_w)
 
-    if state == "disconnected":
-        # A slash across the whole mark - unmistakable at 16px, where a colour
-        # change alone is not.
-        pad = s * 0.16
-        draw.line([(pad, s - pad), (s - pad, pad)], fill=color,
-                  width=max(int(s * 0.075), 2))
+    _draw_sparkle(draw, cx, cy, s * SPARK_R, spark)      # violet, always
+
+    if dead:
+        pad = s * 0.14
+        ends = [(pad, s - pad), (s - pad, pad)]
+        # Punch a gap through the mark first so the slash separates from it.
+        # ImageDraw writes pixels rather than compositing, so a zero-alpha line
+        # genuinely erases. Both widths are FIXED ratios - do not scale them up
+        # at small sizes or the gap swallows the sparkle at 16px.
+        draw.line(ends, fill=(0, 0, 0, 0), width=max(int(s * 0.145), 3))
+        draw.line(ends, fill=SLASH, width=max(int(s * 0.072), 2))
 
     return img.resize((size, size), Image.LANCZOS)
 
 
 def generate_state_icons(size=64):
     return {state: render_state_icon(state, size=size) for state in TRAY_STATES}
+
+
+def generate_recording_frames(size=64, fps=10):
+    """One loop of the arc.
+
+    10fps is plenty for a drift this slow - 38 frames, rendered once and
+    cached rather than redrawn live. Stop the timer and drop back to the
+    cached idle image the moment recording ends.
+    """
+    n = max(int(round(ARC_PERIOD_S * fps)), 1)
+    return [render_state_icon("recording", size=size, t=i / float(n))
+            for i in range(n)]
+
+
+# --- the tiled variant: same mark, on the app's own sky ------------------
+# Two different jobs on one taskbar. The taskbar button and the .ico get a
+# body - a rounded corner and the sky behind it. The tray gets the
+# transparent mark, because a tile there would fight every other tray glyph.
+
+TILE_BG = (14, 15, 26, 255)        # the app's ground
+TILE_GLOW_A = (139, 124, 246)      # violet, upper left
+TILE_GLOW_B = (94, 168, 205)       # cyan, lower right
+TILE_RADIUS = 0.22                 # x size - corner radius
+MARK_INSET = 0.16                  # x size - padding around the mark
+
+
+def _deep_field(s):
+    """The app's sky, at icon scale."""
+    tile = Image.new("RGBA", (s, s), TILE_BG)
+    glow = Image.new("RGBA", (s, s), (0, 0, 0, 0))
+    g = ImageDraw.Draw(glow)
+    g.ellipse([0.00 * s, 0.02 * s, 0.68 * s, 0.54 * s], fill=TILE_GLOW_A + (64,))
+    g.ellipse([0.42 * s, 0.50 * s, 1.02 * s, 0.98 * s], fill=TILE_GLOW_B + (38,))
+    tile.alpha_composite(glow.filter(ImageFilter.GaussianBlur(radius=s * 0.14)))
+    return tile
+
+
+def render_tile_icon(state="idle", size=256, t=0.0, supersample=4):
+    """The mark with a body - taskbar button, .ico, anywhere it needs one."""
+    s = size * supersample
+    tile = _deep_field(s)
+
+    # Clip to the rounded square.
+    mask = Image.new("L", (s, s), 0)
+    ImageDraw.Draw(mask).rounded_rectangle(
+        [0, 0, s - 1, s - 1], radius=int(s * TILE_RADIUS), fill=255)
+    tile.putalpha(mask)
+
+    # Hairline of light along the edge - what makes it read as a real tile.
+    edge = Image.new("RGBA", (s, s), (0, 0, 0, 0))
+    ImageDraw.Draw(edge).rounded_rectangle(
+        [0, 0, s - 1, s - 1], radius=int(s * TILE_RADIUS),
+        outline=(245, 243, 255, 28), width=max(int(s * 0.006), 1))
+    tile.alpha_composite(edge)
+
+    # The mark itself - already supersampled, so ask for no second pass, but
+    # tell it the size it will be seen at so the detail gate judges that.
+    inner = int(s * (1 - 2 * MARK_INSET))
+    mark = render_state_icon(state, size=inner, t=t, supersample=1,
+                             detail_size=int(size * (1 - 2 * MARK_INSET)))
+    tile.alpha_composite(mark, (int(s * MARK_INSET), int(s * MARK_INSET)))
+    return tile.resize((size, size), Image.LANCZOS)
 
 
 def generate_static_icon(size=256):
@@ -303,7 +452,27 @@ def save_webp(path, size=64, n_frames=48, duration_ms=40, quality=88):
     return path
 
 
-def save_ico(path, sizes=(16, 24, 32, 48, 64, 128, 256)):
-    base = render_frame(size=256)
-    imgs = [base.resize((s, s), Image.LANCZOS) for s in sizes]
-    imgs[0].save(path, format="ICO", sizes=[(s, s) for s in sizes], append_images=imgs[1:])
+def save_ico(path, sizes=(16, 24, 32, 48, 64, 128, 256), tile=True, state="idle"):
+    """Every size drawn at its own size - never one render downsampled.
+
+    The old version rendered once at 256 and resized, which is why the small
+    entries went mushy: the thin ring survived as a grey smear instead of
+    disappearing cleanly. Rendering each size natively lets the `detailed`
+    flag in render_state_icon do the right thing on its own, dropping the
+    second ring below 32px where it cannot resolve.
+    """
+    def one(px):
+        return (render_tile_icon(state, size=px) if tile
+                else render_state_icon(state, size=px))
+
+    # Largest first, and this is not cosmetic. Pillow's ICO writer drops any
+    # requested size larger than the image it is saving from, so handing it
+    # the 16px render first silently produced a **single 16px entry** - which
+    # is what nebula_icon.ico had been for its whole life, leaving Windows to
+    # upscale 16px onto the taskbar and the exe. The file was 702 bytes and
+    # nothing ever failed.
+    ordered = sorted(sizes, reverse=True)
+    imgs = [one(px) for px in ordered]
+    imgs[0].save(path, format="ICO", sizes=[(px, px) for px in ordered],
+                 append_images=imgs[1:])
+    return path

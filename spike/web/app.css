@@ -1776,11 +1776,12 @@ html, body {
   animation: pulse var(--live-dot-ms) var(--ease) infinite;
 }
 .moon-orb[data-state="live"] .moon-orb-ring {
-  /* Gold orbit — same hue as the Nebula mark ring in icon_art. */
-  border-color: rgb(245 166 35 / .9);
-  box-shadow: 0 0 10px rgb(245 166 35 / .45);
+  /* Gold orbit — the Nebula mark's own ring hue, via the token gen_tokens
+     emits from icon_art.GOLD rather than a literal copy of it here. */
+  border-color: rgb(var(--gold-rgb) / .9);
+  box-shadow: 0 0 10px rgb(var(--gold-rgb) / .45);
   opacity: 1;
-  animation: moon-orbit 2.4s linear infinite;
+  animation: moon-orbit 2.4s linear infinite;  /* lint-allow: an orbit is constant-speed - an ease would make it lurch once per lap, the same reason the star drift is linear */
 }
 .moon-orb[data-state="idle"] .moon-orb-core,
 .moon-orb[data-state="unknown"] .moon-orb-core {

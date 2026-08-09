@@ -25,9 +25,77 @@ import threading
 
 import pystray
 
-from .icon_art import generate_state_icons
+from .icon_art import ARC_PERIOD_S, generate_recording_frames, generate_state_icons
 
 ICON_PATH = None  # unused - kept only in case something still imports it
+
+# The recording arc, at the rate the icon design asks for. Frames are
+# pre-rendered once and cached on the icon, so a tick is an assignment and a
+# list index - never a draw.
+RECORDING_FPS = 10
+
+
+def set_tray_state(icon, state):
+    """Swap the tray icon for `state`, animating the arc while recording.
+
+    Both hosts call this rather than assigning ``icon.icon`` themselves, so
+    the animation lives in one place and cannot drift between the Tk build and
+    the webview one.
+
+    v3 retired the old tray spin for good reason: a permanent 12fps rotation
+    said nothing while redrawing forever. This is the opposite case - the arc
+    runs *only* while recording, which is exactly when motion carries the
+    meaning, and stops dead the moment it ends.
+    """
+    if icon is None:
+        return
+    _stop_recording_arc(icon)
+    icons = getattr(icon, "_nebula_icons", None) or {}
+    if state == "recording":
+        _start_recording_arc(icon, icons)
+    elif state in icons:
+        icon.icon = icons[state]
+
+
+def _stop_recording_arc(icon):
+    stop = getattr(icon, "_nebula_arc_stop", None)
+    if stop is not None:
+        stop.set()
+    icon._nebula_arc_stop = None
+
+
+def _start_recording_arc(icon, icons):
+    frames = getattr(icon, "_nebula_arc_frames", None)
+    if frames is None:
+        # Match whatever size the static icons were built at, so the tray does
+        # not change resolution when recording starts.
+        ref = icons.get("idle")
+        size = ref.size[0] if ref is not None else 64
+        frames = generate_recording_frames(size=size, fps=RECORDING_FPS)
+        icon._nebula_arc_frames = frames
+    if not frames:
+        return
+
+    icon.icon = frames[0]           # land on the state immediately, not in 100ms
+    stop = threading.Event()
+    icon._nebula_arc_stop = stop
+    period = ARC_PERIOD_S / float(len(frames))
+
+    def run():
+        i = 1
+        while not stop.wait(period):
+            # A stopped thread must never paint over the icon its successor
+            # just set. Checking identity - not just the flag - closes the gap
+            # between set() and this thread noticing it.
+            if getattr(icon, "_nebula_arc_stop", None) is not stop:
+                return
+            try:
+                icon.icon = frames[i % len(frames)]
+            except Exception:
+                return              # tray torn down under us
+            i += 1
+
+    threading.Thread(target=run, daemon=True, name="nebula-tray-arc").start()
 
 
 def build_tray_icon(app_window, icon_path):

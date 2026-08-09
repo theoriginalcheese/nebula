@@ -637,8 +637,13 @@ def reveal_client_windows(configured_path=""):
                 continue
             windows = []
 
+            # `pids` and `windows` are bound as defaults, not captured. The
+            # closure outlives the loop iteration that made it, and a late-bound
+            # name would read whatever the *next* pass left behind - the same
+            # family as the deferred-callback trap in CLAUDE.md. ctypes calls
+            # this with two arguments, so the defaults are never overwritten.
             @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
-            def _enum(hwnd, _lp):
+            def _enum(hwnd, _lp, pids=pids, windows=windows):
                 proc_id = wintypes.DWORD()
                 user32.GetWindowThreadProcessId(hwnd, ctypes.byref(proc_id))
                 if proc_id.value in pids and user32.IsWindow(hwnd):
