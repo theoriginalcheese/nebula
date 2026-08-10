@@ -1,6 +1,30 @@
-/* Toast — frame 2i. Separate surface; transform + opacity only. */
+/* Toast — capsule look (Tk design C / frame 2i), WebView surface.
+   Shape is squared to the window edge on purpose: DWM rounds the HWND (~8px).
+   Do not paint a page-level shell rim or core pill radius — either leaves a
+   grey rectangular enclosure (hairline border / wash in the corner gap).
+   Core fills the HWND flush; only the outer silhouette is DWM-limited.
+   Layout, size, dust and single-row copy match the Tk capsule gallery.
+
+   Combo balanced standout (tools/_toast_demo/standout_combo.html):
+   - core opacity /.96 → /.98 (less see-through on a busy desktop)
+   - luminous inset hairline at hairline-rgb /.075 (not a painted grey box)
+   - soft lift: pywebview shadow=True / DWM — a CSS outer drop would clip at
+     the HWND edge; growing a transparent bleed reintroduces the enclosure. */
 
 *, *::before, *::after { box-sizing: border-box; }
+
+/* Fail-visible defaults — tokens.css has no --toast-* keys; JS applyTokens
+   overwrites these on boot. Without fallbacks a late/failed bridge leaves a
+   zero-size transparent page over GROUND_DEEP / WebView fill = blank bar. */
+:root {
+  --toast-w: 384px;
+  --toast-h: 60px;
+  --toast-drain-h: 2px;
+  --toast-in-ms: 420ms;
+  --toast-in-rise: 28px;
+  --toast-out-ms: 320ms;
+  --drain-frac: 1;
+}
 
 html, body {
   margin: 0;
@@ -22,6 +46,103 @@ html, body {
   transition: none;
 }
 
+/* Prompt: taller HWND, stacked copy + two pill actions (Tk TOAST_PROMPT_*). */
+.toast.is-prompt .toast-row {
+  flex: 0 0 auto;
+  align-items: flex-start;
+  padding: 18px 22px 0 14px;
+}
+
+.toast.is-prompt .toast-copy {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  white-space: normal;
+  overflow: visible;
+}
+
+.toast.is-prompt .toast-sep,
+.toast.is-prompt .toast-detail {
+  display: none !important;
+}
+
+.toast.is-prompt .toast-title {
+  line-height: 1.25;
+  overflow: visible;
+  text-overflow: clip;
+}
+
+.toast.is-prompt .toast-sub {
+  line-height: 1.3;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+
+.toast-actions {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 10px;
+  padding: 14px 22px 16px 14px;
+}
+
+.toast-actions[hidden] {
+  display: none !important;
+}
+
+.toast-btn {
+  appearance: none;
+  border: 0;
+  margin: 0;
+  height: 30px;
+  min-width: 118px;
+  padding: 0 16px;
+  border-radius: 999px;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  color: var(--text);
+  /* Two-layer pill: inset hairline shell + tinted core. */
+  box-shadow: inset 0 0 0 1px rgb(var(--hairline-rgb) / .09);
+  transition:
+    opacity var(--hover-ms, 500ms) var(--ease, cubic-bezier(.32, .72, 0, 1)),
+    transform var(--press-ms, 120ms) var(--ease, cubic-bezier(.32, .72, 0, 1));
+}
+
+.toast-btn:focus {
+  outline: none;
+}
+
+.toast-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.toast-btn:active {
+  transform: scale(var(--press-scale, 0.97));
+}
+
+.toast-btn-primary {
+  background: rgb(var(--accent-rgb) / .32);
+  color: var(--text);
+}
+
+.toast-btn-primary:hover {
+  background: rgb(var(--accent-rgb) / .42);
+}
+
+.toast-btn-secondary {
+  background: rgb(var(--hairline-rgb) / .045);
+  color: var(--text-secondary);
+}
+
+.toast-btn-secondary:hover {
+  background: rgb(var(--hairline-rgb) / .08);
+  color: var(--text);
+}
+
 .toast.is-visible {
   opacity: 1;
   transform: translateY(0);
@@ -36,125 +157,220 @@ html, body {
   transition: opacity var(--toast-out-ms) var(--ease);
 }
 
+.toast.is-swap {
+  transition: opacity 120ms var(--ease);
+}
+
 @media (prefers-reduced-motion: reduce) {
   .toast.is-visible,
-  .toast.is-dismissing {
+  .toast.is-dismissing,
+  .toast.is-swap {
     transition: none;
   }
 }
 
-/* Squared to the window edge on purpose — DWM rounds the window itself.
-   ⚠️ Do not give this a radius. WebView2 draws through DirectComposition, so
-   anything the page leaves uncovered at the corners shows the window fill as a
-   box, and that box cannot be clipped away: SetWindowRgn does not apply to
-   composited content, and pywebview's transparency does not hold. The window
-   is rounded by DWM instead (see _make_transparent in windows.py), and DWM
-   picks the radius - so a 28px card inside an ~8px window just puts a dark
-   frame back in the gap between the two. */
 .toast-shell {
   width: 100%;
   height: 100%;
-  padding: var(--tray-pad);
+  /* No painted shell on this surface. A hairline wash + 3px pad read as a
+     grey rectangular enclosure around the capsule (desktop, not aurora).
+     Core fills the HWND; DWM supplies the only outer round. */
+  padding: 0;
   border-radius: 0;
-  /* DELIBERATE DEVIATION, measured by eye against shots/t006-toast.png.
-     BUILD-SPEC's shell wash (.035) and core (.82) assume a card sitting on the
-     aurora, where the aurora shows through the shell and makes it the lighter
-     of the two. A toast is a separate window over the desktop with no aurora
-     behind it, so the same alphas invert the relationship: shell resolves to
-     ~#131117 and core to ~#141022 - the core comes out LIGHTER, and the card
-     reads as one flat panel.
-     Raising the shell restores the intended order (tinted shell outside,
-     darker core inside) without touching either token. */
-  background: rgb(var(--hairline-rgb) / .085);
-  border: 1px solid rgb(var(--hairline-rgb) / .11);
+  background: transparent;
+  border: 0;
 }
 
 .toast-core {
+  position: relative;
   display: flex;
   flex-direction: column;
   width: 100%;
   height: 100%;
-  /* Rounded, unlike the shell. The shell has to stay square because anything
-     it leaves uncovered shows the window fill against the desktop - but the
-     core sits *inside* the shell, so its corners fall on the card, not on the
-     wallpaper, and cost nothing.
-     Not --tray-core-r (22): the outer corner is DWM's (~8px), and an inner
-     radius larger than the window's own reads wrong. --panel-core-r is the
-     closest token that sits comfortably inside it. */
-  border-radius: var(--panel-core-r);
-  /* Ground, not card-core: on this window card-core is the lighter colour.
-     See the note on .toast-shell. */
-  background: rgb(var(--ground-rgb) / .96);
+  /* Must stay 0: any core radius opens a dark gap inside the squared HWND
+     and reintroduces a framed look. DWM supplies the round. */
+  border-radius: 0;
+  background: rgb(var(--ground-rgb) / .98);
+  /* Luminous hairline — tinted light edge, not a solid grey stroke. */
+  box-shadow: inset 0 0 0 1px rgb(var(--hairline-rgb) / .075);
   overflow: hidden;
 }
 
-.toast-body {
+/* Single baseline: chip · title · middot · sub · detail (Tk capsule row). */
+.toast-row {
   flex: 1;
   display: flex;
   align-items: center;
-  gap: var(--stack-gap);
+  gap: 10px;
+  min-width: 0;
   min-height: 0;
-  padding: var(--stack-gap) var(--stack-gap) var(--sibling-gap);
+  /* Clear the capsule curve / DWM round — matches TOAST_TEXT_INSET spirit.
+     A few px bottom pad keeps descenders ("g", "y") above the drain. */
+  padding: 0 22px 6px 14px;
+}
+
+.toast-chip-wrap {
+  position: relative;
+  flex: 0 0 auto;
+  width: 28px;
+  height: 28px;
 }
 
 .toast-chip {
-  flex: 0 0 auto;
-  width: 32px;
-  height: 32px;
+  position: relative;
+  z-index: 1;
+  width: 28px;
+  height: 28px;
   border-radius: 50%;
   display: grid;
   place-items: center;
   background: rgb(var(--accent-rgb) / .14);
-  border: 1px solid rgb(var(--hairline-rgb) / var(--shell-border-a));
+  box-shadow: 0 0 14px rgb(var(--accent-rgb) / .28);
+}
+
+.toast.is-ember .toast-chip {
+  background: rgb(var(--ember-rgb) / .14);
+  box-shadow: 0 0 14px rgb(var(--ember-rgb) / .32);
 }
 
 .toast-icon {
   font-family: "Segoe Fluent Icons", sans-serif;
   font-size: 13px;
   line-height: 1;
+  color: var(--accent);
+}
+
+.toast.is-ember .toast-icon {
+  color: var(--ember);
+}
+
+/* Soft dust constellation — transform + opacity only. */
+.toast-dust {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+}
+
+.toast-dust span {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  border-radius: 50%;
+  background: var(--accent);
+  opacity: 0.4;
+  transform: translate(-50%, -50%);
+  will-change: transform, opacity;
+}
+
+.toast.is-ember .toast-dust span {
+  background: var(--ember);
+}
+
+.toast-dust[data-style="burst"] span {
+  animation: toast-dust-burst 2.4s var(--ease) infinite;
+}
+.toast-dust[data-style="sink"] span {
+  animation: toast-dust-sink 2.8s var(--ease) infinite;
+}
+.toast-dust[data-style="drift"] span {
+  animation: toast-dust-drift 3.6s var(--ease) infinite;
+}
+.toast-dust[data-style="rise"] span {
+  animation: toast-dust-rise 2.6s var(--ease) infinite;
+}
+.toast-dust[data-style="scatter"] span {
+  animation: toast-dust-scatter 1.8s var(--ease) infinite;
+}
+.toast-dust[data-style="orbit"] span {
+  animation: toast-dust-orbit 4.2s linear infinite;
+}
+
+@keyframes toast-dust-burst {
+  0%, 100% { transform: translate(-50%, -50%) scale(1); opacity: var(--dust-a, .4); }
+  50% { transform: translate(calc(-50% + var(--dust-dx) * 1.35), calc(-50% + var(--dust-dy) * 1.35)) scale(1.15); opacity: calc(var(--dust-a, .4) * .55); }
+}
+@keyframes toast-dust-sink {
+  0%, 100% { transform: translate(-50%, -50%); opacity: var(--dust-a, .4); }
+  50% { transform: translate(calc(-50% + var(--dust-dx) * .4), calc(-50% + var(--dust-dy) * .4 + 4px)); opacity: calc(var(--dust-a, .4) * .7); }
+}
+@keyframes toast-dust-drift {
+  0%, 100% { transform: translate(-50%, -50%); opacity: var(--dust-a, .4); }
+  50% { transform: translate(calc(-50% + var(--dust-dx) * .55 + 3px), calc(-50% + var(--dust-dy) * .35)); opacity: calc(var(--dust-a, .4) * .85); }
+}
+@keyframes toast-dust-rise {
+  0%, 100% { transform: translate(-50%, -50%); opacity: var(--dust-a, .4); }
+  50% { transform: translate(calc(-50% + var(--dust-dx) * .3), calc(-50% + var(--dust-dy) * .3 - 5px)); opacity: calc(var(--dust-a, .4) * 1.1); }
+}
+@keyframes toast-dust-scatter {
+  0%, 100% { transform: translate(-50%, -50%); opacity: var(--dust-a, .4); }
+  25% { transform: translate(calc(-50% + var(--dust-dx) * .9), calc(-50% + var(--dust-dy) * .2)); }
+  75% { transform: translate(calc(-50% + var(--dust-dx) * .2), calc(-50% + var(--dust-dy) * .9)); opacity: calc(var(--dust-a, .4) * .5); }
+}
+@keyframes toast-dust-orbit {
+  0% { transform: translate(-50%, -50%) rotate(0deg) translate(var(--dust-orbit, 6px), 0) rotate(0deg); opacity: var(--dust-a, .4); }
+  100% { transform: translate(-50%, -50%) rotate(360deg) translate(var(--dust-orbit, 6px), 0) rotate(-360deg); opacity: var(--dust-a, .4); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .toast-dust span {
+    animation-play-state: paused;
+  }
 }
 
 .toast-copy {
   flex: 1;
   min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  white-space: nowrap;
+  overflow: hidden;
 }
 
 .toast-title {
-  font-size: var(--t-body-size);
+  flex: 0 1 auto;
+  min-width: 0;
+  font-size: 14px;
   font-weight: 500;
-  line-height: 1.25;
-  white-space: nowrap;
+  line-height: 1.2;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
+.toast-sep {
+  flex: 0 0 auto;
+  color: var(--text-eyebrow);
+  font-size: 14px;
+  font-weight: 500;
+}
+
 .toast-sub {
-  margin-top: 2px;
+  flex: 0 1 auto;
+  min-width: 0;
   font-size: var(--t-meta-size);
   color: var(--text-secondary);
-  white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
 .toast-detail {
-  margin-top: 2px;
+  flex: 0 0 auto;
   font-family: var(--font-mono);
   font-size: var(--t-mono-size);
   color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
 }
 
 .toast-track {
-  flex: 0 0 auto;
-  margin: 0 var(--stack-gap) var(--sibling-gap);
+  position: absolute;
+  left: 22px;
+  right: 22px;
+  bottom: 7px;
   height: var(--toast-drain-h);
   background: rgb(var(--hairline-rgb) / var(--hairline-a));
   border-radius: var(--r-control);
   overflow: hidden;
-  /* The fade lives on the TRACK, which never scales - not on the bar inside
-     it, which does. A gradient on the scaling element gets compressed with it:
-     at 25% remaining a 32px fade becomes 8px and reads hard, which is exactly
-     what the first attempt produced. */
   -webkit-mask-image: linear-gradient(90deg, transparent 0, #000 var(--rule-fade), #000 calc(100% - var(--rule-fade)), transparent 100%);  /* lint-allow: #000 in a mask is an alpha stencil, not a colour - it never paints */
   mask-image: linear-gradient(90deg, transparent 0, #000 var(--rule-fade), #000 calc(100% - var(--rule-fade)), transparent 100%);  /* lint-allow: as above */
 }
@@ -166,6 +382,10 @@ html, body {
   transform-origin: left center;
   transform: scaleX(var(--drain-frac, 1));
   will-change: transform;
+}
+
+.toast.is-ember .toast-drain {
+  background: var(--ember);
 }
 
 @media (prefers-reduced-motion: reduce) {

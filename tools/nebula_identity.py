@@ -43,9 +43,14 @@ def identity() -> dict:
         "git_branch": _git("branch", "--show-current") if not is_frozen() else "",
         "git_describe": info.get("describe") or _git("describe", "--tags", "--always", "--dirty"),
         "executable": sys.executable,
-        "toast_surface": "obsauto/gui.py capsule (Tk)" if not is_frozen()
-        else "whatever was baked into this exe",
-        "spike_toast": "spike/web/toast.css (squared DWM card — NOT the Tk capsule)",
+        # main.py ships spike/v4 WebView toast; Tk capsule in gui.py is legacy.
+        "toast_surface": (
+            "spike/web toast (WebView2) via main.py -> spike/app.py"
+            if not is_frozen()
+            else "whatever was baked into this exe"
+        ),
+        "legacy_tk_toast": "obsauto/gui.py capsule (Tk chromakey pill; not launched by main.py)",
+        "spike_toast": "spike/web/toast.css (capsule layout; DWM ~8px round - not Tk chromakey pill)",
         "known_exe_data_dir": r"C:\Users\antho\Nebula",
         "known_source_dir": r"C:\Users\antho\Downloads\nebula",
     }
