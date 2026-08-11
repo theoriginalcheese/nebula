@@ -68,7 +68,18 @@ python tools/nebula_identity.py # which checkout am I
 
 Never claim done on a previous session's evidence. Re-run the gate.
 
-## Context budget
+## The tooling, in one place
 
-`python tools/context_budget.py` reports exactly what is loading and what it costs.
+```bash
+python tools/agent.py          # lists every tool and what it does
+python tools/agent.py gate     # ruff + token lint + skill sync, ~0.2s
+python tools/agent.py gate!    # full gate incl. the three test suites, ~4.4s
+python tools/agent.py check    # gate + skill sync in one pass
+python tools/agent.py budget   # what costs context every turn
+```
+
+Arguments pass straight through: `agent.py audit --task t013`. It is a lazy
+dispatcher over the existing scripts, not a wrapper around them — the hooks still
+call those scripts directly, so nothing on the hot path got slower.
+
 Durable notes go to the Obsidian vault, never into this repo.

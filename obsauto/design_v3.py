@@ -332,6 +332,13 @@ ICONS = {
     "disconnected": "plugs",
     "connected": "plugs-connected",
     "storage": "hard-drives",
+    # The hero's "Idle - watching" state. An eye was tried and rejected - it made
+    # a background service read as surveillance - and ph-eye is already spoken
+    # for as Settings' password reveal. This is the record mark with the
+    # substance not yet in it: outline means armed, fill means live. Same rule as
+    # plugs -> plugs-connected, where a status role takes the sibling glyph of an
+    # object already in the legend rather than inventing a new metaphor.
+    "watching": "circle-dashed",
     "idle": "timer",
     "idle_pause": "moon",
     "hotkey": "command",
@@ -411,16 +418,17 @@ TOAST_OUT_MS = 320
 # Capsule silhouette (design C): pill radius = height / 2. Width tuned so a
 # title + middot + game name fit without wrapping.
 TOAST_W, TOAST_H = 384, 60
-# Prompt toasts stack title over the game name and carry two pill actions —
-# taller / wider so neither line ellipsizes into a stub ("He…").
-TOAST_PROMPT_W, TOAST_PROMPT_H = 448, 136
+# Prompt toasts: same capsule family as status — chip + stacked title/game
+# with the two action pills on the RIGHT (fills the strip; no tall empty
+# dialog). Height stays near TOAST_H so it does not read as a second UI.
+TOAST_PROMPT_W, TOAST_PROMPT_H = 420, 68
 TOAST_PAD = 3                        # shell → core inset (two-layer card)
 # Keep text clear of the capsule's curved ends (radius ≈ H/2).
 TOAST_TEXT_INSET = 36
-TOAST_PROMPT_BTN_H = 30
-TOAST_PROMPT_BTN_GAP = 10
-TOAST_PROMPT_PRIMARY_W = 118
-TOAST_PROMPT_SECONDARY_W = 118
+TOAST_PROMPT_BTN_H = 26
+TOAST_PROMPT_BTN_GAP = 8
+TOAST_PROMPT_PRIMARY_W = 96
+TOAST_PROMPT_SECONDARY_W = 96
 # Chromakey for true pill corners on the frameless toplevel (not in the
 # Nebula Deep palette, so it never punches holes in the glass).
 TOAST_KEY = "#00FF01"

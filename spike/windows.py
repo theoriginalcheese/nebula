@@ -51,6 +51,7 @@ TOAST_PROMPT_W, TOAST_PROMPT_H = dv.TOAST_PROMPT_W, dv.TOAST_PROMPT_H
 # Segoe Fluent Icons — same verified codepoints as gui.py, keyed by Phosphor name.
 _ICON_CODEPOINTS = {
     "record": 0xE7C8,
+    "circle-dashed": 0xEA3A,  # watching - see obsauto/gui.py for why this ring
     "pause": 0xE769,
     "play": 0xE768,
     "scissors": 0xE8C6,
@@ -63,7 +64,14 @@ ICON_GLYPHS = {name: chr(cp) for name, cp in _ICON_CODEPOINTS.items()}
 GWL_EXSTYLE = -20
 WS_EX_TOOLWINDOW = 0x00000080
 WS_EX_APPWINDOW = 0x00040000
+WS_EX_NOACTIVATE = 0x08000000
 WM_CLOSE = 0x0010
+SW_SHOWNOACTIVATE = 4
+SWP_NOSIZE = 0x0001
+SWP_NOMOVE = 0x0002
+SWP_NOZORDER = 0x0004
+SWP_NOACTIVATE = 0x0010
+SWP_FRAMECHANGED = 0x0020
 
 _LIVENESS_INTERVAL = 3.0
 _AUXILIARY_TITLES = frozenset(("Nebula Toast", "Nebula Overlay"))
@@ -308,24 +316,58 @@ def _monitor_key(x, y):
 
 
 def _hide_from_taskbar(window, on_log=None):
-    """2k: no taskbar entry.
+    """Toast / overlay: no taskbar button, no activation flash.
+
+    Sets ``WS_EX_TOOLWINDOW``, clears ``WS_EX_APPWINDOW``, and adds
+    ``WS_EX_NOACTIVATE`` so Show/replace never steals focus or bounces the
+    taskbar. ``SetWindowPos(... FRAMECHANGED | NOACTIVATE)`` forces the shell
+    to re-read the styles — without that, a later ``Form.Show()`` can put the
+    button back.
 
     ⚠️ Must run on the GUI thread. ``native.Handle`` is a WinForms property and
     reading it from another thread throws - which, under the old bare
     ``except: pass``, meant this silently did nothing and the overlay kept its
-    taskbar entry. Only the ``.Handle`` read is thread-bound; ``SetWindowLongW``
-    is a plain Win32 call on an HWND and would have been fine either way.
+    taskbar entry.
     """
     try:
-        import ctypes
         hwnd = int(window.native.Handle.ToInt64())
         user32 = ctypes.windll.user32
         style = user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
-        style = (style | WS_EX_TOOLWINDOW) & ~WS_EX_APPWINDOW
+        style = (style | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE) & ~WS_EX_APPWINDOW
         user32.SetWindowLongW(hwnd, GWL_EXSTYLE, style)
+        # Shell only picks up EXSTYLE changes after a frame change.
+        user32.SetWindowPos(
+            hwnd, 0, 0, 0, 0, 0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED,
+        )
     except Exception as exc:
         if on_log:
-            on_log("[Overlay] taskbar hide failed: %s" % exc)
+            on_log("[Windows] taskbar hide failed: %s" % exc)
+
+
+def _show_noactivate(window, on_log=None):
+    """Show an auxiliary HWND without a taskbar button or activation flash.
+
+    Prefer ``ShowWindow(SW_SHOWNOACTIVATE)`` over pywebview ``show()`` —
+    WinForms ``Show()`` activates and can re-expose ``WS_EX_APPWINDOW``.
+    Re-applies taskbar hide on every call (create-time hide alone is not enough).
+    Falls back to ``window.show()`` when there is no native handle (tests).
+    """
+    _hide_from_taskbar(window, on_log)
+    try:
+        hwnd = int(window.native.Handle.ToInt64())
+        ctypes.windll.user32.ShowWindow(hwnd, SW_SHOWNOACTIVATE)
+        return
+    except Exception:
+        pass
+    try:
+        window.show()
+    except Exception as exc:
+        if on_log:
+            on_log("[Windows] show failed: %s" % exc)
+        return
+    # show() may have restored APPWINDOW — hide again.
+    _hide_from_taskbar(window, on_log)
 
 
 def _format_bytes(n):
@@ -672,6 +714,10 @@ class ToastApi:
     def on_expired(self):
         self._ctl._on_expired()
 
+    def start_dismiss(self):
+        """JS life ended — fade the HWND, then hide (no CSS opacity punch-through)."""
+        self._ctl._start_dismiss()
+
     def action(self, index):
         self._ctl._on_action(index)
 
@@ -696,6 +742,12 @@ class ToastController:
         self._prompt = False
         self._action_callbacks = []
         self._on_timeout = None
+        self._fading = False
+        self._fade_gen = 0
+        # 0 = idle, 1 = HWND appear, -1 = HWND dismiss.
+        self._fade_dir = 0
+        # True after create/hide — next paint soft-fades the HWND in.
+        self._needs_appear = True
 
     def replace(self, event, display_name, details=None, actions=None,
                 on_timeout=None):
@@ -721,9 +773,18 @@ class ToastController:
     def _replace_gui(self, content):
         self._generation += 1
         self._showing = True
+        self._fading = False
+        self._fade_dir = 0
+        # Track prompt before create/ready — JS may consume_pending and skip
+        # _push, which used to leave the HWND at status 60px (buttons clipped).
+        self._prompt = bool(content.get("prompt") or content.get("actions"))
         if self._window is None:
             self._pending = content
             self._create()
+            # Create must stay hidden=False (Invoke deadlock — see overlay
+            # note). Hold the HWND at 0 until content + appear fade.
+            self._needs_appear = True
+            self._set_form_opacity(0.0)
         elif self._ready.is_set():
             # Push consumes content now — leave _pending clear so a concurrent
             # expire does not think a newer show is still waiting and no-op.
@@ -732,6 +793,8 @@ class ToastController:
         else:
             # First boot still loading — JS consume_pending / ready will paint.
             self._pending = content
+            self._needs_appear = True
+            self._set_form_opacity(0.0)
 
     def _take_pending(self):
         out = self._pending
@@ -790,6 +853,9 @@ class ToastController:
         self._window = win
         self._api._window = win
         self._alive = True
+        # Handle exists once create_window returns (opacity path reads it).
+        # Hide from the taskbar immediately — do not wait for ready()/show().
+        _hide_from_taskbar(win, self._log)
 
     def _on_ready(self):
         self._ready.set()
@@ -797,6 +863,8 @@ class ToastController:
         # final size. Without this the rectangular window shows around the
         # rounded card as a coloured box.
         _make_transparent(self._window, self._host)
+        # Re-apply: create-time styles can be overwritten before the page loads.
+        _hide_from_taskbar(self._window, self._log)
         # Place it here, unconditionally. _reposition() otherwise only runs
         # from _push(), and on the *first* toast _push never runs: toast.js
         # pulls the content itself via consume_pending() before calling
@@ -808,6 +876,16 @@ class ToastController:
         if self._pending:
             self._push(self._pending)
             self._pending = None
+        elif self._showing and self._needs_appear:
+            # JS already painted via consume_pending — still need prompt size
+            # (create starts at status 384×60; actions live below that fold).
+            self._resize_for_mode(self._prompt)
+            self._reposition()
+            # JS already painted via consume_pending — reveal without a stepped
+            # Opacity tick loop (those pause WebView2 CSS animations / drain).
+            _show_noactivate(self._window, self._log)
+            self._needs_appear = False
+            self._set_form_opacity(1.0)
         self._schedule_paint_check(self._generation)
 
     def _push(self, content):
@@ -816,18 +894,34 @@ class ToastController:
         gen = self._generation
         prompt = bool(content.get("prompt") or content.get("actions"))
         self._prompt = prompt
+        appear = bool(self._needs_appear)
 
         def run():
             try:
                 if gen != self._generation or not self._showing:
                     return
                 self._resize_for_mode(prompt)
+                if appear:
+                    # Hold at 0 only until the DOM paint lands, then snap to 1.
+                    # A multi-step Form.Opacity appear loop stalls the drain
+                    # animation inside WebView2 (seen as a frozen bar).
+                    self._set_form_opacity(0.0)
                 payload = json.dumps(content, ensure_ascii=False)
                 self._window.evaluate_js("window.toastReplace(%s)" % payload)
                 if gen != self._generation or not self._showing:
                     return
                 self._reposition()
-                self._window.show()
+
+                def reveal():
+                    if gen != self._generation or not self._showing:
+                        return
+                    # Handle / ShowWindow must run on the WinForms thread —
+                    # this worker only owns evaluate_js (see _off_gui).
+                    _show_noactivate(self._window, self._log)
+                    self._needs_appear = False
+                    self._set_form_opacity(1.0)
+
+                _run_on_gui(self._host, reveal)
                 self._schedule_paint_check(gen)
             except Exception as exc:
                 self._log("[Toast] push failed: %s" % exc)
@@ -890,9 +984,13 @@ class ToastController:
                     win.evaluate_js(
                         "if(window.toastForceVisible) window.toastForceVisible();"
                     )
-                    win.show()
                 except Exception as exc:
                     self._log("[Toast] force-visible failed: %s" % exc)
+                    return
+                _run_on_gui(
+                    self._host,
+                    lambda: _show_noactivate(win, self._log),
+                )
 
             _off_gui(probe)
 
@@ -935,7 +1033,67 @@ class ToastController:
             except Exception as exc:
                 self._log("[Toast] Action failed: %s" % exc)
         # Hide after the action — Accept/Dismiss both consume the slot.
-        self._on_expired()
+        self._start_dismiss()
+
+    def _set_form_opacity(self, value):
+        """WinForms Form.Opacity — fades the whole HWND (fill + DWM round)."""
+        win = self._window
+        if not win:
+            return
+        try:
+            form = getattr(win, "native", None)
+            if form is not None and hasattr(form, "Opacity"):
+                form.Opacity = float(max(0.0, min(1.0, value)))
+        except Exception:
+            pass
+
+    def _start_dismiss(self):
+        """Aesthetic exit: soft HWND opacity fade, then hide.
+
+        CSS must not fade the page to transparent — the WebView fill is
+        GROUND_DEEP and reads as a solid black bar. Form.Opacity composites
+        the whole rounded popup (including OS shadow) as one surface.
+        """
+        if not self._showing:
+            return
+        if self._fade_dir == -1 and self._fade_gen == self._generation:
+            return
+        gen = self._generation
+        self._fading = True
+        self._fade_dir = -1
+        self._fade_gen = gen
+        out_ms = max(1, int(dv.TOAST_OUT_MS))
+        steps = max(8, out_ms // 16)
+        interval = out_ms / float(steps) / 1000.0
+
+        def tick(i):
+            if gen != self._generation:
+                self._fading = False
+                self._fade_dir = 0
+                self._set_form_opacity(1.0)
+                return
+            if self._fade_dir != -1:
+                return
+            if not self._window:
+                self._fading = False
+                self._fade_dir = 0
+                return
+            # Smoothstep toward 0 — continuous across TOAST_OUT_MS.
+            # Strong ease-out (.32,.72,0,1 / t**2.4) spent most of the travel
+            # early, then crawled; read as "halfway stuck then goes".
+            t = i / float(steps)
+            eased = t * t * (3.0 - 2.0 * t)
+            self._set_form_opacity(max(0.0, 1.0 - eased))
+            if i >= steps:
+                self._on_expired()
+                return
+
+            def nxt():
+                _run_on_gui(self._host, lambda: tick(i + 1))
+
+            threading.Timer(interval, nxt).start()
+
+        _run_on_gui(self._host, lambda: tick(0))
 
     def _on_expired(self):
         # Capture generation at expire request time. A newer replace must win —
@@ -950,6 +1108,9 @@ class ToastController:
             if gen != self._generation:
                 return
             self._showing = False
+            self._fading = False
+            self._fade_dir = 0
+            self._needs_appear = True
             if timeout_cb:
                 try:
                     timeout_cb()
@@ -962,6 +1123,8 @@ class ToastController:
                     self._window.hide()
                 except Exception:
                     pass
+                # Next show fades in from 0 — leave the form dark while hidden.
+                self._set_form_opacity(0.0)
             # Shrink back to status size so the next non-prompt event isn't
             # sitting in a tall empty HWND.
             self._prompt = False
@@ -1083,7 +1246,7 @@ class OverlayController:
         if self._ready.is_set():
             self._push(self._snapshot)
         try:
-            self._window.show()
+            _show_noactivate(self._window, self._log)
             self._window.on_top = True
         except Exception:
             pass
@@ -1179,6 +1342,9 @@ class OverlayController:
             return
         self._window = win
         self._api._window = win
+        # Immediate + delayed: handle may exist now; a late Show can restore
+        # APPWINDOW, so re-apply after the form settles.
+        _hide_from_taskbar(win, self._log)
         threading.Timer(0.5, self._apply_taskbar_hide).start()
 
     def _apply_taskbar_hide(self):
@@ -1288,7 +1454,7 @@ class OverlayController:
         # is the reliable point, and matches how the toast has always done it.
         if self._open and self._window:
             try:
-                self._window.show()
+                _show_noactivate(self._window, self._log)
                 self._window.on_top = True
             except Exception as exc:
                 self._log("[Overlay] show on ready failed: %s" % exc)

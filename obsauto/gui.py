@@ -147,7 +147,12 @@ _ICON_CODEPOINTS = {
     "game-controller": 0xE7FC,      # Games
     "keyboard": 0xE765,             # Macropad
     "sliders-horizontal": 0xE9E9,   # Settings
-    "record": 0xE7C8,               # filled circle
+    "record": 0xE7C8,               # dot inside a ring - not a plain filled disc
+    # Fluent has no dashed circle, so the ring carries the same meaning: not
+    # filled, not live. Verified by rendering (tools/verify_glyph.py): its bbox
+    # is identical to record's at 12, 16 and 24px, so watching -> recording reads
+    # as the dot appearing inside a ring that never moves.
+    "circle-dashed": 0xEA3A,        # watching
     "pause": 0xE769,
     "play": 0xE768,
     "scissors": 0xE8C6,             # mark clip
@@ -4217,6 +4222,9 @@ class AppWindow:
         # flush to the right padding." Rendered as the button's own image so it
         # sits inside the pill; a canvas circle would be painted over by the
         # embedded widget.
+        # These are *actions*, not states: the trailing icon says what clicking
+        # does. watching -> start (record) is correct and is not the missing
+        # ICONS["watching"] lookup - the Tk hero has no status glyph slot at all.
         role = {"recording": "square", "paused": "resume",
                 "watching": "start", "disconnected": "rescan"}[state]
         glyph = ICON_GLYPHS.get(role) or ICON_GLYPHS[dv.ICONS[role]]
@@ -6071,23 +6079,22 @@ class AppWindow:
         self._keep_image(photo)
         canvas.create_image(0, 0, anchor="nw", image=photo)
 
-        # Standard toasts: one baseline (chip + title · game · detail).
-        # Prompt toasts: stacked title / game, then nested pill actions.
+        # Prompt: same strip as status — chip + stacked copy, pills on the right.
         if prompt:
-            cy = 40
+            cy = h / 2
         else:
             cy = h / 2
         chip_r = 14
-        chip_cx, chip_cy = (32, cy) if prompt else (28, cy)
+        chip_cx, chip_cy = (28, cy) if prompt else (28, cy)
         chip = canvas.create_oval(
             chip_cx - chip_r, chip_cy - chip_r,
             chip_cx + chip_r, chip_cy + chip_r,
             fill=ACCENT_TINT, outline="")
         icon = canvas.create_text(
             chip_cx, chip_cy, text="", fill=ACCENT, font=(ICON_FONT, -13))
-        title_y = (cy - 10) if prompt else cy
-        sub_y = (cy + 13) if prompt else cy
-        text_x = 58 if prompt else 54
+        title_y = (cy - 9) if prompt else cy
+        sub_y = (cy + 10) if prompt else cy
+        text_x = 54
         title = canvas.create_text(
             text_x, title_y, anchor="w", text="", fill=TEXT, font=dv.font(14, 500))
         sep = canvas.create_text(
@@ -6113,16 +6120,17 @@ class AppWindow:
             dust_base.append(alpha)
             dust_home.append((dx, dy, r))
 
-        # Action pills (prompt toasts only). Double-bezel: outer shell + core.
+        # Action pills on the right — same strip as status, not a second row.
         btn_items = []
         if prompt:
-            by = h - 52
-            bx = 28
+            bh = dv.TOAST_PROMPT_BTN_H
             specs = [
                 ("Record", dv.TOAST_PROMPT_PRIMARY_W, True),
                 ("Not now", dv.TOAST_PROMPT_SECONDARY_W, False),
             ]
-            bh = dv.TOAST_PROMPT_BTN_H
+            total_bw = sum(bw for _l, bw, _p in specs) + dv.TOAST_PROMPT_BTN_GAP * (len(specs) - 1)
+            bx = w - dv.TOAST_TEXT_INSET - total_bw
+            by = (h - bh) / 2
             for i, (label, bw, primary) in enumerate(specs):
                 tag = f"toast_btn_{i}"
                 shell, core, text = self._toast_draw_action_pill(
