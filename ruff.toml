@@ -31,7 +31,12 @@ line-length = 100
 
 exclude = ["build", "dist", "graphify-out", "__pycache__", "design/ui-v3/_ds",
            # Legacy entry point, superseded by main.py (see CLAUDE.md).
-           "obs_auto_game_folder.py"]
+           "obs_auto_game_folder.py",
+           # Captured material, not source: recovery copies pulled off Alien-PC
+           # and scratch output from the toast capture tools. Unreferenced by
+           # anything tracked, and one file is a fragment that doesn't parse -
+           # which was enough to make `ruff check .` fail on the whole repo.
+           "_alien_toast_scan", "tools/_toast_demo*"]
 
 [lint]
 select = [

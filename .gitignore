@@ -37,3 +37,6 @@ icons/
 # Runtime session log — written on every run, so tracking it dirtied the tree
 # on each launch and published play history to a public repo.
 sessions.jsonl
+
+# Transient gate verdict, written by .cursor/hooks/gate.py on every stop.
+.cursor/handoff/.gate-state.json
