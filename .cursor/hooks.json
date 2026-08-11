@@ -15,6 +15,10 @@
     ],
     "beforeShellExecution": [
       {
+        "command": "python .cursor/hooks/guard-destructive.py",
+        "timeout": 10
+      },
+      {
         "command": "python .cursor/hooks/guard-app-launch.py",
         "timeout": 10
       }

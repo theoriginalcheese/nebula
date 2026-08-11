@@ -6,9 +6,23 @@ stdout. Everything here **fails open** — a broken hook must never wedge an age
 | Script | Event | What it does |
 |--------|-------|--------------|
 | `session-brief.py` | `sessionStart` | Injects the checkout identity (`tools/nebula_identity.py`) and the current gate status as `additional_context`. Only facts that *change* — the static "what's wired" lives in `AGENTS.md`, which Cursor loads for free. |
+| `guard-destructive.py` | `beforeShellExecution` | `deny` for unrecoverable commands, `ask` for merely expensive ones. |
 | `guard-app-launch.py` | `beforeShellExecution` | Denies commands that would launch Nebula or OBS. Four agent files repeat this as prose; this makes it structural. |
 | `gate.py` | `stop`, `subagentStop` | Runs ruff + the read-only token checks. On failure returns `followup_message`, so the agent auto-continues into fixing rather than stopping on a false "done". |
-| `record-usage.py` | `sessionEnd` | Appends a row to `.cursor/handoff/token-ledger.jsonl`. |
+| `record-usage.py` | `sessionEnd` | Appends a row to `.cursor/handoff/token-ledger.jsonl`, enriched from Cursor's own attribution DB. |
+
+## Why destructive_command_guard is not installed
+
+Upstream (5.7k stars) does this better — tree-sitter AST matching, 50+ rule packs.
+Its installer was rejected on inspection, not on principle: it rewrites
+`~/.claude/settings.json`, appends a startup snippet to `.bashrc`/`.zshrc`, and
+configures every agent on the machine. Its own source also notes it leaves the
+native-Windows PowerShell tool unguarded (issue #226) — the shell this machine
+actually uses.
+
+`guard-destructive.py` is a tier-1 regex screen covering the same ground with the
+PowerShell forms included. If you ever want the real thing, install the **binary**
+and add it to `beforeShellExecution` by hand rather than running `install.sh`.
 
 ## Why the gate does not shell out to `tools/lint_tokens.py`
 
@@ -64,8 +78,17 @@ was filling in.
 
 `record-usage.py` writes a row per session, keeping the original column names so
 existing readers still work. `task` is resolved by inverting
-`.cursor/handoff/sessions.json` (which maps task → chat_id). Cost columns stay
-`null`: Cursor does not report spend to hooks, and a number there would be invented.
+`.cursor/handoff/sessions.json` (which maps task → chat_id).
+
+It also joins `~/.cursor/ai-tracking/ai-code-tracking.db` (Cursor's own attribution
+store, keyed by `conversationId` — the same id) to add `ai_authored_hashes`,
+`ai_authored_files` and `ai_models`. Opened read-only and immutable, since Cursor
+holds that file while running.
+
+**Cost columns stay `null` on purpose.** Cursor records *attribution*, not spend —
+there is no token count or dollar figure anywhere on disk. AI-authored volume is
+the honest proxy for what a delegated task actually produced; a cost number here
+would be invented.
 
 ## Notes
 

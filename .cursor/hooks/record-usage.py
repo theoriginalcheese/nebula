@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import os
+import sqlite3
 import sys
 import time
 
@@ -24,6 +25,52 @@ from _common import disabled, emit, project_dir, read_input
 LEDGER = os.path.join(".cursor", "handoff", "token-ledger.jsonl")
 SESSIONS = os.path.join(".cursor", "handoff", "sessions.json")
 GATE_STATE = os.path.join(".cursor", "handoff", ".gate-state.json")
+
+# Cursor's own attribution store. Keyed by conversationId, which is our chat_id.
+TRACKING_DB = os.path.join(
+    os.path.expanduser("~"), ".cursor", "ai-tracking", "ai-code-tracking.db"
+)
+
+
+def ai_output(chat_id: str) -> dict:
+    """How much code Cursor attributes to the agent in this conversation.
+
+    This is the honest proxy for "what did delegating actually produce". Cursor
+    stores attribution, not spend - there is no token or dollar figure anywhere
+    on disk, which is why the cost columns stay null rather than being estimated.
+
+    Opened read-only: Cursor is usually running and holds this file.
+    """
+    blank = {"ai_authored_hashes": None, "ai_authored_files": None, "ai_models": None}
+    if not chat_id or not os.path.isfile(TRACKING_DB):
+        return blank
+    try:
+        uri = f"file:{TRACKING_DB.replace(os.sep, '/')}?mode=ro&immutable=1"
+        conn = sqlite3.connect(uri, uri=True, timeout=2.0)
+        try:
+            row = conn.execute(
+                "SELECT COUNT(*), COUNT(DISTINCT fileName) "
+                "FROM ai_code_hashes WHERE conversationId = ?",
+                (chat_id,),
+            ).fetchone()
+            models = [
+                m for (m,) in conn.execute(
+                    "SELECT DISTINCT model FROM ai_code_hashes "
+                    "WHERE conversationId = ? AND model IS NOT NULL",
+                    (chat_id,),
+                )
+            ]
+        finally:
+            conn.close()
+    except sqlite3.Error:
+        return blank
+    if not row or not row[0]:
+        return blank
+    return {
+        "ai_authored_hashes": row[0],
+        "ai_authored_files": row[1],
+        "ai_models": sorted(models) or None,
+    }
 
 
 def _read_json(path: str) -> dict:
@@ -60,7 +107,7 @@ def build_row(root: str, data: dict) -> dict:
     chars = transcript_size(data.get("transcript_path") or os.environ.get("CURSOR_TRANSCRIPT_PATH"))
     gate = _read_json(os.path.join(root, GATE_STATE))
 
-    return {
+    row = {
         "ts": time.strftime("%Y-%m-%dT%H:%M:%S"),
         "chat_id": chat_id,
         "task": task_for(root, chat_id),
@@ -76,6 +123,8 @@ def build_row(root: str, data: dict) -> dict:
         "final_status": data.get("final_status") or data.get("reason"),
         "is_background_agent": data.get("is_background_agent"),
     }
+    row.update(ai_output(chat_id))
+    return row
 
 
 def append(root: str, row: dict) -> bool:
