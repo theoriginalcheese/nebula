@@ -1,6 +1,12 @@
 ---
-description: Never confuse frozen Nebula.exe with the git source checkout when judging UI (especially toasts)
-alwaysApply: true
+description: >-
+  Full exe-vs-source identity contract: the two install paths, which toast lives
+  where (Tk capsule vs spike DWM card), and which demo/audit tools may judge
+  which process. Load when a UI claim depends on WHICH build you are looking at,
+  when something "looks old" after an edit, or before judging toast style.
+  The live identity banner is injected each session by .cursor/hooks/
+  session-brief.py - load this only when you need the full contract.
+alwaysApply: false
 ---
 
 # Nebula identity — exe vs source
