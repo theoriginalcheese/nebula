@@ -25,6 +25,7 @@ Nothing here is in context until you ask for it. Reach for it by name.
 
 | Need | Load |
 |---|---|
+| Hard work with more than one sensible approach — implementation, UI, refactor, architecture | skill **`best-of-n-specialists`** — three specialists in parallel worktrees, `delegate.py verify` picks the winner |
 | Building/changing UI, or hunting a visual defect | skill **`nebula-ui`** — authority order, hard rules, screenshot loop |
 | A pane looks right but feels cheap; adding transition/hover/focus/empty states | skill **`nebula-polish`** — the checklist a screenshot can't verify |
 | "Is this the exe or the checkout?"; something looks stale after an edit | rule **`nebula-identity`** — full exe-vs-source contract |
