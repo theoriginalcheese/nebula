@@ -109,7 +109,9 @@ def main(argv: list[str]) -> int:
     print(f"\nMCP - {len(servers)} server(s), tool schemas load every turn")
     for name, where in servers:
         print(f"          {name}  (from ~/{where})")
-    print("  Measure precisely with the server's own list_tools; ask-question was 2740 ch (~685 tok).")
+    print("  ask-question: 2265 ch (~566 tok) on the wire after schema trimming;")
+    print("  was 2951 ch (~737 tok) before pydantic titles and envelope outputSchemas")
+    print("  were stripped. Re-measure with that server's own tools/list.")
 
     print("\nDEFERRED - costs nothing until pulled in")
     for rel, n, trigger in on_demand:
