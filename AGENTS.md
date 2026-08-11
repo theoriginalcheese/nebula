@@ -82,4 +82,8 @@ Arguments pass straight through: `agent.py audit --task t013`. It is a lazy
 dispatcher over the existing scripts, not a wrapper around them — the hooks still
 call those scripts directly, so nothing on the hot path got slower.
 
+**Operator's guide** (for Anthony, not for you — it is a private artifact and an
+agent cannot fetch it): https://claude.ai/code/artifact/aae886ad-ad7f-4776-bed4-9bc6b5e8d7f5
+Everything in it that an agent needs is already in this file. Don't try to read it.
+
 Durable notes go to the Obsidian vault, never into this repo.
