@@ -1,0 +1,5 @@
+Lean toast refs for Claude Design (icon brief).
+Source checkout: C:\Users\antho\nebula
+Shots copied from tools/_toast_demo/ (Tk capsule gallery look).
+Shipping runtime toast: spike/web (WebView2) via main.py — judge icons against these frames + DWM ~8px round honesty.
+Do NOT judge against a separate frozen exe folder; on this machine C:\Users\antho\Nebula is the same checkout (case-insensitive path).

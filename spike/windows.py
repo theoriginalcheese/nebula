@@ -27,6 +27,7 @@ import atexit
 import ctypes
 import json
 import os
+import random
 import threading
 import time
 
@@ -41,7 +42,11 @@ WEB = os.path.join(HERE, "web")
 TOAST_HTML = os.path.join(WEB, "toast.html")
 OVERLAY_HTML = os.path.join(WEB, "overlay.html")
 
-TOAST_W, TOAST_H = 336, 88
+# Match the Tk capsule tokens (design C). Outer silhouette is still DWM's
+# ~8px round — WebView2 cannot do a true H/2 chromakey pill (FINDINGS.md) —
+# but width/height/layout/dust track obsauto/design_v3.py TOAST_*.
+TOAST_W, TOAST_H = dv.TOAST_W, dv.TOAST_H
+TOAST_PROMPT_W, TOAST_PROMPT_H = dv.TOAST_PROMPT_W, dv.TOAST_PROMPT_H
 
 # Segoe Fluent Icons — same verified codepoints as gui.py, keyed by Phosphor name.
 _ICON_CODEPOINTS = {
@@ -110,7 +115,7 @@ def _monitor_scale(monitor_handle):
         return 1.0
 
 
-def _toast_place(right, bottom, monitor_handle):
+def _toast_place(right, bottom, monitor_handle, prompt=False):
     """Logical x/y for ``create_window``, on the PRIMARY monitor.
 
     pywebview multiplies ``x``/``y`` by the DPI of the monitor the window is
@@ -132,8 +137,10 @@ def _toast_place(right, bottom, monitor_handle):
     rect = (ctypes.c_long * 4)()
     ctypes.windll.user32.SystemParametersInfoW(0x0030, 0, ctypes.byref(rect), 0)
     scale = _primary_scale()
-    x = (rect[2] / scale) - TOAST_W - dv.TOAST_MARGIN
-    y = (rect[3] / scale) - TOAST_H - dv.TOAST_MARGIN
+    w = TOAST_PROMPT_W if prompt else TOAST_W
+    h = TOAST_PROMPT_H if prompt else TOAST_H
+    x = (rect[2] / scale) - w - dv.TOAST_MARGIN
+    y = (rect[3] / scale) - h - dv.TOAST_MARGIN
     return x, y
 
 
@@ -178,41 +185,38 @@ def _primary_scale():
 
 
 def _make_transparent(window, host=None):
-    """Key the window's fill out, so the page's rounded corners really are
-    transparent rather than sitting in a coloured box.
+    """Round the HWND via DWM and kill the grey frame border.
 
-    Four approaches, in the order they were tried against a real toast:
+    pywebview ``shadow=True`` calls ``DwmExtendFrameIntoClientArea`` with a 1px
+    margin so DWM will round a frameless popup — that also paints a visible
+    hairline window border (≈#383838 on the desktop composite). The page used
+    to add a second grey enclosure (shell stroke + rounded core); that is gone
+    in toast.css. This clears the *host* stroke while keeping DWM's round.
 
-    1. ``background_color`` alone - the rectangular window paints GROUND_DEEP
-       behind the rounded card: a near-black box.
-    2. pywebview ``transparent=True`` - worse, a *white* box. That path sets
-       the WebView2 background transparent but takes the ``else`` branch that
-       would have set the form's BackColor, so the form keeps the WinForms
-       default.
-    3. ``SetWindowRgn`` with a rounded region - ``GetWindowRgn`` confirmed a
-       COMPLEX region of the right size was applied and the box was still
-       there. WebView2 draws through DirectComposition, which a GDI window
-       region does not clip.
-    4. DWM's ``DWMWA_WINDOW_CORNER_PREFERENCE`` - no effect. DWM does not round
-       frameless ``WS_POPUP`` windows; it rounds windows it draws a frame for.
-
-    What works is (2) done properly: WebView2's background transparent *and*
-    the form's BackColor set to a colour that is then keyed out. Black is safe
-    here - the darkest thing the toast actually paints is GROUND_DEEP
-    (16, 14, 27), so nothing real is lost to the key.
+    ``transparent=True`` is still avoided: pywebview's path leaves a white form
+    BackColor. Full chromakey remains the FINDINGS limit for a true H/2 pill.
     """
     def apply():
         try:
             hwnd = int(window.native.Handle.ToInt64())
-            pref = ctypes.c_int(2)   # DWMWCP_ROUND
             # Plain Python ints for hwnd/attr — wrapping them in c_void_p /
             # c_int blows up on some Python 3.12 builds with
             # TypeError: 'c_long' object cannot be interpreted as an integer.
+            round_pref = ctypes.c_int(2)          # DWMWCP_ROUND
             ctypes.windll.dwmapi.DwmSetWindowAttribute(
-                hwnd, 33, ctypes.byref(pref), ctypes.sizeof(pref))
+                hwnd, 33, ctypes.byref(round_pref), ctypes.sizeof(round_pref))
+            # DWMWA_BORDER_COLOR + DWMWA_COLOR_NONE — no drawn window border.
+            no_border = ctypes.c_int(0xFFFFFFFE)
+            ctypes.windll.dwmapi.DwmSetWindowAttribute(
+                hwnd, 34, ctypes.byref(no_border), ctypes.sizeof(no_border))
+            # DWMWA_SYSTEMBACKDROP_TYPE = NONE — pywebview's dark-theme path
+            # sets Mica on the form; a toast must not pick up that wash.
+            no_backdrop = ctypes.c_int(1)         # DWMSBT_NONE
+            ctypes.windll.dwmapi.DwmSetWindowAttribute(
+                hwnd, 38, ctypes.byref(no_backdrop), ctypes.sizeof(no_backdrop))
         except Exception as exc:
             if host is not None and hasattr(host, "_log"):
-                host._log("[Windows] DWM round failed: %s" % exc)
+                host._log("[Windows] DWM chrome failed: %s" % exc)
 
     _run_on_gui(host, apply)
 
@@ -609,12 +613,24 @@ def _toast_content(event, display_name, details):
             size = details.get("size")
             if size is not None:
                 parts.append(_format_bytes(size))
+    # Dust motion matches Tk: event-flavoured style + fresh amplitude per show
+    # so the same event never repeats the identical dance.
+    style = dv.TOAST_DUST_STYLE.get(event, "drift")
+    # Occasional spice (same hybrid feel as gui._toast_seed_dust).
+    if random.random() < 0.08:
+        style = random.choice(tuple(set(dv.TOAST_DUST_STYLE.values())))
+    anchor = dv.TOAST_DUST_ANCHOR.get(style, "left")
+    amp = random.uniform(0.65, 1.15)
     return {
         "tint": tint_name,
         "glyph": glyph,
         "title": title,
         "sub": display_name or "",
-        "detail": "  ·  ".join(parts),
+        "detail": " · ".join(parts),
+        "event": event,
+        "dust_style": style,
+        "dust_anchor": anchor,
+        "dust_amp": round(amp, 3),
     }
 
 
@@ -631,12 +647,17 @@ class ToastApi:
         return {
             "w": TOAST_W,
             "h": TOAST_H,
+            "prompt_w": TOAST_PROMPT_W,
+            "prompt_h": TOAST_PROMPT_H,
             "life_ms": dv.TOAST_LIFE_MS,
+            "prompt_life_ms": dv.TOAST_PROMPT_LIFE_MS,
             "drain_h": dv.TOAST_DRAIN_H,
             "margin": dv.TOAST_MARGIN,
             "in_ms": dv.TOAST_IN_MS,
             "in_rise": dv.TOAST_IN_RISE,
             "out_ms": dv.TOAST_OUT_MS,
+            # Constellation homes from design_v3 — JS seeds motion per show.
+            "dust": [list(spec) for spec in dv.TOAST_DUST],
         }
 
     def consume_pending(self):
@@ -651,11 +672,16 @@ class ToastApi:
     def on_expired(self):
         self._ctl._on_expired()
 
+    def action(self, index):
+        self._ctl._on_action(index)
+
 
 class ToastController:
     """One toast for the process life — replace in place, never a stack."""
 
     TITLE = "Nebula Toast"
+    # How long after ready/push we insist the DOM has visible painted copy.
+    _PAINT_CHECK_MS = 700
 
     def __init__(self, host):
         self._host = host
@@ -664,13 +690,26 @@ class ToastController:
         self._ready = threading.Event()
         self._pending = None
         self._alive = False
+        # Bumped on every replace. Expire must not tear down a newer show.
+        self._generation = 0
+        self._showing = False
+        self._prompt = False
+        self._action_callbacks = []
+        self._on_timeout = None
 
-    def replace(self, event, display_name, details=None):
+    def replace(self, event, display_name, details=None, actions=None,
+                on_timeout=None):
         try:
             content = _toast_content(event, display_name, details)
         except Exception as exc:
             self._log("[Toast] content failed: %s" % exc)
             return
+        action_list = list(actions or [])
+        # JS only needs labels; callbacks stay in Python.
+        content["actions"] = [label for label, _cb in action_list]
+        content["prompt"] = bool(action_list) or event == "prompt"
+        self._action_callbacks = [cb for _label, cb in action_list]
+        self._on_timeout = on_timeout
         # Posted, not blocking. The first toast of a session is the one that
         # builds the window, and doing that inside a synchronous Invoke pins
         # the GUI thread for the whole of WebView2's construction - the app
@@ -680,11 +719,19 @@ class ToastController:
         _run_on_gui(self._host, lambda: self._replace_gui(content), wait=False)
 
     def _replace_gui(self, content):
-        self._pending = content
+        self._generation += 1
+        self._showing = True
         if self._window is None:
+            self._pending = content
             self._create()
         elif self._ready.is_set():
+            # Push consumes content now — leave _pending clear so a concurrent
+            # expire does not think a newer show is still waiting and no-op.
+            self._pending = None
             self._push(content)
+        else:
+            # First boot still loading — JS consume_pending / ready will paint.
+            self._pending = content
 
     def _take_pending(self):
         out = self._pending
@@ -695,9 +742,18 @@ class ToastController:
         # Approximate only - correct on a single-DPI desktop, and superseded by
         # _reposition()'s physical placement on the first push either way.
         # create_window has no physical-pixel option, so this is as good as the
-        # starting point gets.
+        # starting point gets. Start at status size; _push resizes for prompts.
         left, top, right, bottom, monitor = _toast_workarea()
-        x, y = _toast_place(right, bottom, monitor)
+        x, y = _toast_place(right, bottom, monitor, prompt=False)
+
+        # Kill foreign toast HWNDs left by a crashed --toast-demo before we
+        # mint ours — otherwise the user stares at a blank zombie forever.
+        try:
+            closed = reclaim_orphan_windows()
+            if closed:
+                self._log("[Toast] reclaimed %d orphan window(s)" % len(closed))
+        except Exception as exc:
+            self._log("[Toast] reclaim failed: %s" % exc)
 
         win = webview.create_window(
             self.TITLE,
@@ -707,8 +763,9 @@ class ToastController:
             height=TOAST_H,
             # pywebview defaults min_size=(200, 100) and the winforms backend
             # applies it as MinimumSize, so an 88px-tall toast was silently
-            # clamped to 100 - an opaque, always-on-top dead band below the
+            # clamped to 100 - an opaque always-on-top dead band below the
             # card, on a frameless window with no way to see where it ends.
+            # Floor at status size; prompt grows via resize() on push.
             min_size=(TOAST_W, TOAST_H),
             x=x,
             y=y,
@@ -721,6 +778,8 @@ class ToastController:
             # gives DWM a frame to own - the documented precondition for
             # DWMWA_WINDOW_CORNER_PREFERENCE having any effect. A bare
             # frameless popup is not rounded by DWM at all.
+            # Combo balanced soft lift also rides this OS shadow: CSS outer
+            # drop clips at the card-sized HWND (see toast.css header).
             shadow=True,
             focus=False,
             background_color=dv.GROUND_DEEP,
@@ -749,17 +808,27 @@ class ToastController:
         if self._pending:
             self._push(self._pending)
             self._pending = None
+        self._schedule_paint_check(self._generation)
 
     def _push(self, content):
         if not self._window or not self._alive:
             return
+        gen = self._generation
+        prompt = bool(content.get("prompt") or content.get("actions"))
+        self._prompt = prompt
 
         def run():
             try:
+                if gen != self._generation or not self._showing:
+                    return
+                self._resize_for_mode(prompt)
                 payload = json.dumps(content, ensure_ascii=False)
                 self._window.evaluate_js("window.toastReplace(%s)" % payload)
+                if gen != self._generation or not self._showing:
+                    return
                 self._reposition()
                 self._window.show()
+                self._schedule_paint_check(gen)
             except Exception as exc:
                 self._log("[Toast] push failed: %s" % exc)
 
@@ -768,6 +837,67 @@ class ToastController:
         # there. See _off_gui.
         _off_gui(run)
 
+    def _resize_for_mode(self, prompt):
+        """Grow/shrink the warm toast HWND between status and prompt sizes."""
+        if not self._window:
+            return
+        w = TOAST_PROMPT_W if prompt else TOAST_W
+        h = TOAST_PROMPT_H if prompt else TOAST_H
+        try:
+            if hasattr(self._window, "resize"):
+                self._window.resize(w, h)
+            else:
+                self._window.width = w
+                self._window.height = h
+        except Exception as exc:
+            self._log("[Toast] resize failed: %s" % exc)
+
+    def _schedule_paint_check(self, generation):
+        """Fail-visible: if the DOM never painted copy, force a rescue paint."""
+        delay = self._PAINT_CHECK_MS / 1000.0
+
+        def check():
+            time.sleep(delay)
+            if generation != self._generation or not self._showing:
+                return
+            win = self._window
+            if not win or not self._alive or not self._ready.is_set():
+                return
+
+            def probe():
+                try:
+                    raw = win.evaluate_js(
+                        "(function(){var t=document.getElementById('toast');"
+                        "var cs=t?getComputedStyle(t):null;"
+                        "var title=(document.getElementById('title')||{}).textContent||'';"
+                        "return JSON.stringify({"
+                        "ok:!!(t&&cs&&parseFloat(cs.opacity)>0.2&&title.trim().length>0),"
+                        "opacity:cs?cs.opacity:'',"
+                        "title:title,"
+                        "classes:t?t.className:''});})()"
+                    )
+                    data = json.loads(raw) if isinstance(raw, str) else (raw or {})
+                except Exception as exc:
+                    self._log("[Toast] paint check failed: %s" % exc)
+                    return
+                if data.get("ok"):
+                    return
+                self._log(
+                    "[Toast] blank surface detected (opacity=%s title=%r) — forcing visible"
+                    % (data.get("opacity"), data.get("title"))
+                )
+                try:
+                    win.evaluate_js(
+                        "if(window.toastForceVisible) window.toastForceVisible();"
+                    )
+                    win.show()
+                except Exception as exc:
+                    self._log("[Toast] force-visible failed: %s" % exc)
+
+            _off_gui(probe)
+
+        threading.Thread(target=check, name="ToastPaintCheck", daemon=True).start()
+
     def _reposition(self):
         if not self._window:
             return
@@ -775,7 +905,7 @@ class ToastController:
         # pywebview scaling. Going around it with SetWindowPos was the thing
         # that kept getting virtualised.
         left, top, right, bottom, monitor = _toast_workarea()
-        x, y = _toast_place(right, bottom, monitor)
+        x, y = _toast_place(right, bottom, monitor, prompt=self._prompt)
         try:
             self._window.move(x, y)
             self._window.on_top = True
@@ -787,22 +917,66 @@ class ToastController:
         if host and hasattr(host, "show"):
             host.call_soon(host.show)
 
+    def _on_action(self, index):
+        try:
+            i = int(index)
+        except (TypeError, ValueError):
+            return
+        cbs = list(self._action_callbacks or [])
+        if i < 0 or i >= len(cbs):
+            return
+        callback = cbs[i]
+        # Clear timeout so a late expire doesn't also dismiss after Accept.
+        self._on_timeout = None
+        self._action_callbacks = []
+        if callback:
+            try:
+                self._host.call_soon(callback) if hasattr(self._host, "call_soon") else callback()
+            except Exception as exc:
+                self._log("[Toast] Action failed: %s" % exc)
+        # Hide after the action — Accept/Dismiss both consume the slot.
+        self._on_expired()
+
     def _on_expired(self):
+        # Capture generation at expire request time. A newer replace must win —
+        # destroying/hiding mid-replace left a blank HWND zombie (opacity 0,
+        # no tick chain) that --toast-demo kept on screen forever.
+        gen = self._generation
+        timeout_cb = self._on_timeout
+        self._on_timeout = None
+        self._action_callbacks = []
+
         def expire():
-            self._alive = False
-            self._ready.clear()
+            if gen != self._generation:
+                return
+            self._showing = False
+            if timeout_cb:
+                try:
+                    timeout_cb()
+                except Exception as exc:
+                    self._log("[Toast] Timeout action failed: %s" % exc)
+            # Hide, do not destroy. Recreating WebView2 is what produced the
+            # blank "Nebula Toast" chrome; one warm slot is the frame-2i rule.
             if self._window:
                 try:
-                    self._window.destroy()
+                    self._window.hide()
                 except Exception:
                     pass
-            self._window = None
+            # Shrink back to status size so the next non-prompt event isn't
+            # sitting in a tall empty HWND.
+            self._prompt = False
+            try:
+                self._resize_for_mode(False)
+            except Exception:
+                pass
 
         _run_on_gui(self._host, expire)
 
     def destroy(self):
         def teardown():
             self._alive = False
+            self._showing = False
+            self._ready.clear()
             if self._window:
                 try:
                     self._window.destroy()
@@ -1168,8 +1342,12 @@ class NebulaWindows:
         self._liveness = _LivenessWatch(self)
         atexit.register(self._atexit_teardown)
 
-    def toast_replace(self, event, display_name, details=None):
-        self.toast.replace(event, display_name, details)
+    def toast_replace(self, event, display_name, details=None, actions=None,
+                      on_timeout=None):
+        self.toast.replace(
+            event, display_name, details,
+            actions=actions, on_timeout=on_timeout,
+        )
 
     def overlay_show(self):
         self.overlay.show()

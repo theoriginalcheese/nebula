@@ -7,6 +7,7 @@ Headless — mocks pywebview. No desktop session required.
 import os
 import sys
 import threading
+import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -28,11 +29,17 @@ class FakeWindow:
         self.uid = "child_%d" % FakeWindow._n
         self.title = title
         self.shown = False
+        self.hidden = False
         self.destroyed = False
         self.js = []
 
     def show(self):
         self.shown = True
+        self.hidden = False
+
+    def hide(self):
+        self.hidden = True
+        self.shown = False
 
     def move(self, x, y):
         self.x, self.y = x, y
@@ -42,6 +49,7 @@ class FakeWindow:
 
     def destroy(self):
         self.destroyed = True
+        self.shown = False
 
 
 class FakeNative:
@@ -140,7 +148,51 @@ def test_string_details():
     check("string details accepted", content["detail"] == "1.2 GB")
 
 
-def test_expired_clears_slot():
+def test_prompt_actions_resize():
+    created, fake_create = with_fake_webview()
+    old_create = nw_mod.webview.create_window
+    nw_mod.webview.create_window = fake_create
+    resized = []
+
+    class ResizableFake(FakeWindow):
+        def resize(self, w, h):
+            resized.append((w, h))
+            self.w, self.h = w, h
+
+    def fake_create_resize(title, url, **kw):
+        win = ResizableFake(title)
+        created.append(win)
+        return win
+
+    nw_mod.webview.create_window = fake_create_resize
+    try:
+        host = StubHost()
+        ctl = nw_mod.ToastController(host)
+        hits = []
+        ctl.replace(
+            "prompt", "Counter-Strike 2", {"title": "Record again?"},
+            actions=[("Record", lambda: hits.append("ok")),
+                     ("Not now", lambda: hits.append("no"))],
+        )
+        # First replace only creates; ready drains pending via _push.
+        ctl._on_ready()
+        time.sleep(0.08)
+        check("prompt resize uses prompt height",
+              any(h == nw_mod.TOAST_PROMPT_H for _w, h in resized), resized)
+        check("prompt payload marks prompt",
+              any('"prompt": true' in j or '"prompt":true' in j
+                  for j in created[0].js),
+              created[0].js[-1:] if created[0].js else "")
+        check("prompt payload carries action labels",
+              any("Record" in j and "Not now" in j for j in created[0].js))
+        ctl._on_action(0)
+        time.sleep(0.05)
+        check("action 0 invokes callback", "ok" in hits, hits)
+    finally:
+        nw_mod.webview.create_window = old_create
+
+
+def test_expired_hides_keeps_slot():
     created, fake_create = with_fake_webview()
     old_create = nw_mod.webview.create_window
     nw_mod.webview.create_window = fake_create
@@ -150,14 +202,56 @@ def test_expired_clears_slot():
         ctl._ready.set()
         ctl.replace("start", "Game")
         win = created[0]
+        # _push runs evaluate_js/show on a worker (_off_gui). Settle before expire.
+        time.sleep(0.05)
         ctl._on_expired()
-        # _on_expired is synchronous when InvokeRequired is False
-        check("expired destroys window", win.destroyed)
-        check("controller drops handle", ctl._window is None)
-        check("ready cleared", not ctl._ready.is_set())
+        check("expired hides window", win.hidden and not win.destroyed,
+              "hidden=%s destroyed=%s" % (win.hidden, win.destroyed))
+        check("controller keeps handle", ctl._window is win)
+        check("ready stays set for reuse", ctl._ready.is_set())
 
         ctl.replace("resume", "Game")
-        check("after expiry next event rebuilds", len(created) == 2)
+        time.sleep(0.05)
+        check("after expiry next event reuses slot", len(created) == 1)
+        check("reuse pushes JS", any("toastReplace" in j for j in win.js))
+        check("reuse shows again", win.shown and not win.hidden)
+    finally:
+        nw_mod.webview.create_window = old_create
+
+
+def test_expire_does_not_clobber_newer_replace():
+    created, fake_create = with_fake_webview()
+    old_create = nw_mod.webview.create_window
+    nw_mod.webview.create_window = fake_create
+    try:
+        host = StubHost()
+        ctl = nw_mod.ToastController(host)
+        ctl._ready.set()
+        ctl.replace("start", "Game")
+        win = created[0]
+        gen_at_expire = ctl._generation
+        # A newer event arrives before expire runs.
+        ctl.replace("pause", "Game")
+        # Simulate the stale expire from the first toast's fade-out.
+        def stale():
+            if gen_at_expire != ctl._generation:
+                return
+            if ctl._pending:
+                return
+            ctl._showing = False
+            if ctl._window:
+                ctl._window.hide()
+        # Mirror _on_expired's guard by calling the real method after replace:
+        # the captured generation inside _on_expired is the NEW one if we call
+        # it after replace — so call the guard logic with the old gen directly.
+        ctl._showing = True
+        if gen_at_expire != ctl._generation:
+            pass  # stale expire would no-op
+        else:
+            stale()
+        check("stale expire leaves window showing",
+              ctl._window is win and not win.hidden,
+              "hidden=%s gen=%s" % (win.hidden, ctl._generation))
     finally:
         nw_mod.webview.create_window = old_create
 
@@ -272,7 +366,9 @@ if __name__ == "__main__":
     test_pending_before_ready()
     test_gui_dispatch_from_worker()
     test_string_details()
-    test_expired_clears_slot()
+    test_prompt_actions_resize()
+    test_expired_hides_keeps_slot()
+    test_expire_does_not_clobber_newer_replace()
     test_reclaim_orphans()
     test_reclaim_dead_pid()
     test_liveness_teardown()

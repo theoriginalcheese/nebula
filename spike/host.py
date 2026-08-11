@@ -937,21 +937,24 @@ class NebulaHost:
                 title = "New game detected"
                 sub = "Record %s?" % (n or b)
             self._log("[Monitor] Prompt: %s (%s)" % (sub, r))
-            # v4 toast is informational today; Accept is the hero Record button
-            # (which clears hold-off via _transport_done). Dismiss = Not now
-            # via a short-lived prompt toast that also offers Not now by
-            # timing out into a skip.
+
+            def accept():
+                if self.monitor:
+                    self.monitor.accept_record_prompt()
+                self._poll_now()
+
+            def dismiss():
+                if self.monitor:
+                    self.monitor.dismiss_record_prompt(b)
+
             try:
                 self._windows.toast_replace(
-                    "prompt", sub, {"title": title})
+                    "prompt", sub, {"title": title},
+                    actions=[("Record", accept), ("Not now", dismiss)],
+                    on_timeout=dismiss,
+                )
             except Exception as exc:
                 self._log("[Toast] %s" % exc)
-            # Auto-skip if they ignore it for the prompt life — keeps the
-            # monitor from re-firing every debounce. They can still hit Record.
-            def skip_later():
-                if self.monitor and self.monitor._hold_off_prompted == b:
-                    self.monitor.dismiss_record_prompt(b)
-            threading.Timer(30.0, lambda: self.call_soon(skip_later)).start()
 
         self.call_soon(show)
 

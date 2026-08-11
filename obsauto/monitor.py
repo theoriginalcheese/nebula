@@ -12,6 +12,12 @@ On a change, we stop whatever OBS is currently recording and, if there's a
 new target, create its folder, retarget the shared dynamic Game Capture
 source at the right window, and start a fresh recording. This covers
 game-switch, game-close, and idle-pause/resume with one piece of logic.
+
+Exception: while Discord has an *active voice/video call* (see
+``discord_detect.discord_voice_active``), a game switch does **not** stop the
+recording. Capture is retargeted in place and ``SetRecordDirectory`` points at
+the new game's folder for any subsequent segment OBS opens. When the call ends
+and no game is in focus, idle/stop behaviour resumes as usual.
 """
 
 import ctypes
@@ -35,6 +41,7 @@ except ImportError:  # pragma: no cover
     win32process = None
 
 from .obs_client import OBSError
+from . import discord_detect
 from . import session_detect
 from .audio_detect import AudioKeepAlive
 
@@ -568,8 +575,57 @@ class Monitor:
         except OBSError as e:
             self.log(f"[OBS] Failed to retarget game capture: {e}")
 
-    def _apply_target(self, target):
+    def _retarget_live(self, target):
+        """Keep the current recording open; point capture + directory at a new game.
+
+        Used only while Discord has an active call. Does not stop/start OBS, so
+        friends on the call don't hear a hard cut. The open file stays where it
+        was started; SetRecordDirectory affects any later segment OBS opens.
+        """
+        if target is None or target == self._recording_target:
+            return
+        prev = self._recording_target
+        prev_name = prev[2] if prev else "unknown"
+        basename, display_name, folder = target[1], target[2], target[3]
+        os.makedirs(folder, exist_ok=True)
+        try:
+            exe_path, _ = _process_info(target[0])
+            if not exe_path:
+                for _pid, path, _proc, _title, _cls in list_visible_windows():
+                    if path and os.path.basename(path).lower() == basename:
+                        exe_path = path
+                        break
+            if exe_path:
+                self._retarget_game_capture(exe_path)
+        except Exception as e:
+            self.log(f"[OBS] Live retarget capture failed: {e}")
+        try:
+            self.obs.set_record_directory(folder)
+        except OBSError as e:
+            self.log(f"[OBS] Live retarget directory failed: {e}")
+        self._recording_target = target
+        self.on_state(game=display_name, folder=folder)
+        self.log(
+            f"[OBS] Held recording across game switch (Discord call): "
+            f"{prev_name} -> {display_name}"
+        )
+
+    def _output_active(self):
+        """True when OBS is mid-recording (paused counts as still open)."""
+        try:
+            status = self.obs.get_record_status()
+            return bool(status.get("outputActive"))
+        except OBSError:
+            return False
+
+    def _apply_target(self, target, *, hold_recording=False):
         if target == self._recording_target:
+            return
+
+        if (hold_recording and target is not None
+                and self._recording_target is not None
+                and self._output_active()):
+            self._retarget_live(target)
             return
 
         prev_name = self._recording_target[2] if self._recording_target else "unknown"
@@ -670,6 +726,9 @@ class Monitor:
                 idle_for = get_idle_duration()
                 is_idle = idle_for >= self.config["idle_timeout_seconds"]
                 game_still_running = self._current_target_still_running()
+                # Active Discord *call* (not merely Discord open). Holds stop
+                # across game switches and suppresses idle pause while true.
+                in_discord_call = discord_detect.discord_voice_active()
                 is_gated = (
                     game_still_running
                     and self._recording_target is not None
@@ -694,6 +753,10 @@ class Monitor:
                 # between words don't flicker it off.
                 if should_pause and self._audio_keep_alive.active():
                     should_pause = False
+                # Active-call signal is stronger than peaks: a muted call with
+                # nobody talking still shouldn't idle-pause mid-session.
+                if should_pause and in_discord_call:
+                    should_pause = False
 
                 # The GUI "Idle" pill reflects whether recording is actually
                 # being held idle, not just the raw local input timer - so it
@@ -713,7 +776,23 @@ class Monitor:
                 if self._auto_paused:
                     self._ensure_resumed()
 
-                if game_still_running:
+                hold_recording = False
+                if in_discord_call and self._recording_target is not None:
+                    # Prefer the foreground game so a focus switch to Roblox
+                    # while Minecraft is still open actually retargets.
+                    candidate = self._find_new_game_target()
+                    if candidate is not None:
+                        target = candidate
+                        hold_recording = True
+                    elif game_still_running:
+                        target = self._recording_target
+                        hold_recording = True
+                    else:
+                        # Call still live, no game in focus — hold the open
+                        # recording until the call ends (do not stop).
+                        target = self._recording_target
+                        hold_recording = True
+                elif game_still_running:
                     target = self._recording_target
                 elif is_idle:
                     target = None  # idle and the game actually closed - stop for real
@@ -743,7 +822,7 @@ class Monitor:
                             self._pending_target = _UNSET
                             self._pending_count = 0
                         else:
-                            self._apply_target(target)
+                            self._apply_target(target, hold_recording=hold_recording)
                             self._pending_target = _UNSET
                             self._pending_count = 0
             except Exception as e:  # keep the loop alive no matter what

@@ -10,13 +10,21 @@
 <div class="toast" id="toast" aria-live="polite">
   <div class="toast-shell">
     <div class="toast-core">
-      <div class="toast-body">
-        <div class="toast-chip" id="chip"><span class="toast-icon" id="icon"></span></div>
-        <div class="toast-copy">
-          <div class="toast-title" id="title"></div>
-          <div class="toast-sub" id="sub"></div>
-          <div class="toast-detail" id="detail" hidden></div>
+      <div class="toast-row" id="row">
+        <div class="toast-chip-wrap" id="chipWrap" aria-hidden="true">
+          <div class="toast-dust" id="dust"></div>
+          <div class="toast-chip" id="chip"><span class="toast-icon" id="icon"></span></div>
         </div>
+        <div class="toast-copy" id="copy">
+          <span class="toast-title" id="title"></span>
+          <span class="toast-sep" id="sep" hidden>·</span>
+          <span class="toast-sub" id="sub"></span>
+          <span class="toast-detail" id="detail" hidden></span>
+        </div>
+      </div>
+      <div class="toast-actions" id="actions" hidden>
+        <button type="button" class="toast-btn toast-btn-primary" id="btn0" data-i="0">Record</button>
+        <button type="button" class="toast-btn toast-btn-secondary" id="btn1" data-i="1">Not now</button>
       </div>
       <div class="toast-track" aria-hidden="true">
         <div class="toast-drain" id="drain"></div>
