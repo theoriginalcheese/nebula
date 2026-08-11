@@ -339,7 +339,11 @@ def log(entry):
 
 GATE = [
     ("ruff", [sys.executable, "-m", "ruff", "check", "."]),
-    ("token lint", [sys.executable, "tools/lint_tokens.py"]),
+    # Same check the stop hook runs, not tools/lint_tokens.py directly: that
+    # script's check_tokens_in_sync() regenerates spike/web/tokens.css, so the
+    # gate took 35s and *wrote to the tree it was judging*. This mode runs the
+    # read-only checks only - identical findings, ~0.2s, no writes.
+    ("token lint", [sys.executable, ".cursor/hooks/gate.py", "--token-lint"]),
     ("tray tests", [sys.executable, "tests/test_v4_tray.py"]),
     # Added after step 2 landed. A gate that does not include the test a task
     # just wrote cannot verify that task - the step 2 run reported 22/22 and
@@ -470,6 +474,22 @@ def cmd_collect(a):
     ok, _ = verify()
     if not ok:
         print("\nGATE FAILED - reports left in outbox, nothing archived.")
+        return 1
+
+    # `cursor-agent -p` runs no project hooks, and delegate passes --trust
+    # --force, so nothing gated what these sessions actually ran. Replay their
+    # commands through the same guards the GUI lane enforces live.
+    print("\ncommand audit:")
+    audited = 0
+    for name in reports:
+        rc = subprocess.call(
+            [sys.executable, "tools/audit_commands.py", "--task", name[:-3], "--quiet"],
+            cwd=ROOT,
+        )
+        audited = audited or rc
+    if audited:
+        print("\nAUDIT FAILED - a destructive command ran unguarded. "
+              "Reports left in outbox, nothing archived.")
         return 1
 
     for name in reports:

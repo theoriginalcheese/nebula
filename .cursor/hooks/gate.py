@@ -177,6 +177,17 @@ def report(failures: list[tuple[str, str]]) -> str:
 
 
 def main() -> int:
+    if "--token-lint" in sys.argv:
+        # Standalone mode so tools/delegate.py can run the *same* check rather
+        # than shelling out to lint_tokens.py, which takes 35s and rewrites
+        # spike/web/tokens.css. Two lanes, one implementation.
+        status, text = token_lint(project_dir())
+        if status == "pass":
+            print("token lint: clean (read-only checks)")
+            return 0
+        print(text or "token lint: unverified")
+        return 1
+
     if "--selftest" in sys.argv:
         root = project_dir()
         started = time.time()
