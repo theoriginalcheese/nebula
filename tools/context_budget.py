@@ -68,6 +68,27 @@ def skills() -> list:
     return out
 
 
+def agents() -> list:
+    """Subagent routing index: name + description, per agent.
+
+    The model needs these to decide what to delegate to, so they are fixed cost
+    like the skill index - and they are the reason bulk-installing a 100-agent
+    collection is not free.
+    """
+    out = []
+    for base, label in (
+        (os.path.join(os.path.expanduser("~"), ".cursor", "agents"), "user"),
+        (os.path.join(ROOT, ".cursor", "agents"), "project"),
+    ):
+        for path in sorted(glob.glob(os.path.join(base, "*.md"))):
+            text = read(path)
+            head = text.split("---", 2)[1] if text.startswith("---") else text[:300]
+            match = re.search(r"description:\s*(.+?)(?=\n\w+:|\Z)", head, re.S)
+            name = os.path.basename(path)[:-3]
+            out.append((name, label, len(name) + len(match.group(1).strip() if match else "")))
+    return out
+
+
 def mcp_servers() -> list:
     out = []
     for path in MCP_CONFIGS:
@@ -87,13 +108,15 @@ def main(argv: list[str]) -> int:
     always, on_demand = rules()
     sk = skills()
 
+    ag = agents()
     agents_md = len(read(os.path.join(ROOT, "AGENTS.md")))
     rules_always = sum(n for _, n in always)
     skill_index = sum(n for _, _, n, _ in sk)
     skill_bodies = sum(b for _, _, _, b in sk)
     on_demand_total = sum(n for _, n, _ in on_demand)
+    agent_index = sum(n for _, _, n in ag)
 
-    fixed = agents_md + rules_always + skill_index
+    fixed = agents_md + rules_always + skill_index + agent_index
     print("FIXED - in context every turn")
     print(f"  {agents_md:6d} ch  ~{agents_md // 4:5d} tok  AGENTS.md")
     for rel, n in always:
@@ -102,6 +125,14 @@ def main(argv: list[str]) -> int:
     if verbose:
         for name, label, idx, body in sk:
             print(f"           {idx:5d} ch  {name} ({label}, body {body} ch deferred)")
+    print(f"  {agent_index:6d} ch  ~{agent_index // 4:5d} tok  agent index ({len(ag)} subagents)")
+    if verbose:
+        for name, label, idx in ag:
+            print(f"           {idx:5d} ch  {name} ({label})")
+    if ag:
+        each = agent_index // len(ag)
+        print(f"           ~{each} ch each - bulk-installing 100 agents would add "
+              f"~{each * 100 // 4} tok/turn")
     print(f"  {'-' * 6}")
     print(f"  {fixed:6d} ch  ~{fixed // 4:5d} tok   before MCP")
 
