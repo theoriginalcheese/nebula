@@ -101,6 +101,31 @@ def token_lint(root: str) -> tuple[str, str]:
     return "fail", "\n".join(lines)
 
 
+def skills_drift(root: str) -> str:
+    """.claude/skills and .cursor/skills must stay byte-identical.
+
+    Two editable copies of the design contract is the exact drift this repo
+    warns about. Cheap: two small files hashed.
+    """
+    try:
+        spec = importlib.util.spec_from_file_location(
+            "_nebula_sync_skills", os.path.join(root, "tools", "sync_skills.py")
+        )
+        if spec is None or spec.loader is None:
+            return ""
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        missing, differing, extra = mod.drift()
+    except Exception:  # noqa: BLE001 - never break the gate over a helper
+        return ""
+    if not (missing or differing or extra):
+        return ""
+    parts = [f"missing in .cursor/: {f}" for f in missing]
+    parts += [f"differs: {f}" for f in differing]
+    parts += [f"stale in .cursor/: {f}" for f in extra]
+    return "\n  ".join(parts) + "\n  fix: python tools/sync_skills.py --apply"
+
+
 def run_gate(root: str) -> list[tuple[str, str]]:
     """Return [(check name, output)] for the checks that failed."""
     failures = []
@@ -108,6 +133,10 @@ def run_gate(root: str) -> list[tuple[str, str]]:
     code, out = run([python_exe(), "-m", "ruff", "check", "."], cwd=root, timeout=90)
     if code != 0:
         failures.append(("ruff", "\n".join(out.splitlines()[:20]) or "(no output)"))
+
+    drifted = skills_drift(root)
+    if drifted:
+        failures.append(("skill sync", "  " + drifted))
 
     status, text = token_lint(root)
     if status == "fail":
