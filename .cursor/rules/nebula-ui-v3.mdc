@@ -7,9 +7,12 @@ globs:
   - "obsauto/tray_app.py"
   - "obsauto/design_v3.py"
   - "design/ui-v3/**"
+  - "spike/web/**"
+  - "spike/windows.py"
   - "tests/test_views.py"
   - "tests/test_frame_pacing.py"
-alwaysApply: true
+  - "tests/test_design_v3.py"
+alwaysApply: false
 ---
 
 # Nebula UI v3

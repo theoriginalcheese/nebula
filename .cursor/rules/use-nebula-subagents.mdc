@@ -1,0 +1,21 @@
+---
+description: Prefer Nebula/user subagents for gate, UI audit, handoff, verify, debug, tests, PR review
+alwaysApply: true
+---
+
+# Use subagents (Nebula)
+
+When work matches, **Task-delegate** instead of doing everything in the parent:
+
+| Situation | Subagent |
+|-----------|----------|
+| Finishing / "done" / DoD / gate | `nebula-gate` |
+| Toast / capsule / tokens / WebView UI claims | `nebula-ui-auditor` |
+| Handoff inbox / outbox / `t0NN` | `handoff-inbox` |
+| Skeptical verify after any claim | `verifier` (user) |
+| Races, hangs, silent crashes, flaky bugs | `debugger` (user) |
+| Run / fix automated tests | `test-runner` (user) |
+| Branch/PR review before merge | `pr-reviewer` (user) |
+
+Parent keeps orchestration and user talk. Subagents gather evidence and report.
+Do not rubber-stamp a subagent - if gate fails, fix then re-run.
