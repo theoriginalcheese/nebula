@@ -30,6 +30,7 @@ COMMANDS = {
     "sync":   ("tools/sync_skills.py",       ".claude/skills -> .cursor/skills"),
     "ledger": ("tools/backfill_ledger.py",   "recover delegation history"),
     "glyph":  ("tools/verify_glyph.py",      "verify an icon codepoint by rendering it"),
+    "design": ("tools/design_sync.py",       "mirror a Claude Design project into the repo"),
     "gate!":  ("tools/delegate.py",          "full gate incl. test suites (~4.4s)"),
 }
 
@@ -38,6 +39,7 @@ DEFAULT_ARGS = {
     "gate": ["--selftest"],
     "gate!": ["verify"],
     "audit": ["--all", "--quiet"],
+    "design": ["status"],
 }
 
 

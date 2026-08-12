@@ -1,0 +1,49 @@
+{
+  "name": "Nocturne",
+  "palette": {
+    "hue": 230,
+    "band": "dark",
+    "scheme": "mono",
+    "sat": 0.12,
+    "pin": {
+      "bg": "#161826",
+      "surface": "#232532",
+      "accent": "#9184d9"
+    },
+    "bg": "#161826",
+    "surface": "#232532",
+    "text": "#e9e9ed",
+    "accent": "#9184d9",
+    "accent2": "#a7a1db"
+  },
+  "fonts": {
+    "heading": {
+      "family": "Inter",
+      "class": "grotesque",
+      "weights": [
+        400,
+        500,
+        600,
+        700
+      ]
+    },
+    "body": {
+      "family": "Inter",
+      "class": "grotesque",
+      "weights": [
+        400,
+        500,
+        600,
+        700
+      ]
+    },
+    "headingWeight": 500
+  },
+  "density": 0.7,
+  "radius": 8,
+  "layoutStyle": "left",
+  "imageTreatment": "lighten",
+  "photo": "nocturne",
+  "iconSet": "phosphor",
+  "buttonStyle": "outline"
+}
