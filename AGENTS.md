@@ -36,6 +36,21 @@ Nothing here is in context until you ask for it. Reach for it by name.
 `nebula-ui-v3` loads itself automatically when you touch `obsauto/` UI files,
 `design/ui-v3/**` or `spike/web/**`.
 
+## Which model does the work
+
+Anthony's Cursor plan is roughly 5x his Claude plan, so **Claude time is the
+scarce resource and Cursor time is not**. Route accordingly:
+
+| Work | Where |
+|---|---|
+| Bulk implementation, refactors, test fixing, anything well-specified | **Cursor** — `python tools/delegate.py chat --task <id> --say "..."` |
+| Architecture calls, ambiguous design decisions, root-causing a hard bug | Claude |
+| Verification | neither — the gate decides |
+
+One line is enough to delegate; `chat` prepends the full project contract and
+the Definition of done automatically. Prefer sending work to Cursor over doing
+it inline, and say so rather than silently grinding through it.
+
 ## Delegate rather than doing it all inline
 
 `nebula-gate` (Definition of done) · `nebula-ui-auditor` (toast/token/CSS claims) ·

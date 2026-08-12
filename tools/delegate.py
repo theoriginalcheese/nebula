@@ -111,12 +111,21 @@ Traps that have already cost time:
   - A kill filter matching 'app.py' also matches its own command line. Exclude
     os.getpid() or you kill your own shell.
 
-Definition of done - all of these, every task:
-  python -m ruff check .          (or `ruff check .`)
-  python tools/lint_tokens.py
-  python tests/test_v4_tray.py
-  python tests/test_design_v3.py
+Definition of done - both of these, every task:
+  python tools/agent.py gate!                     ruff, token lint, 3 suites
   python tools/shoot.py --out shots/check.png     and LOOK at it
+
+Run `python tools/agent.py` to see every tool available to you. Do NOT call
+tools/lint_tokens.py directly: it regenerates spike/web/tokens.css as a side
+effect and takes 35s. The gate above runs its read-only checks in 0.2s.
+
+You are running headless, which means the repo's hooks do NOT apply to you -
+nothing will stop you. So these are on your honour:
+  - Do not launch Nebula or OBS. Judge from code, or from a process that is
+    already running. `tools/shoot.py --list` first, always.
+  - No `rm -rf`, no force push, no `curl | bash`.
+Every command you run is replayed through the real guards at collect time
+(`tools/audit_commands.py`), and a destructive one fails the task.
 
 Deliberate deviations are fine and must be written down with the reason.
 Never silently "fix" something the spec asked for by removing it.
