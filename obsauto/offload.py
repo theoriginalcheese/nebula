@@ -670,10 +670,14 @@ class Offloader:
             self._log(f"[Offload] Can't create {dest_dir}: {exc}")
             return False
 
+        game_folder = _game_folder_for(
+            src, item.get("game"), self.recording_root)
+
         # Already safely there from a previous run? Verify, then finish.
         if os.path.exists(dest) and self._same_file(src, dest):
             self._log(f"[Offload] Already on NAS, verified: {os.path.basename(src)}")
-            return self._finalize(src, dest)
+            return self._finalize(src, dest, game=game_folder,
+                                  sha256=self._hash(src))
 
         part = dest + ".part"
         self._cleanup(part)
@@ -702,11 +706,19 @@ class Offloader:
         verify = "SSH" if self._ssh_host() and self._unix_root() else "local"
         self._log(f"[Offload] Verified on NAS via {engine}/{verify}: "
                   f"{os.path.basename(src)} -> {dest_dir}")
-        return self._finalize(src, dest)
+        return self._finalize(src, dest, game=game_folder, sha256=src_hash)
 
-    def _finalize(self, src, dest):
+    def _finalize(self, src, dest, game="", sha256=""):
         """Copy is verified present on the NAS. In move mode, and only now, the
         local original may be removed."""
+        # Index first — so move-mode local delete cannot erase the listing.
+        try:
+            from .clip_catalog import ClipCatalog
+            ClipCatalog(self._config, on_log=self._log).record_offload(
+                src, dest, game=game, sha256=sha256 or "")
+        except Exception as exc:
+            # Index failure must never undo a verified NAS copy or block move.
+            self._log("[Offload] Clip index update failed: %s" % exc)
         if self.mode == "move":
             try:
                 os.remove(src)

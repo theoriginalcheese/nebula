@@ -163,6 +163,82 @@ def purge(recording_root, clip_path):
             pass
 
 
+# ---- APP_DIR posters for NAS / remote rows (on-demand, one frame) --------
+POSTER_DIRNAME = "clip_posters"
+
+
+def _poster_safe_name(rel: str) -> str:
+    rel = (rel or "").replace("\\", "/").strip("/")
+    safe = []
+    for ch in rel:
+        if ch.isalnum() or ch in "._-":
+            safe.append(ch)
+        elif ch == "/":
+            safe.append("__")
+        else:
+            safe.append("_")
+    name = "".join(safe) or "clip"
+    return name[:180]
+
+
+def poster_path(app_dir, rel):
+    """Single list-row poster under ``APP_DIR/clip_posters``."""
+    if not app_dir or not rel:
+        return ""
+    return os.path.join(app_dir, POSTER_DIRNAME, _poster_safe_name(rel) + ".webp")
+
+
+def have_poster(app_dir, rel):
+    path = poster_path(app_dir, rel)
+    return bool(path) and os.path.isfile(path)
+
+
+def extract_poster(app_dir, rel, clip_path, duration=None):
+    """Pull one mid-clip frame from ``clip_path`` (local or mounted NAS).
+
+    Does not download the whole file into the clip cache — ffmpeg seeks on the
+    source path. Returns the poster path on success, else ``""``.
+    """
+    exe = _tool("ffmpeg")
+    dest = poster_path(app_dir, rel)
+    if not exe or not dest or not clip_path or not os.path.exists(clip_path):
+        return ""
+    if os.path.isfile(dest):
+        return dest
+    if duration is None:
+        duration = duration_of(clip_path)
+    if not duration or duration <= 0:
+        return ""
+    try:
+        os.makedirs(os.path.dirname(dest), exist_ok=True)
+    except OSError:
+        return ""
+    offset = duration * FRAME_OFFSETS[DEFAULT_FRAME]
+    result = _run([
+        exe, "-y", "-loglevel", "error",
+        "-ss", f"{offset:.3f}", "-i", clip_path,
+        "-frames:v", "1", "-vf", f"scale={THUMB_W}:-1",
+        "-quality", str(WEBP_QUALITY), dest,
+    ], timeout=60)
+    if result and result.returncode == 0 and os.path.isfile(dest):
+        return dest
+    try:
+        if os.path.isfile(dest):
+            os.remove(dest)
+    except OSError:
+        pass
+    return ""
+
+
+def purge_poster(app_dir, rel):
+    path = poster_path(app_dir, rel)
+    try:
+        if path and os.path.isfile(path):
+            os.remove(path)
+    except OSError:
+        pass
+
+
 class ThumbWorker:
     """One background worker, one clip at a time.
 

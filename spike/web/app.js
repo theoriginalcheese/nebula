@@ -8,6 +8,14 @@
 
 const $ = (id) => document.getElementById(id);
 
+(function bootAsleepFromQuery() {
+  try {
+    if (new URLSearchParams(location.search).get("asleep") === "1") {
+      document.documentElement.classList.add("asleep");
+    }
+  } catch (_) { /* file:// */ }
+})();
+
 const PANE_META = {
   dashboard: { title: "Dashboard", eyebrow: "Live session",
     actions: [["btn-open-folder", "Open folder"], ["btn-rescan", "Rescan Steam"]] },
@@ -903,6 +911,7 @@ function wirePointer(leanPx) {
   let raf = 0, px = 0, py = 0, lit = null;
 
   document.addEventListener("pointermove", (e) => {
+    if (document.documentElement.classList.contains("asleep")) return;
     px = e.clientX; py = e.clientY;
     const card = e.target.closest(".card, .tile");
     if (card !== lit) {
@@ -1277,6 +1286,46 @@ function renderHero(d) {
   }).join("");
 }
 
+/* OBS still in the 16:9 tile. Cover-fit so the captured game fills the
+   preview (no letterbox). Seq 0 / missing URI = honest placeholder, never a
+   generated frame. Fetched only when seq changes so snapshot stays small. */
+let lastPreviewSeq = 0;
+async function applyPreviewStill(h) {
+  const tile = $("hero-preview");
+  if (!tile) return;
+  const seq = (h && h.preview_seq) || 0;
+  if (!seq) {
+    lastPreviewSeq = 0;
+    const img = $("preview-still");
+    if (img) img.remove();
+    tile.classList.remove("has-still");
+    return;
+  }
+  if (seq === lastPreviewSeq && $("preview-still")) return;
+  let uri = "";
+  try {
+    const got = await window.pywebview.api.preview_still();
+    uri = (got && typeof got.uri === "string") ? got.uri : "";
+  } catch (_) {
+    return;
+  }
+  if (uri.indexOf("data:image/") !== 0) return;
+  const current = (lastSnapshot && lastSnapshot.hero && lastSnapshot.hero.preview_seq) || 0;
+  if (current !== seq) return;
+  lastPreviewSeq = seq;
+  let img = $("preview-still");
+  if (!img) {
+    img = document.createElement("img");
+    img.id = "preview-still";
+    img.className = "preview-still";
+    img.alt = "";
+    img.setAttribute("aria-hidden", "true");
+    tile.insertBefore(img, tile.firstChild);
+  }
+  if (img.getAttribute("src") !== uri) img.setAttribute("src", uri);
+  tile.classList.add("has-still");
+}
+
 /* Customise mode is a modal editing state, and the 5s poll was rewriting the
    innerHTML of #tiles and #activity underneath it. Two consequences, both of
    which read as "it randomly updates": the Activity block changes height when
@@ -1419,6 +1468,406 @@ function renderClipGames(cp) {
   }).join("");
 }
 
+
+/* ---- On-demand NAS clips (interaction states) -------------------------
+   States a screenshot cannot show: remote → downloading (bytes) → cached,
+   offline, error. Motion is transform/opacity only; chrome exits faster
+   than it enters. */
+
+const CLIP_GLYPH = {
+  play: "\uE768",       /* Play */
+  pause: "\uE769",      /* Pause */
+  download: "\uE896",   /* Download */
+  offline: "\uEBB5",    /* CloudOffline */
+  error: "\uE783",      /* Error */
+  cached: "\uE8F1",     /* Soft landing / saved-ish */
+  cancel: "\uE711",     /* Cancel */
+};
+
+const clipFetchTimers = {};
+const clipFetchUi = {};  // rel -> {state, bytes, total, error}
+
+function formatClipBytes(n) {
+  n = Number(n) || 0;
+  if (n < 1024) return n + " B";
+  if (n < 1048576) return (n / 1024).toFixed(0) + " KB";
+  if (n < 1073741824) return (n / 1048576).toFixed(1) + " MB";
+  return (n / 1073741824).toFixed(2) + " GB";
+}
+
+function clipUiState(c) {
+  const rel = c.rel || c.path || "";
+  const live = clipFetchUi[rel];
+  if (live && live.state === "downloading") return "downloading";
+  if (live && live.state === "paused") return "paused";
+  if (live && live.state === "error") return "error";
+  const loc = c.location || "local";
+  const avail = c.availability || "online";
+  if (loc === "local") return "local";
+  if (loc === "cached") return "cached";
+  if (avail === "offline") return "offline";
+  if (avail === "missing") return "missing";
+  return "remote";
+}
+
+function clipBadge(state) {
+  switch (state) {
+    case "local": return null;
+    case "cached":
+      return { cls: "clip-badge clip-badge-cached", label: "Cached",
+        title: "Temporary local cache — safe to evict" };
+    case "remote":
+      return { cls: "clip-badge clip-badge-remote", label: "NAS",
+        title: "On NAS — Play downloads a temporary copy" };
+    case "downloading":
+      return { cls: "clip-badge clip-badge-downloading", label: "Fetching",
+        title: "Downloading into local cache" };
+    case "paused":
+      return { cls: "clip-badge clip-badge-paused", label: "Paused",
+        title: "Download paused — resume or cancel" };
+    case "offline":
+      return { cls: "clip-badge clip-badge-offline", label: "Offline",
+        title: "Indexed on NAS, but the share is unreachable" };
+    case "missing":
+      return { cls: "clip-badge clip-badge-missing", label: "Missing",
+        title: "Indexed, but the NAS file was not found" };
+    case "error":
+      return { cls: "clip-badge clip-badge-error", label: "Error",
+        title: "Last fetch failed" };
+    default: return null;
+  }
+}
+
+function clipPlayGlyph(state) {
+  if (state === "downloading") return CLIP_GLYPH.pause;
+  if (state === "paused") return CLIP_GLYPH.play;
+  if (state === "offline") return CLIP_GLYPH.offline;
+  if (state === "error" || state === "missing") return CLIP_GLYPH.error;
+  if (state === "remote") return CLIP_GLYPH.download;
+  return CLIP_GLYPH.play;
+}
+
+function clipPlayTitle(state) {
+  if (state === "downloading") return "Pause download";
+  if (state === "paused") return "Resume download";
+  if (state === "offline") return "NAS offline — can't play yet";
+  if (state === "missing") return "Clip missing on NAS";
+  if (state === "error") return "Retry download & play";
+  if (state === "remote") return "Download & play";
+  if (state === "cached") return "Play cached copy";
+  return "Play";
+}
+
+function clipStatusLine(c, state) {
+  const rel = c.rel || "";
+  const live = clipFetchUi[rel];
+  if ((state === "downloading" || state === "paused") && live) {
+    const total = Number(live.total) || 0;
+    const bytes = Number(live.bytes) || 0;
+    const verb = state === "paused" ? "Paused" : "Downloading";
+    if (total > 0) {
+      const pct = Math.max(0, Math.min(100, Math.round(100 * bytes / total)));
+      return `${verb} ${formatClipBytes(bytes)} / ${formatClipBytes(total)} · ${pct}%`;
+    }
+    return bytes ? `${verb} ${formatClipBytes(bytes)}…` : (state === "paused" ? "Paused" : "Starting download…");
+  }
+  if (state === "error" && live && live.error) return live.error;
+  if (state === "offline") return "On NAS · unreachable right now";
+  if (state === "missing") return "Indexed · file not found on NAS";
+  if (state === "remote") return `${c.rel} · Play to fetch`;
+  if (state === "cached") return `${c.rel} · cached locally`;
+  return c.rel || "";
+}
+
+function clipProgressPct(rel) {
+  const live = clipFetchUi[rel];
+  if (!live || (live.state !== "downloading" && live.state !== "paused")) return 0;
+  const total = Number(live.total) || 0;
+  const bytes = Number(live.bytes) || 0;
+  if (total <= 0) return 0;
+  return Math.max(0, Math.min(1, bytes / total));
+}
+
+function updateClipRowProgress(rel) {
+  const row = document.querySelector(`.clip-row[data-rel="${CSS.escape(rel)}"]`);
+  if (!row) return;
+  const live = clipFetchUi[rel] || {};
+  const state = live.state || row.dataset.ui || "";
+  const ui = (state === "downloading" || state === "paused" || state === "error")
+    ? state
+    : (row.dataset.ui || "remote");
+  const sub = row.querySelector(".sub");
+  const badge = row.querySelector(".clip-badge");
+  const play = row.querySelector("[data-open]");
+  const cancel = row.querySelector("[data-cancel-fetch]");
+  const meter = row.querySelector(".clip-fetch-meter > i");
+  const wrap = row.querySelector(".clip-fetch-meter");
+  if (sub) {
+    const stub = { rel, location: row.dataset.location, availability: row.dataset.availability };
+    sub.textContent = clipStatusLine(stub, ui);
+  }
+  if (play) {
+    play.textContent = clipPlayGlyph(ui);
+    play.title = clipPlayTitle(ui);
+    play.classList.toggle("is-fetching", ui === "downloading");
+    play.classList.toggle("is-paused", ui === "paused");
+    play.disabled = false;
+    play.setAttribute("aria-busy", ui === "downloading" ? "true" : "false");
+  }
+  if (cancel) {
+    const show = ui === "downloading" || ui === "paused";
+    cancel.hidden = !show;
+    cancel.disabled = !show;
+  }
+  if (badge) {
+    const b = clipBadge(ui);
+    if (b) {
+      badge.className = b.cls;
+      badge.textContent = b.label;
+      badge.title = b.title;
+      badge.hidden = false;
+    }
+  }
+  const pct = clipProgressPct(rel);
+  if (wrap && meter) {
+    wrap.classList.toggle("is-on", ui === "downloading" || ui === "paused");
+    wrap.classList.toggle("is-paused", ui === "paused");
+    meter.style.transform = "scaleX(" + pct.toFixed(4) + ")";
+  }
+  row.classList.toggle("is-fetching", ui === "downloading");
+  row.classList.toggle("is-paused", ui === "paused");
+  row.classList.toggle("is-fetch-exit", state === "ready");
+  row.dataset.ui = ui === "downloading" || ui === "paused" ? ui : row.dataset.ui;
+}
+
+async function openClip(rel, btn) {
+  if (!rel || !window.pywebview || !window.pywebview.api) return;
+  const row = btn
+    ? btn.closest(".clip-row")
+    : document.querySelector(`.clip-row[data-rel="${CSS.escape(rel)}"]`);
+  const playBtn = (btn && btn.matches("[data-open]"))
+    ? btn
+    : (row && row.querySelector("[data-open]"));
+  const live = clipFetchUi[rel];
+  const ui = (live && (live.state === "downloading" || live.state === "paused"))
+    ? live.state
+    : ((row && row.dataset.ui) || "local");
+
+  if (ui === "downloading") {
+    return pauseClipFetch(rel);
+  }
+  if (ui === "paused") {
+    return resumeClipFetch(rel);
+  }
+  if (ui === "offline") {
+    alert("This clip is on the NAS, which isn't reachable right now.\n\nIt stays in the list — try again when the share is up.");
+    return;
+  }
+  if (ui === "missing") {
+    alert("This clip is indexed but wasn't found on the NAS.\n\nRefresh when the NAS is up to reconcile the list.");
+    return;
+  }
+  if (playBtn) {
+    playBtn.classList.add("is-fetching");
+  }
+  try {
+    const res = await window.pywebview.api.open_clip(rel);
+    if (!res || res.ok === false) {
+      clipFetchUi[rel] = {
+        state: "error",
+        bytes: 0,
+        total: 0,
+        error: (res && res.error) || "Couldn't open clip",
+      };
+      updateClipRowProgress(rel);
+      alert((res && res.error) || "Couldn't open clip");
+      return;
+    }
+    if (res.started) {
+      clipFetchUi[rel] = Object.assign(
+        { state: "downloading", bytes: 0, total: 0, error: "" },
+        res.status || {});
+      updateClipRowProgress(rel);
+      pollClipFetch(rel, playBtn);
+      return;
+    }
+    // Instant local/cached open — clear any prior error chrome quickly.
+    delete clipFetchUi[rel];
+    if (row) {
+      row.classList.add("is-fetch-exit");
+      setTimeout(() => row.classList.remove("is-fetch-exit"), 120);
+    }
+  } catch (err) {
+    alert(String(err && err.message || err || "Couldn't open clip"));
+  } finally {
+    if (playBtn && !clipFetchTimers[rel]) {
+      playBtn.classList.remove("is-fetching");
+    }
+  }
+}
+
+async function pauseClipFetch(rel) {
+  try {
+    const res = await window.pywebview.api.pause_clip_fetch(rel);
+    if (res && res.status) {
+      clipFetchUi[rel] = Object.assign(
+        { state: "paused", bytes: 0, total: 0, error: "" },
+        res.status);
+      updateClipRowProgress(rel);
+    }
+  } catch (err) {
+    alert(String(err && err.message || err || "Couldn't pause"));
+  }
+}
+
+async function resumeClipFetch(rel) {
+  try {
+    const res = await window.pywebview.api.resume_clip_fetch(rel);
+    if (res && res.status) {
+      clipFetchUi[rel] = Object.assign(
+        { state: "downloading", bytes: 0, total: 0, error: "" },
+        res.status);
+      updateClipRowProgress(rel);
+      pollClipFetch(rel);
+    }
+  } catch (err) {
+    alert(String(err && err.message || err || "Couldn't resume"));
+  }
+}
+
+async function cancelClipFetch(rel) {
+  try {
+    await window.pywebview.api.cancel_clip_fetch(rel);
+    delete clipFetchUi[rel];
+    if (clipFetchTimers[rel]) {
+      clearInterval(clipFetchTimers[rel]);
+      delete clipFetchTimers[rel];
+    }
+    const row = document.querySelector(`.clip-row[data-rel="${CSS.escape(rel)}"]`);
+    if (row) {
+      row.classList.remove("is-fetching", "is-paused");
+      const wrap = row.querySelector(".clip-fetch-meter");
+      if (wrap) wrap.classList.remove("is-on", "is-paused");
+      const cancel = row.querySelector("[data-cancel-fetch]");
+      if (cancel) { cancel.hidden = true; cancel.disabled = true; }
+      const play = row.querySelector("[data-open]");
+      if (play) {
+        play.classList.remove("is-fetching", "is-paused");
+        play.textContent = clipPlayGlyph(row.dataset.location === "remote" ? "remote" : "local");
+        play.title = clipPlayTitle(row.dataset.location === "remote" ? "remote" : "local");
+      }
+      const badge = row.querySelector(".clip-badge");
+      if (badge && row.dataset.location === "remote") {
+        badge.className = "clip-badge clip-badge-remote";
+        badge.textContent = "NAS";
+      }
+      const sub = row.querySelector(".sub");
+      if (sub && row.dataset.location === "remote") {
+        sub.textContent = `${rel} · Play to fetch`;
+      }
+    }
+  } catch (err) {
+    alert(String(err && err.message || err || "Couldn't cancel"));
+  }
+}
+
+function pollClipFetch(rel, playBtn) {
+  if (clipFetchTimers[rel]) clearInterval(clipFetchTimers[rel]);
+  // No wall-clock cap on total download time — multi-GB NAS fetches over
+  // Tailscale can run for hours. Only stall (no byte progress) times out.
+  const STALL_MS = 5 * 60 * 1000;
+  const POLL_MS = 500;
+  let lastBytes = -1;
+  let lastProgressAt = Date.now();
+  clipFetchTimers[rel] = setInterval(async () => {
+    let st = null;
+    try {
+      st = await window.pywebview.api.clip_fetch_status(rel);
+    } catch (_) {
+      st = null;
+    }
+    if (!st) return;
+    const bytes = Number(st.bytes) || 0;
+    const state = st.state || "idle";
+    if (state === "downloading") {
+      if (bytes !== lastBytes) {
+        lastBytes = bytes;
+        lastProgressAt = Date.now();
+      }
+    } else if (state === "paused") {
+      // Paused on purpose — don't count as a stall.
+      lastProgressAt = Date.now();
+    }
+    clipFetchUi[rel] = {
+      state,
+      bytes,
+      total: st.total || 0,
+      error: st.error || "",
+    };
+    updateClipRowProgress(rel);
+    if (state === "paused") {
+      return;
+    }
+    if (state === "ready") {
+      clearInterval(clipFetchTimers[rel]);
+      delete clipFetchTimers[rel];
+      // Exit chrome faster than enter (press beat).
+      const row = document.querySelector(`.clip-row[data-rel="${CSS.escape(rel)}"]`);
+      if (row) {
+        row.classList.remove("is-fetching", "is-paused");
+        row.classList.add("is-fetch-exit");
+        const wrap = row.querySelector(".clip-fetch-meter");
+        if (wrap) wrap.classList.remove("is-on", "is-paused");
+        setTimeout(() => {
+          row.classList.remove("is-fetch-exit");
+          delete clipFetchUi[rel];
+          load();
+        }, 120);
+      } else {
+        delete clipFetchUi[rel];
+        load();
+      }
+      if (playBtn) {
+        playBtn.classList.remove("is-fetching", "is-paused");
+      }
+      return;
+    }
+    if (state === "idle") {
+      // Cancelled.
+      clearInterval(clipFetchTimers[rel]);
+      delete clipFetchTimers[rel];
+      delete clipFetchUi[rel];
+      updateClipRowProgress(rel);
+      if (playBtn) playBtn.classList.remove("is-fetching", "is-paused");
+      return;
+    }
+    if (state === "error") {
+      clearInterval(clipFetchTimers[rel]);
+      delete clipFetchTimers[rel];
+      if (playBtn) {
+        playBtn.classList.remove("is-fetching", "is-paused");
+      }
+      alert(st.error || "Download failed");
+      return;
+    }
+    if (state === "downloading" && (Date.now() - lastProgressAt) > STALL_MS) {
+      clearInterval(clipFetchTimers[rel]);
+      delete clipFetchTimers[rel];
+      if (playBtn) {
+        playBtn.classList.remove("is-fetching", "is-paused");
+      }
+      clipFetchUi[rel] = {
+        state: "error",
+        bytes,
+        total: st.total || 0,
+        error: "Download stalled — no progress for 5 minutes. Check the NAS, then retry.",
+      };
+      updateClipRowProgress(rel);
+      alert(clipFetchUi[rel].error);
+    }
+  }, POLL_MS);
+}
+
 function renderClips(d) {
   const cp = d.clips_panel || {};
   const rows = $("rows");
@@ -1426,50 +1875,104 @@ function renderClips(d) {
   if (!rows) return;
 
   renderClipGames(cp);
-  if (foot) foot.textContent = cp.min_clip_note || "";
+  if (foot) {
+    const bits = [cp.min_clip_note || ""];
+    if (cp.delete_policy) bits.push(cp.delete_policy);
+    foot.textContent = bits.filter(Boolean).join(" · ");
+  }
 
   if (currentPane === "clips") {
     const sum = cp.summary || {};
     if (sum.count) {
-      $("pane-eyebrow").textContent =
-        `${sum.count} clip${sum.count === 1 ? "" : "s"} · ${sum.total_label}`;
+      const parts = [`${sum.count} clip${sum.count === 1 ? "" : "s"}`];
+      if (sum.total_label) parts.push(sum.total_label);
+      if (sum.remote) parts.push(`${sum.remote} on NAS`);
+      if (sum.cached) parts.push(`${sum.cached} cached`);
+      if (cp.indexing) parts.push("updating index…");
+      $("pane-eyebrow").textContent = parts.join(" · ");
+    } else if (cp.indexing) {
+      $("pane-eyebrow").textContent = "Updating NAS index…";
+    } else if (cp.empty_title) {
+      $("pane-eyebrow").textContent = "Clips";
     }
   }
 
-  if (cp.scanning) {
-    rows.innerHTML = `<div class="empty clips-empty">Scanning…</div>`;
+  if (cp.scanning && !(cp.clips && cp.clips.length)) {
+    rows.innerHTML = `<div class="empty clips-empty clips-empty-rich">
+      <div class="clips-empty-title">Scanning…</div>
+      <div class="clips-empty-body">Checking local recordings and the NAS index.</div>
+    </div>`;
     return;
   }
   if (cp.error) {
-    rows.innerHTML = `<div class="empty clips-empty">Couldn't read ${esc(cp.root)}<br>${esc(cp.error)}</div>`;
+    rows.innerHTML = `<div class="empty clips-empty clips-empty-rich">
+      <div class="clips-empty-title">Couldn't read clips</div>
+      <div class="clips-empty-body">${esc(cp.root || "")}<br>${esc(cp.error)}</div>
+    </div>`;
     return;
   }
 
-  const filtered = filterClips(cp.clips || []);
+  const all = cp.clips || [];
+  const filtered = filterClips(all);
   if (!filtered.length) {
-    rows.innerHTML = `<div class="empty clips-empty">${esc(cp.min_clip_note || "No clips found")}</div>`;
+    if (!all.length && (cp.empty_title || cp.empty_body)) {
+      rows.innerHTML = `<div class="empty clips-empty clips-empty-rich" data-kind="${esc(cp.empty_kind || "")}">
+        <div class="clips-empty-title">${esc(cp.empty_title || "No clips yet")}</div>
+        <div class="clips-empty-body">${esc(cp.empty_body || cp.min_clip_note || "")}</div>
+        <div class="clips-empty-hint">Refresh when the NAS is up · Sync from Settings → Offload</div>
+      </div>`;
+      return;
+    }
+    rows.innerHTML = `<div class="empty clips-empty clips-empty-rich">
+      <div class="clips-empty-title">No matches</div>
+      <div class="clips-empty-body">${esc(cp.min_clip_note || "Try another search or game filter.")}</div>
+    </div>`;
     return;
   }
 
-  rows.innerHTML = filtered.map((c) => `
-    <div class="clip-row" data-path="${esc(c.path)}">
+  rows.innerHTML = filtered.map((c) => {
+    const id = esc(c.rel || c.path);
+    const state = clipUiState(c);
+    const badge = clipBadge(state);
+    const badgeHtml = badge
+      ? `<span class="${badge.cls}" title="${esc(badge.title)}">${esc(badge.label)}</span>`
+      : "";
+    const playGlyph = clipPlayGlyph(state);
+    const playTitle = clipPlayTitle(state);
+    const status = clipStatusLine(c, state);
+    const pct = clipProgressPct(c.rel || "");
+    const fetching = state === "downloading" ? " is-fetching" : "";
+    const paused = state === "paused" ? " is-paused" : "";
+    const offline = state === "offline" ? " is-offline" : "";
+    const err = state === "error" || state === "missing" ? " is-error" : "";
+    const showCancel = state === "downloading" || state === "paused";
+    return `
+    <div class="clip-row${fetching}${paused}${offline}${err}" data-rel="${id}" data-path="${esc(c.path || "")}"
+         data-location="${esc(c.location || "local")}" data-availability="${esc(c.availability || "online")}"
+         data-ui="${esc(state)}" tabindex="0" role="button"
+         aria-label="Play ${esc(c.title)}">
+      <div class="clip-fetch-meter${showCancel ? " is-on" : ""}${state === "paused" ? " is-paused" : ""}" aria-hidden="true"><i style="transform:scaleX(${pct.toFixed(4)})"></i></div>
       <div class="clip-main">
         <div class="thumb">${c.thumb
           ? `<img src="${c.thumb}" alt="">`
           : `<span class="init">${esc(c.initials)}</span>`}</div>
         <div class="clip-text">
-          <div class="name">${esc(c.title)}</div>
-          <div class="sub">${esc(c.rel)}</div>
+          <div class="name"><span class="name-text">${esc(c.title)}</span>${badgeHtml}</div>
+          <div class="sub">${esc(status)}</div>
         </div>
       </div>
       <div class="len">${esc(c.length || "")}</div>
       <div class="size">${esc(c.size_label)}</div>
       <div class="rec">${esc(c.recorded)}</div>
       <div class="acts">
-        <button class="row-act no-drag" type="button" data-reveal="${esc(c.path)}" title="Reveal in folder">&#xE838;</button>
-        <button class="row-act no-drag" type="button" data-delete="${esc(c.path)}" title="Delete">&#xE74D;</button>
+        <button class="row-act no-drag${state === "downloading" ? " is-fetching" : ""}${state === "paused" ? " is-paused" : ""}" type="button" data-open="${id}" title="${esc(playTitle)}">${playGlyph}</button>
+        <button class="row-act no-drag" type="button" data-cancel-fetch="${id}" title="Cancel download"
+                ${showCancel ? "" : "hidden disabled"}>${CLIP_GLYPH.cancel}</button>
+        <button class="row-act no-drag" type="button" data-reveal="${id}" title="Reveal in folder">&#xE838;</button>
+        <button class="row-act no-drag" type="button" data-delete="${id}" title="Delete">&#xE74D;</button>
       </div>
-    </div>`).join("");
+    </div>`;
+  }).join("");
 
   if (cp.capped && filtered.length >= (cp.cap || 400)) {
     rows.insertAdjacentHTML("beforeend",
@@ -2300,6 +2803,7 @@ async function load() {
   lastSnapshot = d;
   renderConn(d);
   renderHero(d);
+  await applyPreviewStill(d.hero);
   renderTiles(d);
   renderActivity(d);
   renderRibbon(d);
@@ -2591,9 +3095,13 @@ function startHud() {
    frameless WebView2 does not background the document - so the Python host
    calls setAwake(false) on hide and setAwake(true) on show. */
 function setAwake(on) {
+  const wasAsleep = document.documentElement.classList.contains("asleep");
   document.documentElement.classList.toggle("asleep", !on);
   const el = document.getElementById("hud-vis");
   if (el) el.textContent = on ? "visible" : "asleep";
+  if (on && wasAsleep) {
+    try { load(); } catch (_) { /* bridge not ready */ }
+  }
 }
 window.setAwake = setAwake;
 
@@ -2619,6 +3127,30 @@ function fail(where, err) {
   console.error(where, err);
 }
 
+/** Frameless main window: edge/corner grips → native Windows resize loop. */
+function wireResizeEdges() {
+  const root = $("resize-edges");
+  if (!root || root.dataset.wired === "1") return;
+  root.dataset.wired = "1";
+  root.addEventListener("mousedown", (e) => {
+    if (e.button !== 0) return;
+    const grip = e.target.closest("[data-edge]");
+    if (!grip) return;
+    const edge = grip.dataset.edge;
+    if (!edge) return;
+    e.preventDefault();
+    e.stopPropagation();
+    if (!window.pywebview || !window.pywebview.api || !window.pywebview.api.begin_resize) {
+      return;
+    }
+    try {
+      window.pywebview.api.begin_resize(edge);
+    } catch (err) {
+      console.error("begin_resize", err);
+    }
+  });
+}
+
 (async function init() {
   await ready();
   try {
@@ -2629,13 +3161,15 @@ function fail(where, err) {
     initDashboard(bootCfg);
     wireDashCustomise();
     wireSetup();
+    wireResizeEdges();
     if (bootCfg.setup && bootCfg.setup.needed) startSetup(bootCfg);
     ensureSpots();
     wirePointer(bootCfg.background.motion.pointer_lean_window_px);
   } catch (e) { fail("backdrop", e); }
   try { startHud(); } catch (e) { fail("hud", e); }
   try {
-    await load();
+    const bootAsleep = document.documentElement.classList.contains("asleep");
+    if (!bootAsleep) await load();
     let bootPane = "dashboard";
     try {
       const r = await window.pywebview.api.consume_goto_pane();
@@ -2645,17 +3179,19 @@ function fail(where, err) {
     showPane(bootPane);
     let pollMs = 5000;
     const pollLoop = async () => {
-      await load();
+      const asleep = document.documentElement.classList.contains("asleep");
+      if (!asleep) await load();
       const live = lastSnapshot && lastSnapshot.hero &&
         (lastSnapshot.hero.state === "recording" || lastSnapshot.hero.state === "paused");
       const onClips = currentPane === "clips";
-      pollMs = live ? 1000 : (onClips ? 3000 : 5000);
+      pollMs = asleep ? 8000 : (live ? 1000 : (onClips ? 3000 : 5000));
       setTimeout(pollLoop, pollMs);
     };
     setTimeout(pollLoop, pollMs);
     /* Dev shoot-loop: write a pane name to shots/goto_pane.txt (repo root)
        and this polls it, or pass it at boot before the window opens. */
     setInterval(async () => {
+      if (document.documentElement.classList.contains("asleep")) return;
       try {
         const r = await window.pywebview.api.consume_goto_pane();
         if (r && r.pane) {
@@ -2713,6 +3249,14 @@ async function commitSetting(key, raw) {
     }
   }
 }
+
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "Enter" && e.key !== " ") return;
+  const row = e.target.closest && e.target.closest(".clip-row");
+  if (!row || e.target.closest(".row-act")) return;
+  e.preventDefault();
+  openClip(row.dataset.rel || row.dataset.path);
+});
 
 document.addEventListener("click", async (e) => {
   const lbOpt = e.target.closest(".listbox-option");
@@ -2799,23 +3343,43 @@ document.addEventListener("click", async (e) => {
     return;
   }
 
+  const openBtn = e.target.closest("[data-open]");
+  if (openBtn) {
+    return openClip(openBtn.dataset.open, openBtn);
+  }
+
+  const cancelFetch = e.target.closest("[data-cancel-fetch]");
+  if (cancelFetch) {
+    return cancelClipFetch(cancelFetch.dataset.cancelFetch);
+  }
+
+  const clipRow = e.target.closest(".clip-row");
+  if (clipRow && !e.target.closest(".row-act")) {
+    return openClip(clipRow.dataset.rel || clipRow.dataset.path);
+  }
+
   const reveal = e.target.closest("[data-reveal]");
   if (reveal) {
-    return window.pywebview.api.reveal_clip(reveal.dataset.reveal);
+    const res = await window.pywebview.api.reveal_clip(reveal.dataset.reveal);
+    if (res && res.ok === false && res.error) alert(res.error);
+    return;
   }
 
   const delBtn = e.target.closest("[data-delete]");
   if (delBtn) {
     const path = delBtn.dataset.delete;
-    let check = await window.pywebview.api.delete_clip(path, false);
+    let check = await window.pywebview.api.delete_clip(path, false, false);
     if (check.refused) {
       alert(check.message || "Can't delete yet");
       return;
     }
     if (check.need_confirm) {
-      const msg = `Permanently delete ${check.rel}?\n\n${check.size_label} · this cannot be undone.`;
+      const indexOnly = check.policy === "index_only";
+      const msg = indexOnly
+        ? (check.message || `Remove ${check.rel} from Nebula's list?\n\nThe NAS file will not be deleted.`)
+        : `Delete local copy of ${check.rel}?\n\n${check.size_label} · the NAS copy (if any) is left alone.`;
       if (!confirm(msg)) return;
-      check = await window.pywebview.api.delete_clip(path, true);
+      check = await window.pywebview.api.delete_clip(path, true, indexOnly);
     }
     if (!check.ok) {
       if (check.error && check.error !== "clip not found") alert(check.error || "Delete failed");

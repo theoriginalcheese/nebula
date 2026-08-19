@@ -29,6 +29,29 @@ html, body {
   cursor: default;
 }
 
+/* Frameless resize grips — sit above chrome so edge drags reach begin_resize
+   before the titlebar drag-region. Corners are larger than edges so diagonal
+   resize stays hittable. pointer-events only on the grips themselves. */
+.resize-edges {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  pointer-events: none;
+}
+.resize-edge {
+  position: absolute;
+  pointer-events: auto;
+  -webkit-app-region: no-drag;
+}
+.resize-edge.n  { top: 0; left: 8px; right: 8px; height: 6px; cursor: ns-resize; }
+.resize-edge.s  { bottom: 0; left: 8px; right: 8px; height: 6px; cursor: ns-resize; }
+.resize-edge.e  { top: 8px; right: 0; bottom: 8px; width: 6px; cursor: ew-resize; }
+.resize-edge.w  { top: 8px; left: 0; bottom: 8px; width: 6px; cursor: ew-resize; }
+.resize-edge.nw { top: 0; left: 0; width: 12px; height: 12px; cursor: nwse-resize; }
+.resize-edge.ne { top: 0; right: 0; width: 12px; height: 12px; cursor: nesw-resize; }
+.resize-edge.sw { bottom: 0; left: 0; width: 12px; height: 12px; cursor: nesw-resize; }
+.resize-edge.se { bottom: 0; right: 0; width: 12px; height: 12px; cursor: nwse-resize; }
+
 /* --- tray / core (6.2 nesting: 28 / 6 / 22) ---------------------------- */
 
 .tray {
@@ -406,6 +429,9 @@ html, body {
 #pane-dashboard {
   position: relative;
   flex: 1; min-height: 0;
+  /* At MIN_HEIGHT the stacked dashboard blocks can exceed the pane; scroll
+     rather than clipping hero/stats/activity under the fold. */
+  overflow-y: auto;
 }
 
 .dash-grid {
@@ -968,7 +994,7 @@ html, body {
 
 .clips-table-head {
   display: grid;
-  grid-template-columns: 1fr 72px 72px 96px 72px;
+  grid-template-columns: 1fr 72px 72px 96px 96px;
   gap: 10px;
   padding: 0 10px 8px;
   font-size: var(--t-eyebrow-size); font-weight: var(--t-eyebrow-weight);
@@ -987,17 +1013,93 @@ html, body {
 }
 
 .clip-row {
+  position: relative;
   display: grid;
-  grid-template-columns: 1fr 72px 72px 96px 72px;
+  grid-template-columns: 1fr 72px 72px 96px 96px;
   align-items: center; gap: 10px;
   min-height: 52px; padding: 6px 10px;
   border-radius: var(--r-control);
   border-bottom: 1px solid transparent;
   border-image: linear-gradient(90deg, transparent 0, rgb(var(--hairline-rgb) / .08) var(--rule-fade),
                 rgb(var(--hairline-rgb) / .08) calc(100% - var(--rule-fade)), transparent 100%) 1;
-  transition: background var(--hover-ms) var(--ease);
+  transition: background var(--hover-ms) var(--ease), opacity var(--hover-ms) var(--ease);
+  cursor: pointer;
+  outline: none;
 }
 .clip-row:hover { background: rgb(var(--hairline-rgb) / .05); }
+.clip-row:focus-visible {
+  box-shadow: 0 0 0 var(--focus-ring-w) var(--accent);
+  outline: none;
+}
+.clip-row:focus:not(:focus-visible) { box-shadow: none; }
+.clip-row:active { transform: scale(var(--press-scale)); transition-duration: var(--press-ms); }
+.clip-row.is-offline { opacity: 0.92; }
+.clip-row.is-fetching { background: rgb(var(--accent-rgb) / .06); }
+.clip-row.is-paused { background: rgb(var(--hairline-rgb) / .06); }
+.clip-row.is-fetch-exit {
+  transition: background var(--press-ms) var(--ease), opacity var(--press-ms) var(--ease);
+  background: transparent;
+}
+.clip-row.is-error .sub { color: var(--ember); }
+
+.clip-fetch-meter {
+  position: absolute; left: 10px; right: 10px; bottom: 0; height: 2px;
+  border-radius: 1px; overflow: hidden;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--press-ms) var(--ease);
+  background: rgb(var(--hairline-rgb) / .08);
+  transform-origin: left center;
+}
+.clip-fetch-meter.is-on {
+  opacity: 1;
+  transition: opacity var(--hover-ms) var(--ease);
+}
+.clip-fetch-meter.is-paused > i {
+  background: var(--text-secondary);
+}
+.clip-fetch-meter > i {
+  display: block; height: 100%; width: 100%;
+  background: var(--accent);
+  transform: scaleX(0);
+  transform-origin: left center;
+  transition: transform var(--press-ms) var(--ease);
+}
+
+.clip-badge {
+  flex: 0 0 auto;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  padding: 2px 7px;
+  border-radius: var(--r-control);
+  color: var(--accent-text);
+  background: rgb(var(--accent-rgb) / .14);
+  transition: opacity var(--hover-ms) var(--ease), transform var(--hover-ms) var(--ease);
+}
+.clip-badge-cached {
+  color: var(--text-secondary);
+  background: rgb(var(--hairline-rgb) / .1);
+}
+.clip-badge-remote {
+  color: var(--accent-text);
+  background: rgb(var(--accent-rgb) / .14);
+}
+.clip-badge-downloading {
+  color: var(--accent-text);
+  background: rgb(var(--accent-rgb) / .22);
+}
+.clip-badge-paused {
+  color: var(--text-secondary);
+  background: rgb(var(--hairline-rgb) / .14);
+}
+.clip-badge-offline,
+.clip-badge-missing,
+.clip-badge-error {
+  color: var(--ember);
+  background: rgb(var(--ember-rgb) / .12);
+}
 
 .clip-main {
   display: flex; align-items: center; gap: 12px;
@@ -1020,7 +1122,12 @@ html, body {
 
 .clip-text { min-width: 0; }
 .clip-row .name {
+  display: flex; align-items: center; gap: 8px;
+  min-width: 0;
   font-size: var(--t-row-size); color: var(--text);
+}
+.clip-row .name-text {
+  min-width: 0;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .clip-row .sub {
@@ -1053,6 +1160,43 @@ html, body {
   color: var(--text);
 }
 .row-act[data-delete]:hover { color: var(--ember); }
+.row-act[data-open] { color: var(--accent-text); }
+.row-act:focus-visible {
+  box-shadow: 0 0 0 var(--focus-ring-w) var(--accent);
+  outline: none;
+}
+.row-act:focus:not(:focus-visible) { box-shadow: none; }
+.row-act:active {
+  transform: scale(var(--press-scale));
+  transition-duration: var(--press-ms);
+}
+.row-act:disabled {
+  opacity: var(--disabled-a);
+  pointer-events: none;
+}
+.row-act.is-fetching {
+  opacity: 1;
+  pointer-events: auto;
+  color: var(--accent-text);
+  animation: clip-fetch-pulse var(--live-dot-ms, 1.9s) var(--ease) infinite;
+  /* lint-allow: opacity pulse on busy play control — transform+opacity only */
+}
+.row-act.is-paused {
+  opacity: 1;
+  color: var(--text);
+  animation: none;
+}
+.row-act[data-cancel-fetch] { color: var(--ember); }
+.row-act[data-cancel-fetch]:hover { color: var(--ember); }
+.row-act[hidden] { display: none; }
+@keyframes clip-fetch-pulse {
+  0%, 100% { opacity: 0.45; }
+  50% { opacity: 0.95; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .row-act.is-fetching { animation-play-state: paused; }
+  .clip-row:active, .row-act:active { transform: none; }
+}
 
 .clips-foot {
   flex: 0 0 auto;
@@ -1062,6 +1206,29 @@ html, body {
 }
 
 .clips-empty { min-height: 100px; }
+.clips-empty-rich {
+  display: flex; flex-direction: column; align-items: flex-start; justify-content: center;
+  gap: 8px; padding: 28px 16px;
+  opacity: 0; transform: translateY(var(--pane-change-rise));
+  animation: clips-empty-in var(--pane-change-ms) var(--ease) forwards;
+}
+@keyframes clips-empty-in {
+  to { opacity: 1; transform: translateY(0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .clips-empty-rich { animation-play-state: paused; opacity: 1; transform: none; }
+}
+.clips-empty-title {
+  font-size: var(--t-row-size); color: var(--text); font-weight: 600;
+}
+.clips-empty-body {
+  font-size: var(--t-meta-size); color: var(--text-secondary);
+  max-width: 42ch; line-height: 1.45;
+}
+.clips-empty-hint {
+  font-family: var(--font-mono); font-size: var(--t-mono-size);
+  color: var(--text-tertiary); margin-top: 4px;
+}
 .clips-cap {
   padding: 10px;
   font-size: var(--t-meta-size);
@@ -1290,6 +1457,16 @@ html, body {
   display: grid; place-items: center;
   overflow: hidden;
 }
+.preview-still {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center;
+  pointer-events: none;
+  z-index: 0;
+}
 .preview-chip {
   position: absolute; left: 12px; top: 12px;
   height: 24px; padding: 0 10px;
@@ -1297,14 +1474,19 @@ html, body {
   border-radius: 8px;
   background: rgb(var(--ground-rgb) / .72);
   font-size: 10px; font-weight: 500; color: var(--accent-text);
+  z-index: 1;
 }
 .preview-label {
   font-size: var(--t-eyebrow-size); font-weight: 500;
   letter-spacing: 0.22em; color: rgb(var(--hairline-rgb) / .45);
+  z-index: 1;
+  transition: opacity var(--hover-ms) var(--ease);
 }
+.preview.has-still .preview-label { opacity: 0; }
 .preview-video {
   position: absolute; right: 12px; bottom: 12px;
   font-family: var(--font-mono); font-size: 10px; color: var(--accent-text);
+  z-index: 1;
 }
 .preview-info {
   margin-top: 10px;
@@ -1366,6 +1548,11 @@ html, body {
 .games-cols {
   flex: 1; min-height: 0;
   display: grid; grid-template-columns: 1fr minmax(280px, 340px) 1fr; gap: var(--stack-gap);
+}
+@media (max-width: 1100px) {
+  /* Same floor as .remote-grid: at ~1080 wide the middle minmax(280px) squeezes
+     the side columns. Stack rather than invent a fluid redesign. */
+  .games-cols { grid-template-columns: 1fr; }
 }
 .grow-row.is-selected {
   background: rgb(var(--accent-rgb) / .1);
@@ -2423,12 +2610,21 @@ html, body {
 .asleep .conn.live i {
   animation-play-state: paused;
 }
+/* Every infinite loop, not only aurora: moon-orbit / clip-fetch / restore
+   pulse kept a compositor ticking after the backdrop was paused. */
+.asleep * {
+  animation-play-state: paused !important;  /* lint-allow: hidden tray must freeze every loop; :root.asleep is the GPU off-switch */
+}
 /* Pausing animations alone still left ~41% GPU: blurred layers keep compositing.
    Skipping paint on the whole stack is what drops minimised cost. */
 .asleep .backdrop {
   visibility: hidden;
   content-visibility: hidden;
   contain: strict;
+}
+.asleep .tray {
+  visibility: hidden;
+  content-visibility: hidden;
 }
 .asleep .spot { opacity: 0; }
 

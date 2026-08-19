@@ -40,3 +40,22 @@ sessions.jsonl
 
 # Transient gate verdict, written by .cursor/hooks/gate.py on every stop.
 .cursor/handoff/.gate-state.json
+
+# Toast motion/capture scratch — PNG frames and diffs from tools/capture_* and demos;
+# the scripts under tools/ stay tracked, only their output dirs are ephemeral.
+_alien_toast_scan/
+tools/_toast_demo/
+tools/_toast_demo_local_cmp/
+tools/_toast_demo_spike_capsule/
+
+# Parallel-agent worktrees — isolated checkouts, not project source.
+.claude/worktrees/
+
+# Offloader worker checkpoint — regenerated from offload_queue.json on each run.
+offload_state.json
+
+# On-demand Clips catalog — per-machine index + re-evictable cache/posters.
+# Never commit NAS library listings or fetched video bytes.
+clip_index.json
+clip_cache/
+clip_posters/

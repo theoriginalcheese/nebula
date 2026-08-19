@@ -43,6 +43,7 @@ from obsauto.classifier import Classifier
 from obsauto.obs_client import OBSClient
 from obsauto.config import CONFIG_FILE, load_config, save_config
 from obsauto.gamesync import GameSync
+from obsauto.clip_catalog import ClipCatalog
 from obsauto.offload import Offloader
 from obsauto.paths import RESOURCE_DIR
 from obsauto import thumbs
@@ -53,6 +54,20 @@ from spike import host as host_mod
 # Main script is flattened to _MEIPASS/app.py under PyInstaller onefile, so
 # dirname(__file__) is _MEIPASS — not spike/. Web assets live at spike/web/.
 INDEX = os.path.join(RESOURCE_DIR, "spike", "web", "index.html")
+
+
+def spike_page_url(index, url_args="", start_hidden=False):
+    """WebView start URL. Hidden boots paint under ``.asleep`` from frame 0."""
+    parts = []
+    extra = (url_args or "").lstrip("?")
+    if extra:
+        parts.append(extra)
+    bits = extra.split("&") if extra else []
+    if start_hidden and "asleep=1" not in bits:
+        parts.append("asleep=1")
+    if not parts:
+        return index
+    return index + "?" + "&".join(parts)
 
 VIDEO_EXT = (".mkv", ".mp4", ".mov", ".flv")
 
@@ -259,6 +274,12 @@ class Api:
         self._thumb_scan_busy = False
         self._clips_scan_busy = False
         self._clips_scanned_at = 0.0
+        self._clips_backfill_busy = False
+        self._clips_backfill_at = 0.0
+        self._clip_catalog = ClipCatalog(self.cfg, on_log=self._api_log)
+        self._open_clip_busy = set()
+        # Instant paint from durable index — never wait on NAS for first list.
+        self._seed_clips_from_index()
         self._ensure_clips_scan()
         self._backfill_icon_paths()
 
@@ -469,6 +490,12 @@ class Api:
         if self._host:
             self._host.hide()
 
+    def begin_resize(self, edge):
+        """HTML edge/corner grips → native Windows size loop (frameless main)."""
+        if self._host:
+            return bool(self._host.begin_resize(edge))
+        return False
+
     def tray(self):
         """Let the window show what the tray thinks the state is."""
         if not self._host:
@@ -491,6 +518,12 @@ class Api:
     def page_awake(self):
         """Sleep flag for JS to poll — evaluate_js from the watcher is best-effort."""
         return {"awake": self._host.awake() if self._host else True}
+
+    def preview_still(self):
+        """OBS scene still for the hero tile. Empty uri when there is no real frame."""
+        if not self._host:
+            return {"uri": "", "seq": 0, "scene": ""}
+        return self._host.preview_still()
 
     def bench(self, seconds=10):
         """Average over a window, which is the only honest way to read CPU."""
@@ -620,6 +653,7 @@ class Api:
             "bitrate": readouts["bitrate"],
             "scene": scene,
             "video": video,
+            "preview_seq": (self._host.preview_still_seq() if self._host else 0),
             "actions": list(spec.get("actions") or ()),
             "actions_enabled": [a for a in (spec.get("actions") or ())
                                 if a != "Mark clip"],
@@ -1672,37 +1706,246 @@ class Api:
         self._ensure_clips_scan(force=True)
         return {"ok": True}
 
-    def reveal_clip(self, path):
-        path = os.path.normpath(path or "")
-        if not path or not os.path.isfile(path):
-            return {"ok": False, "error": "clip not found"}
-        try:
-            subprocess_reveal(path)
-            return {"ok": True}
-        except Exception as exc:
-            return {"ok": False, "error": str(exc)}
+    def _resolved_nas_root(self):
+        """Prefer Offloader's live root (LAN/remote auto); else any live candidate."""
+        preferred = ""
+        offloader = self._offloader()
+        if offloader is not None:
+            try:
+                preferred = (offloader.root or "").strip()
+            except Exception:
+                preferred = ""
+        return self._clip_catalog.resolve_active_root(preferred)
 
-    def delete_clip(self, path, confirm=False):
-        """Manual delete — same offload guard as gui.py / test_clips.py."""
-        path = os.path.normpath(path or "")
-        clip = None
+    def _nas_up_hint(self):
+        """Offloader diagnose when available — avoids trusting a dead Z: mapping."""
+        offloader = self._offloader()
+        if offloader is None:
+            return None
+        try:
+            return offloader.reachability()
+        except Exception:
+            return None
+
+    def _merge_clips(self, local_clips, nas_root=None):
+        nas_root = nas_root or self._resolved_nas_root()
+        reach = self._nas_up_hint()
+        nas_up = self._clip_catalog.nas_online(nas_root, reachability=reach)
+        return self._clip_catalog.merge_with_local(
+            local_clips, nas_root=nas_root, nas_up=nas_up)
+
+    def _offloader(self):
+        if self._host and getattr(self._host, "monitor", None):
+            return getattr(self._host.monitor, "offloader", None)
+        if self._host:
+            return getattr(self._host, "offloader", None)
+        return None
+
+    def _find_clip(self, path_or_rel):
+        key = (path_or_rel or "").replace("\\", "/").strip()
+        if not key:
+            return None
+        norm = os.path.normpath(path_or_rel) if path_or_rel else ""
         for c in self._clips_cache or []:
-            if c["path"] == path:
-                clip = c
-                break
+            if c.get("rel") == key or c.get("path") == norm:
+                return c
+            if c.get("nas_path") and os.path.normpath(c["nas_path"]) == norm:
+                return c
+        return None
+
+    def reveal_clip(self, path):
+        """Reveal local/cache file, or NAS path when reachable. Never fetches."""
+        clip = self._find_clip(path)
+        rel = (clip or {}).get("rel") or ""
+        location = (clip or {}).get("location") or ""
+
+        local = None
+        if rel:
+            local = (self._clip_catalog.local_path(rel)
+                     or self._clip_catalog.cached_file(rel))
+        if not local and location in ("local", "cached", ""):
+            candidate = os.path.normpath(path or "")
+            if candidate and os.path.isfile(candidate):
+                local = candidate
+
+        if local and os.path.isfile(local):
+            try:
+                subprocess_reveal(local)
+                return {"ok": True, "where": "local"}
+            except Exception as exc:
+                return {"ok": False, "error": str(exc)}
+
+        nas_root = self._resolved_nas_root()
+        nas_path = (clip or {}).get("nas_path") or ""
+        if not nas_path and rel:
+            nas_path = self._clip_catalog.resolve_nas_path(rel, nas_root) or ""
+        if nas_path and os.path.isfile(nas_path):
+            try:
+                subprocess_reveal(nas_path)
+                return {"ok": True, "where": "nas"}
+            except Exception as exc:
+                return {"ok": False, "error": str(exc)}
+        if location == "remote" or (rel and not local):
+            if not self._clip_catalog.nas_online(
+                    nas_root, reachability=self._nas_up_hint()):
+                return {
+                    "ok": False,
+                    "error": (
+                        "This clip lives on the NAS, which isn't reachable "
+                        "right now. Open it once it's online to download a "
+                        "temporary local copy."
+                    ),
+                }
+            # Try every mount — stored path may be Z: while live root is UNC.
+            found = self._clip_catalog.resolve_nas_path(rel, nas_root)
+            if found:
+                try:
+                    subprocess_reveal(found)
+                    return {"ok": True, "where": "nas"}
+                except Exception as exc:
+                    return {"ok": False, "error": str(exc)}
+            return {"ok": False, "error": "Clip not found on the NAS."}
+        return {"ok": False, "error": "clip not found"}
+
+    def open_clip(self, path_or_rel):
+        """Ensure a local/cache file exists, then open with the OS default player.
+
+        Remote clips download into APP_DIR/clip_cache (re-evictable). Poll
+        ``clip_fetch_status`` while ``state`` is ``downloading``.
+        """
+        clip = self._find_clip(path_or_rel)
+        rel = (clip or {}).get("rel") or path_or_rel
+        if not rel:
+            return {"ok": False, "error": "clip not found"}
+        key = rel
+        if key in self._open_clip_busy:
+            st = self._clip_catalog.fetch_status(rel)
+            return {"ok": True, "started": True, "status": st}
+
+        def work():
+            self._open_clip_busy.add(key)
+            try:
+                result = self._clip_catalog.ensure_local(
+                    rel, nas_root=self._resolved_nas_root())
+                if not result.get("ok"):
+                    return
+                path = result.get("path") or ""
+                if not path or not os.path.isfile(path):
+                    return
+                try:
+                    subprocess_open(path)
+                except OSError as exc:
+                    self._clip_catalog._set_fetch(
+                        rel, state="error",
+                        error="Couldn't open player: %s" % exc)
+                    self._api_log("[Clips] Open failed %s: %s" % (rel, exc))
+                    return
+                # Cache hit → ensure a list poster exists for next visit.
+                try:
+                    app_dir = self._clip_catalog._app_dir
+                    if app_dir and not thumbs.have_poster(app_dir, rel):
+                        thumbs.extract_poster(app_dir, rel, path)
+                except Exception:
+                    pass
+            finally:
+                self._open_clip_busy.discard(key)
+
+        # Fast path: already local/cached — open on this thread after ensure.
+        local = self._clip_catalog.local_path(rel) if clip else None
+        cached = self._clip_catalog.cached_file(rel) if clip else None
+        if not local and not cached and clip and clip.get("location") == "local":
+            p = clip.get("path") or ""
+            if p and os.path.isfile(p):
+                local = p
+        if local or cached:
+            result = self._clip_catalog.ensure_local(
+                rel, nas_root=self._resolved_nas_root())
+            if not result.get("ok"):
+                return result
+            try:
+                subprocess_open(result["path"])
+            except OSError as exc:
+                return {"ok": False, "error": "Couldn't open player: %s" % exc}
+            return {"ok": True, "started": False, "path": result["path"],
+                    "location": result.get("location"), "status":
+                    self._clip_catalog.fetch_status(rel)}
+
+        self._clip_catalog._set_fetch(
+            rel, state="downloading", path="", error="")
+        threading.Thread(target=work, daemon=True).start()
+        return {
+            "ok": True,
+            "started": True,
+            "status": self._clip_catalog.fetch_status(rel),
+        }
+
+    def clip_fetch_status(self, path_or_rel):
+        clip = self._find_clip(path_or_rel)
+        rel = (clip or {}).get("rel") or path_or_rel
+        return self._clip_catalog.fetch_status(rel)
+
+    def pause_clip_fetch(self, path_or_rel):
+        clip = self._find_clip(path_or_rel)
+        rel = (clip or {}).get("rel") or path_or_rel
+        return self._clip_catalog.pause_fetch(rel)
+
+    def resume_clip_fetch(self, path_or_rel):
+        """Resume a paused download (same worker stays alive)."""
+        clip = self._find_clip(path_or_rel)
+        rel = (clip or {}).get("rel") or path_or_rel
+        return self._clip_catalog.resume_fetch(rel)
+
+    def cancel_clip_fetch(self, path_or_rel):
+        clip = self._find_clip(path_or_rel)
+        rel = (clip or {}).get("rel") or path_or_rel
+        return self._clip_catalog.cancel_fetch(rel)
+
+    def evict_clip_cache(self, path_or_rel=""):
+        """Drop re-evictable cache bytes. Never touches NAS or recording_root."""
+        if not path_or_rel:
+            n = self._clip_catalog.evict_all()
+            return {"ok": True, "evicted": n}
+        clip = self._find_clip(path_or_rel)
+        rel = (clip or {}).get("rel") or path_or_rel
+        ok = self._clip_catalog.evict(rel)
+        if ok and self._clips_cache is not None:
+            self._clips_scanned_at = 0.0
+            self._ensure_clips_scan(force=True)
+        return {"ok": True, "evicted": 1 if ok else 0}
+
+    def delete_clip(self, path, confirm=False, remove_index=False):
+        """Manual delete with NAS-safe defaults.
+
+        - Local file under recording_root: delete local only; keep index if a
+          NAS copy is known (row becomes remote).
+        - Cached only: evict cache; NAS untouched; index kept unless
+          ``remove_index``.
+        - Remote only: refuse NAS delete. With confirm+remove_index, drop the
+          listing only — never deletes the NAS file from this API.
+        """
+        clip = self._find_clip(path)
         if clip is None:
             return {"ok": False, "error": "clip not found"}
 
+        rel = clip["rel"]
+        location = clip.get("location") or "local"
+        local_path = self._clip_catalog.local_path(rel)
+        if not local_path and location == "local" and clip.get("path"):
+            p = os.path.normpath(clip["path"])
+            if os.path.isfile(p):
+                local_path = p
+        cache_path = self._clip_catalog.cached_file(rel)
+        nas_path = clip.get("nas_path") or self._clip_catalog.resolve_nas_path(
+            rel, self._resolved_nas_root()) or ""
+
         pending = set()
-        offloader = None
-        if self._host and getattr(self._host, "monitor", None):
-            offloader = self._host.monitor.offloader
+        offloader = self._offloader()
         if offloader and offloader.enabled:
             try:
                 pending = offloader.pending_paths()
             except Exception:
                 pending = set()
-        if path in pending:
+        if local_path and local_path in pending:
             return {
                 "ok": False,
                 "refused": True,
@@ -1712,26 +1955,93 @@ class Api:
                     "safe to remove once the offload queue has drained."
                 ) % clip["name"],
             }
+
+        # Remote-only: never auto-delete NAS.
+        if location == "remote" and not local_path and not cache_path:
+            if not confirm:
+                return {
+                    "ok": False,
+                    "need_confirm": True,
+                    "policy": "index_only",
+                    "rel": rel,
+                    "size_label": _format_bytes(clip["size"]),
+                    "message": (
+                        "%s is only on the NAS.\n\n"
+                        "Nebula will remove it from this list. The NAS file "
+                        "will not be deleted."
+                    ) % clip["name"],
+                }
+            if not remove_index:
+                return {
+                    "ok": False,
+                    "refused": True,
+                    "message": (
+                        "Refusing to delete the NAS copy. Confirm removing "
+                        "it from Nebula's list only."
+                    ),
+                }
+            self._clip_catalog.remove_index_entry(rel)
+            if self._clips_cache is not None:
+                self._clips_cache = [
+                    c for c in self._clips_cache if c.get("rel") != rel]
+            self._api_log("[Manual] Removed from index (NAS untouched): %s" % rel)
+            return {"ok": True, "removed": "index", "nas_deleted": False}
+
         if not confirm:
             return {
                 "ok": False,
                 "need_confirm": True,
-                "rel": clip["rel"],
+                "policy": "local_or_cache",
+                "rel": rel,
                 "size_label": _format_bytes(clip["size"]),
+                "location": location,
             }
-        try:
-            os.remove(path)
-        except OSError as exc:
-            self._api_log("[Manual] Couldn't delete %s: %s" % (clip["name"], exc))
-            return {"ok": False, "error": str(exc)}
-        root = self.cfg.get("recording_root") or ""
-        thumbs.purge(root, path)
-        self._clip_durations.pop(path, None)
-        self._thumb_data_cache.pop(path, None)
+
+        deleted_local = False
+        if local_path and os.path.isfile(local_path):
+            try:
+                os.remove(local_path)
+                deleted_local = True
+            except OSError as exc:
+                self._api_log("[Manual] Couldn't delete %s: %s" % (
+                    clip["name"], exc))
+                return {"ok": False, "error": str(exc)}
+            root = self.cfg.get("recording_root") or ""
+            thumbs.purge(root, local_path)
+            self._clip_durations.pop(local_path, None)
+            self._thumb_data_cache.pop(local_path, None)
+
+        if cache_path:
+            self._clip_catalog.evict(rel)
+
+        # Keep index when a NAS copy is known so the row becomes remote.
+        if nas_path or self._clip_catalog.get(rel):
+            if nas_path:
+                entry = self._clip_catalog.get(rel) or {}
+                self._clip_catalog.upsert(
+                    game=clip["game"], name=clip["name"],
+                    size=clip.get("size") or entry.get("size") or 0,
+                    mtime=clip.get("mtime") or entry.get("mtime") or 0,
+                    sha256=entry.get("sha256") or "",
+                    nas_path=nas_path,
+                    offloaded_at=entry.get("offloaded_at"),
+                )
+            if remove_index and not nas_path:
+                self._clip_catalog.remove_index_entry(rel)
+        elif remove_index:
+            self._clip_catalog.remove_index_entry(rel)
+
         if self._clips_cache is not None:
-            self._clips_cache = [c for c in self._clips_cache if c["path"] != path]
-        self._api_log("[Manual] Deleted %s" % clip["rel"])
-        return {"ok": True}
+            # Rescan merge on next panel read; drop local path immediately.
+            self._clips_scanned_at = 0.0
+            self._ensure_clips_scan(force=True)
+
+        self._api_log("[Manual] Deleted local/cache %s (NAS untouched)" % rel)
+        return {
+            "ok": True,
+            "deleted_local": deleted_local,
+            "nas_deleted": False,
+        }
 
     # --- Games (frame 2d) ----------------------------------------------
 
@@ -1886,12 +2196,29 @@ class Api:
 
     CLIP_LIST_CAP = 400
 
+    def _seed_clips_from_index(self):
+        """Publish index-only rows immediately (no NAS walk, no local scan)."""
+        if self._clips_cache is not None:
+            return
+        try:
+            # Index only — never isdir() NAS/SMB on this thread. A dead
+            # mapped drive hangs 20–60s and freezes first paint / tray restore.
+            self._clips_cache = self._clip_catalog.merge_with_local(
+                [], nas_root="", nas_up=False)
+            self._clips_root = self.cfg.get("recording_root") or ""
+            self._clips_error = None
+        except Exception as exc:
+            self._api_log("[Clips] Index seed failed: %s" % exc)
+
     def _ensure_clips_scan(self, force=False):
         """Background scan — never block snapshot()."""
+        self._seed_clips_from_index()
         if self._clips_scan_busy:
             return
         age = time.time() - self._clips_scanned_at
         if not force and self._clips_cache is not None and age < 30:
+            # Still allow a quiet NAS reconcile in the background.
+            self._schedule_nas_backfill(force=False)
             return
         self._clips_scan_busy = True
 
@@ -1905,21 +2232,24 @@ class Api:
         threading.Thread(target=worker, daemon=True).start()
 
     def _scan_clips(self):
+        """Fast path: local disk + durable index. NAS tree walk is async."""
         root = self.cfg.get("recording_root") or ""
-        clips, error = [], None
+        local_clips, error = [], None
         try:
             if root and os.path.isdir(root):
                 for game in sorted(os.listdir(root)):
                     folder = os.path.join(root, game)
-                    if not os.path.isdir(folder):
+                    if not os.path.isdir(folder) or game.startswith("."):
                         continue
                     with os.scandir(folder) as inner:
                         for f in inner:
                             if not (f.is_file()
                                     and f.name.lower().endswith(VIDEO_EXT)):
                                 continue
+                            if f.name.endswith(".part"):
+                                continue
                             st = f.stat()
-                            clips.append({
+                            local_clips.append({
                                 "game": game,
                                 "name": f.name,
                                 "path": f.path,
@@ -1929,10 +2259,78 @@ class Api:
                             })
         except Exception as exc:
             error = exc
+
+        nas_root = self._resolved_nas_root()
+        try:
+            clips = self._merge_clips(local_clips, nas_root=nas_root)
+        except Exception as exc:
+            self._api_log("[Clips] Catalog merge failed: %s" % exc)
+            clips = []
+            for raw in local_clips:
+                row = dict(raw)
+                row["location"] = "local"
+                row["availability"] = "online"
+                row["nas_path"] = ""
+                row["sha256"] = ""
+                row["offloaded_at"] = 0.0
+                clips.append(row)
+            if error is None:
+                error = exc
+
         self._clips_cache = clips
         self._clips_error = error
         self._clips_root = root
-        self._queue_thumb_work(clips, root)
+        # Local clips: full 4-frame thumbs under recording_root.
+        # Remote/cached: one APP_DIR poster (from NAS path or cached file).
+        thumb_src = [
+            c for c in clips
+            if c.get("location") == "local" and c.get("path")
+            and os.path.isfile(c["path"])
+        ]
+        self._queue_thumb_work(thumb_src, root)
+        self._queue_poster_work(clips)
+        # Reconcile index with NAS in the background — never blocks the list.
+        self._schedule_nas_backfill(force=True)
+
+    def _schedule_nas_backfill(self, force=False):
+        """Walk NAS into the index off the list path."""
+        if self._clips_backfill_busy:
+            return
+        age = time.time() - self._clips_backfill_at
+        if not force and age < 300:
+            return
+        nas_root = self._resolved_nas_root()
+        if not nas_root:
+            return
+        self._clips_backfill_busy = True
+
+        def worker():
+            try:
+                result = self._clip_catalog.backfill_from_nas(nas_root)
+                if result.get("ok") and int(result.get("added") or 0) > 0:
+                    # Re-merge so new index rows appear without a full local rescan.
+                    local = [
+                        c for c in (self._clips_cache or [])
+                        if c.get("location") == "local" and c.get("path")
+                    ]
+                    # Prefer a fresh local scan payload shape.
+                    local_rows = [{
+                        "game": c["game"], "name": c["name"], "path": c["path"],
+                        "rel": c["rel"], "size": c["size"], "mtime": c["mtime"],
+                    } for c in local]
+                    try:
+                        self._clips_cache = self._merge_clips(
+                            local_rows, nas_root=nas_root)
+                    except Exception as exc:
+                        self._api_log("[Clips] Post-backfill merge failed: %s" % exc)
+                    self._queue_poster_work(self._clips_cache or [])
+            except Exception as exc:
+                self._api_log("[Clips] NAS backfill failed: %s" % exc)
+            finally:
+                self._clips_backfill_busy = False
+                self._clips_backfill_at = time.time()
+
+        threading.Thread(target=worker, daemon=True).start()
 
     def _queue_thumb_work(self, clips, root_dir):
         """Single-flight backfill for Length + thumbnails (7f)."""
@@ -1959,16 +2357,71 @@ class Api:
 
         threading.Thread(target=worker, daemon=True).start()
 
+    def _queue_poster_work(self, clips):
+        """Pull mid-frame posters for remote/cached rows without full download."""
+        if not thumbs.available() or not clips:
+            return
+        if getattr(self, "_poster_scan_busy", False):
+            return
+        app_dir = getattr(self._clip_catalog, "_app_dir", None)
+        if not app_dir:
+            return
+        candidates = []
+        for c in clips:
+            loc = c.get("location") or "local"
+            if loc == "local":
+                continue
+            rel = c.get("rel") or ""
+            if not rel or thumbs.have_poster(app_dir, rel):
+                continue
+            src = ""
+            if loc == "cached":
+                src = c.get("path") or self._clip_catalog.cached_file(rel) or ""
+            if not src:
+                src = c.get("nas_path") or ""
+            if not src or not os.path.isfile(src):
+                continue
+            candidates.append((rel, src))
+        if not candidates:
+            return
+        newest = sorted(
+            candidates,
+            key=lambda pair: -(
+                next((c["mtime"] for c in clips if c.get("rel") == pair[0]), 0)
+            ),
+        )[:8]
+        self._poster_scan_busy = True
+
+        def worker():
+            try:
+                for rel, src in newest:
+                    if thumbs.have_poster(app_dir, rel):
+                        continue
+                    seconds = self._clip_durations.get(src)
+                    if not seconds:
+                        seconds = thumbs.duration_of(src)
+                        if seconds:
+                            self._clip_durations[src] = seconds
+                            self._clip_durations[rel] = seconds
+                    thumbs.extract_poster(app_dir, rel, src, duration=seconds)
+            finally:
+                self._poster_scan_busy = False
+
+        threading.Thread(target=worker, daemon=True).start()
+
     def _clips_panel(self):
+        self._seed_clips_from_index()
         self._ensure_clips_scan()
         min_clip = int(self.cfg.get("min_clip_seconds") or 10)
         note = (
             "Clips under min_clip_seconds (%ds) are deleted automatically "
             "and never listed here." % min_clip)
         root = self._clips_root or self.cfg.get("recording_root") or ""
+        indexing = bool(getattr(self, "_clips_backfill_busy", False))
         if self._clips_cache is None:
             return {
                 "scanning": True,
+                "indexing": indexing,
                 "root": root,
                 "error": None,
                 "clips": [],
@@ -1989,14 +2442,63 @@ class Api:
                 "ffmpeg": thumbs.available(),
             }
 
+        nas_root = self._resolved_nas_root()
+        reach = self._nas_up_hint()
+        nas_online = self._clip_catalog.nas_online(nas_root, reachability=reach)
+        # Seed often runs before Offloader attaches and only sees a dead Z:
+        # mapping. When any live root (or Offloader) says online, restamp
+        # Offline badges without waiting for the 30s rescan timer.
+        if self._clips_cache:
+            stale = False
+            for c in self._clips_cache:
+                if c.get("location") != "remote":
+                    continue
+                avail = c.get("availability") or "online"
+                if nas_online and avail == "offline":
+                    stale = True
+                    break
+                if (not nas_online) and avail == "online":
+                    stale = True
+                    break
+            if stale:
+                local_rows = [{
+                    "game": c["game"], "name": c["name"], "path": c["path"],
+                    "rel": c["rel"], "size": c["size"], "mtime": c["mtime"],
+                } for c in self._clips_cache if c.get("location") == "local"]
+                try:
+                    self._clips_cache = self._merge_clips(
+                        local_rows, nas_root=nas_root)
+                except Exception as exc:
+                    self._api_log("[Clips] Availability refresh failed: %s" % exc)
+
+        ranked = sorted(self._clips_cache, key=lambda c: -c.get("mtime", 0))
+        capped = ranked[: self.CLIP_LIST_CAP]
         clips = []
-        for raw in self._clips_cache:
-            path = raw["path"]
-            thumb = self._thumb_data_url(root, path)
-            seconds = self._clip_durations.get(path)
+        app_dir = getattr(self._clip_catalog, "_app_dir", None)
+        for raw in capped:
+            path = raw.get("path") or ""
+            loc = raw.get("location") or "local"
+            rel = raw["rel"]
+            thumb = ""
+            seconds = None
+            if loc == "local" and path:
+                thumb = self._thumb_data_url(root, path)
+                seconds = self._clip_durations.get(path)
+            else:
+                # Prefer APP_DIR poster; fall back to leftover local 4-frame
+                # cache keyed by stem (survives move-mode offload).
+                thumb = self._poster_data_url(app_dir, rel)
+                if not thumb and root:
+                    ghost = os.path.join(root, *rel.split("/"))
+                    thumb = self._thumb_data_url(root, ghost)
+                seconds = (
+                    self._clip_durations.get(rel)
+                    or self._clip_durations.get(path)
+                    or self._clip_durations.get(raw.get("nas_path") or "")
+                )
             clips.append({
                 "path": path,
-                "rel": raw["rel"],
+                "rel": rel,
                 "game": raw["game"],
                 "name": raw["name"],
                 "title": os.path.splitext(raw["name"])[0],
@@ -2007,16 +2509,46 @@ class Api:
                 "length": _length_label(seconds),
                 "initials": _initials(raw["game"]),
                 "thumb": thumb,
+                "location": loc,
+                "availability": raw.get("availability") or "online",
+                "nas_path": raw.get("nas_path") or "",
             })
 
         counts = {}
-        for c in self._clips_cache:
+        for c in capped:
             counts[c["game"]] = counts.get(c["game"], 0) + 1
-        games = [{"key": "", "name": "All clips", "count": len(self._clips_cache)}]
+        games = [{"key": "", "name": "All clips", "count": len(capped)}]
         for game, n in sorted(counts.items(), key=lambda kv: (-kv[1], kv[0].lower())):
             games.append({"key": game, "name": game, "count": n})
 
-        total = sum(c["size"] for c in self._clips_cache)
+        total = sum(c["size"] for c in capped)
+        remote_n = sum(1 for c in capped if (c.get("location") or "") == "remote")
+        local_n = sum(1 for c in capped if (c.get("location") or "") == "local")
+        cached_n = sum(1 for c in capped if (c.get("location") or "") == "cached")
+        # Honest empty guidance — especially when everything was offloaded.
+        if not capped:
+            if nas_root and not nas_online:
+                empty_kind = "nas_offline"
+                empty_title = "No local clips — NAS is offline"
+                empty_body = (
+                    "Offloaded clips stay listed when indexed. "
+                    "Reconnect the NAS, then Refresh to reconcile."
+                )
+            elif nas_root:
+                empty_kind = "empty_indexed"
+                empty_title = "No clips yet"
+                empty_body = (
+                    "Offloaded clips appear here once indexed. "
+                    "Use Sync / Refresh when the NAS is up."
+                )
+            else:
+                empty_kind = "empty_local"
+                empty_title = "No clips yet"
+                empty_body = note
+        else:
+            empty_kind = ""
+            empty_title = ""
+            empty_body = ""
         return {
             "scanning": False,
             "root": root,
@@ -2024,14 +2556,27 @@ class Api:
             "clips": clips,
             "games": games,
             "summary": {
-                "count": len(self._clips_cache),
+                "count": len(capped),
                 "total_bytes": total,
                 "total_label": _format_bytes(total),
+                "local": local_n,
+                "remote": remote_n,
+                "cached": cached_n,
             },
             "min_clip_note": note,
             "ffmpeg": thumbs.available(),
             "capped": len(self._clips_cache) > self.CLIP_LIST_CAP,
             "cap": self.CLIP_LIST_CAP,
+            "nas_online": nas_online,
+            "nas_configured": bool(nas_root),
+            "indexing": indexing,
+            "empty_kind": empty_kind,
+            "empty_title": empty_title,
+            "empty_body": empty_body,
+            "delete_policy": (
+                "Local/cache deletes never remove the NAS copy. "
+                "Remote-only rows can be removed from the list only."
+            ),
         }
 
     def _thumb_data_url(self, root, clip_path):
@@ -2052,6 +2597,25 @@ class Api:
             return ""
         url = "data:image/webp;base64," + data
         self._thumb_data_cache[clip_path] = url
+        return url
+
+    def _poster_data_url(self, app_dir, rel):
+        if not app_dir or not rel:
+            return ""
+        key = "poster:" + rel
+        cached = self._thumb_data_cache.get(key)
+        if cached is not None:
+            return cached
+        frame = thumbs.poster_path(app_dir, rel)
+        if not frame or not os.path.isfile(frame):
+            return ""
+        try:
+            with open(frame, "rb") as f:
+                data = base64.b64encode(f.read()).decode("ascii")
+        except OSError:
+            return ""
+        url = "data:image/webp;base64," + data
+        self._thumb_data_cache[key] = url
         return url
 
     def _forecast(self):
@@ -2128,6 +2692,55 @@ def subprocess_reveal(path):
         subprocess.Popen(["explorer", "/select,", path])
     else:
         subprocess.Popen(["explorer", path])
+
+
+def subprocess_open(path):
+    """Open a file with its shell association from any thread.
+
+    ``os.startfile`` talks to COM and frequently raises
+    ``WinError -2146959355`` (CO_E_SERVER_EXEC_FAILURE) when called off the
+    UI thread — exactly the path clip downloads finish on. ``cmd /c start``
+    and ``ShellExecuteW`` avoid that apartment trap.
+    """
+    import subprocess
+    path = os.path.normpath(path)
+    if not os.path.isfile(path):
+        raise FileNotFoundError(path)
+    try:
+        size = os.path.getsize(path)
+    except OSError as exc:
+        raise OSError("Can't read cached clip: %s" % exc) from exc
+    if size <= 0:
+        raise OSError("Cached clip is empty — try downloading again.")
+
+    # 1) ShellExecuteW — works when the default player COM server is healthy.
+    try:
+        import ctypes
+        rc = int(ctypes.windll.shell32.ShellExecuteW(
+            None, "open", path, None, os.path.dirname(path) or None, 1))
+        # Per MSDN: return value > 32 means success.
+        if rc > 32:
+            return
+    except Exception:
+        pass
+
+    # 2) cmd start — empty title arg is required when the path is quoted.
+    #    Runs out-of-process, so it does not care which thread we are on.
+    try:
+        subprocess.Popen(
+            ["cmd", "/c", "start", "", path],
+            close_fds=True,
+        )
+        return
+    except OSError:
+        pass
+
+    # 3) Last resort: reveal in Explorer so the user can open manually.
+    subprocess_reveal(path)
+    raise OSError(
+        "Couldn't launch the default player for this clip. "
+        "It is selected in Explorer — open it from there."
+    )
 
 
 def _format_bytes(n):
@@ -2225,7 +2838,8 @@ def main():
     # from the 150% screen to a 100% one left a 1898px-wide window that is
     # 1898 logical px there - "it goes huge". v2 additionally scales the
     # non-client area and notifies child windows. The resize is still ours to
-    # do; see NebulaHost.start_window_watch.
+    # do; see NebulaHost._rescale_for_dpi (preserves logical size across DPI,
+    # floors at MIN_*, refreshes toast/overlay placement).
     #
     # Must run before any window exists: the first awareness call in a process
     # wins, and pywebview calls the old SetProcessDPIAware() when it builds the
@@ -2300,7 +2914,7 @@ def main():
 
     # ?nowind=1 / ?nosheet=1 / ?hud=1 - measurement switches, see app.css.
     url_args = next((x[6:] for x in sys.argv if x.startswith("--url=")), "")
-    index = INDEX + ("?" + url_args if url_args else "")
+    index = spike_page_url(INDEX, url_args, start_hidden=start_hidden)
 
     window = webview.create_window(
         "Nebula",
@@ -2308,22 +2922,29 @@ def main():
         js_api=api,
         width=dv.WIDTH,
         height=dv.HEIGHT,
-        min_size=(dv.MIN_WIDTH, dv.MIN_HEIGHT),
+        min_size=(dv.MIN_WIDTH, dv.MIN_HEIGHT),  # 1080×700; no max — desktop decides
         frameless=True,          # the v3 titlebar is ours, drawn in HTML
         easy_drag=False,         # .pywebview-drag-region handles it instead
         background_color="#0A0812",
+        # resizable=True alone is not enough: frameless sets FormBorderStyle.None
+        # and strips WS_THICKFRAME. host.enable_user_resize() restores the bit;
+        # HTML .resize-edge grips call begin_resize → WM_NCLBUTTONDOWN.
         resizable=True,
         hidden=start_hidden,
     )
     api._window = window
     host.attach(window)
     host._visible = not start_hidden
+    host._awake = not start_hidden
 
     def _boot():
         host.start_tray()
         host.start_taskbar_icon()
         host.start_replay()
         host.start_hotkeys()
+        # Style bits only at boot. Never SWP_FRAMECHANGED — blanks WebView2
+        # on this frameless form. HTML grips + thick-frame bit do the resize.
+        host.enable_user_resize()
         host.start_window_watch()
         host.start_poll()
         host.autostart()
