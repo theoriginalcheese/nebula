@@ -271,6 +271,12 @@ FIELDS = (
                "record the same game again. A different game asks as soon as "
                "it is detected. 0 = ask immediately for the same game too."),
 
+    Field("same_game_reopen_cooldown_seconds", "Same-game reopen quiet", "int",
+          "recording", minimum=0, maximum=3600,
+          hint="After a game closes and recording stops, wait this many seconds "
+               "before auto-recording that same game again. A different game "
+               "still records immediately. 0 = no quiet window."),
+
     Field("sync_folder", "Sync folder", "path", "legacy",
           restart="the classifier resolves its data path at launch",
           hint="Old folder-based sync for games.json, superseded by the GitHub "

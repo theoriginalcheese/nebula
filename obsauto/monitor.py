@@ -215,6 +215,9 @@ class Monitor:
     # After a manual Stop, wait this long before offering "record again?" for
     # the same game. A different game prompts as soon as it debounces in.
     HOLDOFF_SAME_GAME_SECONDS = 60
+    # After a natural game-process exit, quiet window before auto-recording
+    # that same basename again. Other games are unaffected.
+    REOPEN_COOLDOWN_SECONDS = 30
 
     def __init__(self, obs_client, classifier, config, on_log=None, on_state=None, on_notify=None,
                  on_connection_change=None, offloader=None, on_record_prompt=None):
@@ -246,6 +249,9 @@ class Monitor:
         self._hold_off_skip = set()      # basenames the user said "Not now" to
         self._hold_off_prompted = None   # basename we last prompted for
         self._hold_off_pending = None    # full target tuple awaiting Accept
+        # Natural close: same-game reopen quiet window (no prompt).
+        self._reopen_cooldown_basename = None
+        self._reopen_cooldown_until = 0.0
         self._last_foreground = None   # so the hero's foreground line only fires on change
         self._audio_keep_alive = AudioKeepAlive(
             config.get("keep_alive_audio_processes", ["discord.exe"]), on_log=self.log,
@@ -272,7 +278,38 @@ class Monitor:
         self._pending_count = 0
         self._auto_paused = False
         self.clear_hold_off()
+        self.clear_reopen_cooldown()
         self.log("[Monitor] Stopped.")
+
+    def clear_reopen_cooldown(self):
+        was = self._reopen_cooldown_basename
+        self._reopen_cooldown_basename = None
+        self._reopen_cooldown_until = 0.0
+        if was:
+            self.log(f"[Monitor] Same-game reopen cooldown cleared ({was}).")
+
+    def _arm_reopen_cooldown(self, basename):
+        needle = (basename or "").lower()
+        if not needle:
+            return
+        wait = float(self.config.get(
+            "same_game_reopen_cooldown_seconds", self.REOPEN_COOLDOWN_SECONDS))
+        if wait <= 0:
+            return
+        self._reopen_cooldown_basename = needle
+        self._reopen_cooldown_until = time.time() + wait
+        self.log(f"[Monitor] Same-game reopen cooldown {wait:.0f}s for {needle}.")
+
+    def _reopen_cooldown_active(self, basename):
+        needle = (basename or "").lower()
+        if not needle or not self._reopen_cooldown_basename:
+            return False
+        if needle != self._reopen_cooldown_basename:
+            return False
+        if time.time() >= self._reopen_cooldown_until:
+            self.clear_reopen_cooldown()
+            return False
+        return True
 
     def note_manual_stop(self, basename=None, display_name=None):
         """UI clicked Stop. Suppress auto-restart until confirm / exit / clear."""
@@ -306,6 +343,7 @@ class Monitor:
         """User tapped Record on the hold-off toast — start the pending game."""
         target = self._hold_off_pending
         self.clear_hold_off()
+        self.clear_reopen_cooldown()
         if target is None:
             return False
         self._pending_target = _UNSET
@@ -628,9 +666,17 @@ class Monitor:
             self._retarget_live(target)
             return
 
-        prev_name = self._recording_target[2] if self._recording_target else "unknown"
+        prev = self._recording_target
+        prev_name = prev[2] if prev else "unknown"
+        prev_basename = (prev[1] or "").lower() if prev else None
         if not self._stop_current_recording(prev_name):
             return  # still out of sync with OBS - don't touch _recording_target, retry next tick
+
+        # Natural close: previous game process is gone → quiet same-game reopen.
+        # Manual Stop clears _recording_target first, so prev is None there.
+        if (prev_basename and not hold_recording
+                and not self._basename_running(prev_basename)):
+            self._arm_reopen_cooldown(prev_basename)
 
         if target is not None:
             _, _, display_name, folder = target
@@ -664,6 +710,8 @@ class Monitor:
                 self.log(f"[OBS] Recording started: {display_name} -> {folder}")
                 self.on_state(game=display_name, folder=folder)
                 self.on_notify("start", display_name)
+                if exe == self._reopen_cooldown_basename:
+                    self.clear_reopen_cooldown()
                 # No appid field: the classifier has no lookup from an exe back
                 # to a Steam AppID yet. The event shape allows one, and 7d adds
                 # the source; writing a guess in the meantime would be exactly
@@ -817,6 +865,15 @@ class Monitor:
                             # Prompt for a different game immediately, or the
                             # same game after HOLDOFF_SAME_GAME_SECONDS.
                             self._maybe_prompt_hold_off(target)
+                            self.on_state(game=target[2], folder=None,
+                                          idle=should_pause)
+                            self._pending_target = _UNSET
+                            self._pending_count = 0
+                        elif (target is not None
+                                and self._recording_target is None
+                                and self._reopen_cooldown_active(target[1])):
+                            # Natural close quiet window: same game stays quiet;
+                            # other games fall through to _apply_target above.
                             self.on_state(game=target[2], folder=None,
                                           idle=should_pause)
                             self._pending_target = _UNSET

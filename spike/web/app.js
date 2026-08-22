@@ -2022,6 +2022,11 @@ function renderGames(d) {
         <span class="pending-badge">Unclassified</span>
         <div class="pending-name">${esc(p.name)}</div>
         <div class="pending-sub">${esc(p.sub)}</div>
+        <label class="pending-folder">
+          <span>Folder name</span>
+          <input class="field-input no-drag" data-pending-name type="text"
+                 value="${esc(p.name)}" autocomplete="off">
+        </label>
       </div>
       <div class="pending-actions">
         <button class="pill no-drag" data-classify="1" data-key="${esc(p.key)}">It's a game</button>
@@ -2167,6 +2172,18 @@ function renderProfilePanel(errs) {
     ${profileState.summary
       ? `<div class="profile-summary">${esc(profileState.summary)}</div>` : ""}
     ${inheritNote}
+    <div class="profile-folder field">
+      <div class="field-head">
+        <span class="field-label">Folder / display name</span>
+      </div>
+      <div class="profile-folder-row">
+        <input class="field-input no-drag" data-game-name type="text"
+               value="${esc(profileState.name)}" autocomplete="off"
+               placeholder="Recording folder name">
+        <button type="button" class="pill ghost no-drag" data-rename-game>Save name</button>
+      </div>
+      <div class="field-hint">Future recordings only — existing folders stay put.</div>
+    </div>
     <div class="profile-fields">
       ${profileFieldHtml("enabled", "Profile enabled", p.enabled !== false, "bool", errs.enabled)}
       <div class="profile-grid">
@@ -2180,6 +2197,28 @@ function renderProfilePanel(errs) {
     ${gbLine}`;
   host.querySelectorAll(".listbox").forEach(bindListboxValue);
   ensureSpots();
+}
+
+async function saveGameDisplayName() {
+  if (!profileState.basename) return;
+  const host = $("profile-body");
+  const input = host && host.querySelector("[data-game-name]");
+  const name = input ? input.value.trim() : "";
+  if (!name) {
+    fail("games", "Folder name can’t be empty");
+    return;
+  }
+  const r = await window.pywebview.api.rename_game(profileState.basename, name);
+  if (!r || !r.ok) {
+    fail("games", (r && r.error) || "rename failed");
+    return;
+  }
+  profileState.name = r.name || name;
+  pendingGameSelect = r.name || name;
+  await load();
+  if (profileState.basename) {
+    await selectGame(profileState.basename, profileState.name);
+  }
 }
 
 async function selectGame(basename, name) {
@@ -3432,9 +3471,18 @@ document.addEventListener("click", async (e) => {
 
   const classify = e.target.closest("[data-classify]");
   if (classify) {
+    const card = classify.closest("#pending-core") || $("pending-core");
+    const nameInput = card && card.querySelector("[data-pending-name]");
+    const displayName = nameInput ? nameInput.value.trim() : "";
     await window.pywebview.api.classify_pending(
-      classify.dataset.key, classify.dataset.classify === "1");
+      classify.dataset.key, classify.dataset.classify === "1",
+      classify.dataset.classify === "1" ? displayName : null);
     await load();
+    return;
+  }
+
+  if (e.target.closest("[data-rename-game]")) {
+    await saveGameDisplayName();
     return;
   }
 
@@ -3546,7 +3594,17 @@ document.addEventListener("contextmenu", async (e) => {
   const row = e.target.closest("[data-promote]");
   if (!row) return;
   e.preventDefault();
-  await window.pywebview.api.promote_non_game(row.dataset.promote);
+  const basename = row.dataset.promote || "";
+  const suggested = basename.replace(/\.exe$/i, "");
+  let name = suggested;
+  try {
+    const typed = window.prompt("Folder / display name for this game:", suggested);
+    if (typed === null) return;
+    name = (typed || "").trim() || suggested;
+  } catch (_) {
+    /* prompt unavailable — fall back to stem */
+  }
+  await window.pywebview.api.promote_non_game(basename, name);
   await load();
 });
 

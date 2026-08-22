@@ -109,10 +109,10 @@ app._toast_replace(
 settle(450)
 capture("08_prompt")
 
-# Also a "New game detected" prompt variant
+# Also a "Record this game?" prompt variant (hold-off switch)
 app._toast_replace(
     "prompt", "Record Clair Obscur: Expedition 33?",
-    {"title": "New game detected"},
+    {"title": "Record this game?"},
     actions=[("Record", lambda: None), ("Not now", lambda: None)],
 )
 settle(450)

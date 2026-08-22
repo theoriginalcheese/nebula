@@ -854,6 +854,7 @@ class NebulaHost:
         except Exception as exc:
             self._log("[Overlay] %s" % exc)
 
+    # --- transport ------------------------------------------------------
 
     def _toggle_record(self):
         self._transport("record")
