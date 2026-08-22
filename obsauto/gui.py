@@ -2132,7 +2132,8 @@ class AppWindow:
         frame.pack(fill="both", expand=True)
         return frame
 
-    def _list_row(self, parent, title, detail, meta, command=None, action=None):
+    def _list_row(self, parent, title, detail, meta, command=None, action=None,
+                  actions=None):
         row = ctk.CTkFrame(parent, fg_color=CARD_TINT, corner_radius=9)
         row.pack(fill="x", padx=2, pady=3)
         ctk.CTkLabel(row, text=title, text_color=TEXT, anchor="w",
@@ -2140,26 +2141,31 @@ class AppWindow:
             anchor="w", padx=12, pady=(8, 0))
         ctk.CTkLabel(row, text=detail, text_color=MUTED, anchor="w",
                      font=ctk.CTkFont(size=11)).pack(anchor="w", padx=12, pady=(0, 8))
-        action_w = 0
+        buttons = list(actions or [])
         if action:
+            buttons.append(action)
+        action_w = 0
+        x_off = -10
+        for label, callback in reversed(buttons):
             # A row action has to be visible. The promote path used to be
             # right-click only, which is the same as not existing: it worked
             # perfectly and still read as "I can't change non-games into
             # games", because nothing on screen said it was there.
-            label, callback = action
-            action_w = 96 if len(label) > 8 else 76
-            ctk.CTkButton(row, text=label, command=callback, width=action_w,
+            bw = 96 if len(label) > 8 else 76
+            ctk.CTkButton(row, text=label, command=callback, width=bw,
                           height=26, fg_color=SURFACE, hover_color=SURFACE_HOVER,
                           text_color=ACCENT_LIGHT, border_width=1,
                           border_color=EDGE, corner_radius=8,
                           font=ctk.CTkFont(size=11)).place(
-                relx=1.0, rely=0.5, anchor="e", x=-10)
+                relx=1.0, rely=0.5, anchor="e", x=x_off)
+            x_off -= bw + 8
+            action_w += bw + 8
         if meta:
             # Sits left of the action when there is one, so a row can carry
             # both a value (7d's profile column) and a button.
             ctk.CTkLabel(row, text=meta, text_color=FAINT, anchor="e",
                          font=ctk.CTkFont(size=11)).place(
-                relx=1.0, rely=0.5, anchor="e", x=-(action_w + 22 if action_w else 12))
+                relx=1.0, rely=0.5, anchor="e", x=-(action_w + 12 if action_w else 12))
         if command:
             for widget in (row, *row.winfo_children()):
                 widget.bind("<Button-1>", lambda _e: command())
@@ -2726,8 +2732,12 @@ class AppWindow:
                 self._list_row(
                     self._games_list, name, exes,
                     profiles.summary(profile) or "inherits default",
-                    action=("Profile",
-                            lambda e=primary, n=name: self._edit_profile(e, n)))
+                    actions=[
+                        ("Rename",
+                         lambda e=primary, n=name: self._rename_known_game(e, n)),
+                        ("Profile",
+                         lambda e=primary, n=name: self._edit_profile(e, n)),
+                    ])
 
         if not non_games:
             self._empty_note(self._nongames_list, "Nothing ignored yet.")
@@ -2761,8 +2771,36 @@ class AppWindow:
                 "Nebula will start recording when it's in the foreground.",
                 parent=self.root):
             return False
-        self.classifier.mark_game(basename, suggest_display_name(basename))
-        self._log(f"[Manual] {basename} -> game")
+        name = self._ask_display_name(
+            basename, suggestion=suggest_display_name(basename))
+        if not name:
+            return False
+        self.classifier.mark_game(basename, name)
+        self._log(f"[Manual] {basename} -> game ({name})")
+        self._refresh_games()
+        self._push_game_data()
+        return True
+
+    def _rename_known_game(self, basename, display_name):
+        """Change folder/display name for an already-classified game."""
+        name = self._ask_display_name(basename, suggestion=display_name)
+        if not name or name == display_name:
+            return False
+        # Same display_name may cover several exes — update them all.
+        snap = self.classifier.snapshot()
+        games = snap.get("games") or {}
+        updated = []
+        for key, value in games.items():
+            if isinstance(value, dict):
+                dn = value.get("display_name") or key
+            else:
+                dn = key
+            if key.lower() == (basename or "").lower() or dn == display_name:
+                if self.classifier.set_display_name(key, name):
+                    updated.append(key)
+        if not updated:
+            return False
+        self._log(f"[Manual] Renamed {', '.join(updated)} -> {name}")
         self._refresh_games()
         self._push_game_data()
         return True
@@ -5721,8 +5759,8 @@ class AppWindow:
             title = "Record again?"
             sub = display_name or basename or "this game"
         else:
-            title = "New game detected"
-            sub = f"Record {display_name or basename}?"
+            title = "Record this game?"
+            sub = display_name or basename or "this game"
         # Keep references the button handlers need; accept reads pending from Monitor.
         def accept():
             toast = getattr(self, "_toast", None)

@@ -1572,6 +1572,21 @@ html, body {
   font-size: var(--t-body-size); font-weight: 500; color: var(--text);
   margin-bottom: 2px;
 }
+.profile-folder { margin: 4px 0 8px; }
+.profile-folder-row {
+  display: flex; gap: 8px; align-items: center;
+}
+.profile-folder-row .field-input { flex: 1; min-width: 0; }
+.profile-folder .field-hint {
+  margin-top: 6px;
+  font-size: 10px; color: var(--text-eyebrow); line-height: 1.4;
+}
+.pending-folder {
+  display: flex; flex-direction: column; gap: 4px;
+  margin-top: 8px;
+  font-size: 10px; color: var(--text-eyebrow);
+}
+.pending-folder .field-input { margin-top: 2px; }
 .profile-summary {
   font-family: var(--font-mono); font-size: var(--t-mono-size);
   color: var(--text-tertiary); margin-bottom: 8px;

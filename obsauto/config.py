@@ -128,6 +128,10 @@ DEFAULTS = {
     # again?" for the same still-running game. A different game prompts as
     # soon as it is detected. 0 = prompt for the same game immediately too.
     "holdoff_same_game_seconds": 60,
+    # After a game process exits and recording stops, wait this many seconds
+    # before auto-starting the *same* game again. Other games still auto-
+    # record immediately. 0 = no reopen quiet window.
+    "same_game_reopen_cooldown_seconds": 30,
 }
 
 

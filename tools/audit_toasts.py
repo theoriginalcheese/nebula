@@ -69,10 +69,10 @@ CASES = [
     ("prompt_again", "prompt", "Helldivers 2",
      {"title": "Record again?"}, True),
     ("prompt_new", "prompt", "Record Clair Obscur: Expedition 33?",
-     {"title": "New game detected"}, True),
+     {"title": "Record this game?"}, True),
     ("prompt_long", "prompt",
      "Record The Elder Scrolls IV: Oblivion Remastered?",
-     {"title": "New game detected"}, True),
+     {"title": "Record this game?"}, True),
 ]
 
 

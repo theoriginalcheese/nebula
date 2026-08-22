@@ -2094,36 +2094,75 @@ class Api:
                     ),
                 })
 
-        synced = bool(self.cfg.get("github_gamedata_repo") and
-                      self.cfg.get("github_token"))
+        synced = bool(self._gamesync and self._gamesync.enabled)
+        foot = "Stored in games.json · this machine only"
+        if synced and hasattr(self._gamesync, "status_label"):
+            foot = "Stored in games.json · %s" % self._gamesync.status_label()
+        elif synced:
+            foot = "Stored in games.json · shared via GitHub"
+        foot = "%s · rename changes future folders only" % foot
         return {
             "pending": pending,
             "games": games,
             "non_games": non_games,
-            "foot_games": (
-                "Stored in games.json · shared via GitHub" if synced
-                else "Stored in games.json · this machine only"),
+            "foot_games": foot,
             "foot_non": "Right-click a row to move it back to Games.",
         }
 
-    def classify_pending(self, key, is_game):
+    def rename_game(self, name_or_basename, new_display_name):
+        """Update display_name for a known game (future recording folders)."""
+        needle = (name_or_basename or "").strip()
+        new_name = (new_display_name or "").strip()
+        if not needle:
+            return {"ok": False, "error": "empty key"}
+        if not new_name:
+            return {"ok": False, "error": "empty display name"}
+        from obsauto.monitor import sanitize_folder_name
+        if not sanitize_folder_name(new_name):
+            return {"ok": False, "error": "name is not a usable folder name"}
+
+        snap = self._classifier.snapshot()
+        games = snap.get("games") or {}
+        targets = []
+        for key, value in games.items():
+            if key.lower() == needle.lower():
+                targets.append(key)
+                continue
+            if isinstance(value, dict):
+                dn = value.get("display_name") or key
+            else:
+                dn = key
+            if dn == needle:
+                targets.append(key)
+        if not targets:
+            return {"ok": False, "error": "game not found"}
+
+        for key in targets:
+            if not self._classifier.set_display_name(key, new_name):
+                return {"ok": False, "error": "could not rename %s" % key}
+        self._api_log("[Games] Renamed %s -> %s" % (", ".join(targets), new_name))
+        return {"ok": True, "name": new_name, "exes": targets,
+                "games": self._games()}
+
+    def classify_pending(self, key, is_game, display_name=None):
         key = (key or "").strip()
         with self._classifier._lock:
             item = self._classifier._pending_manual.pop(key, None)
         if not item:
             return {"ok": False, "error": "nothing pending under that key"}
         basenames, suggested = item
-        name = suggested or (basenames[0] if basenames else key)
+        name = (display_name or "").strip() or suggested or (
+            basenames[0] if basenames else key)
         self._classifier.resolve_review(basenames, bool(is_game),
                                         display_name=name)
         self._classifier.finish_review(key)
         return {"ok": True, "games": self._games()}
 
-    def promote_non_game(self, basename):
+    def promote_non_game(self, basename, display_name=None):
         basename = (basename or "").strip().lower()
         if not basename:
             return {"ok": False, "error": "empty"}
-        display = os.path.splitext(basename)[0]
+        display = (display_name or "").strip() or os.path.splitext(basename)[0]
         self._classifier.mark_game(basename, display, source="manual")
         return {"ok": True, "games": self._games()}
 

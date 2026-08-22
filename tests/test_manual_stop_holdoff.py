@@ -109,7 +109,7 @@ check("skipped game does not re-prompt", prompts == [], prompts)
 # Different game → switch prompt immediately.
 mon._hold_off_prompted = None
 mon._maybe_prompt_hold_off(target_b)
-check("switch prompt for new game", len(prompts) == 1 and prompts[0][2] == "switch",
+check("switch prompt for other game", len(prompts) == 1 and prompts[0][2] == "switch",
       prompts)
 
 # Accept starts recording and clears hold-off.

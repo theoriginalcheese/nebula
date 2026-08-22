@@ -297,10 +297,31 @@ class Classifier:
     def mark_game(self, basename, display_name, source="manual"):
         basename = basename.lower()
         with self._lock:
-            self._data["games"][basename] = {"display_name": display_name, "source": source}
+            prev = self._data["games"].get(basename)
+            entry = dict(prev) if isinstance(prev, dict) else {}
+            entry["display_name"] = display_name
+            entry["source"] = source
+            self._data["games"][basename] = entry
             self._data["non_games"].pop(basename, None)
             self._save()
         self.log(f"[Classifier] {basename} -> game ({display_name}) [{source}]")
+
+    def set_display_name(self, basename, display_name):
+        """Rename the folder/display name without dropping profile / appid."""
+        basename = (basename or "").lower()
+        display_name = (display_name or "").strip()
+        if not basename or not display_name:
+            return False
+        with self._lock:
+            prev = self._data["games"].get(basename)
+            if not isinstance(prev, dict):
+                return False
+            entry = dict(prev)
+            entry["display_name"] = display_name
+            self._data["games"][basename] = entry
+            self._save()
+        self.log(f"[Classifier] {basename} renamed -> {display_name}")
+        return True
 
     def mark_non_game(self, basename):
         basename = basename.lower()
