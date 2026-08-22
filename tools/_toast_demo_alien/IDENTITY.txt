@@ -1,0 +1,4 @@
+host=ALIEN-PC
+cwd=C:\Users\antho\Downloads\nebula
+argv=tools\_capture_alien_toasts.py
+git_head=9a107d48a3bcc99d35c199a3ce581c9945f87c92

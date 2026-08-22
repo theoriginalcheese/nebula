@@ -7,12 +7,19 @@ both ends afterwards; TeraCopy never becomes the delete authority.
 
 Target is always a folder (TeraCopy's rule). We stage into a temp subfolder,
 verify, then atomically promote into place.
+
+TeraCopy has **no** official silent/headless switch — ``/Close`` only exits
+after the copy, and the UI still opens during the transfer. We therefore:
+  1. start it with CREATE_NO_WINDOW + SW_HIDE, and
+  2. keep hammering ShowWindow(SW_HIDE) on every top-level HWND owned by that
+     PID until it exits, so the window never settles on screen.
 """
 from __future__ import annotations
 
 import os
 import shutil
 import subprocess
+import threading
 import time
 
 from .silent_proc import run_kwargs
@@ -24,6 +31,9 @@ _FALLBACKS = (
 )
 
 _which_cache = None
+
+# Win32 ShowWindow nCmdShow
+_SW_HIDE = 0
 
 
 def _reset_cache():
@@ -65,6 +75,48 @@ def _timeout_for(src):
     return max(120, int(size / (30 * 1024 * 1024)) + 120)
 
 
+def _hide_pid_windows(pid):
+    """Hide every top-level window owned by ``pid`` (best-effort, Windows)."""
+    if os.name != "nt" or not pid:
+        return 0
+    try:
+        import ctypes
+        from ctypes import wintypes
+    except Exception:
+        return 0
+
+    user32 = ctypes.windll.user32
+    hidden = 0
+
+    @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+    def _enum(hwnd, _lparam):
+        nonlocal hidden
+        proc = wintypes.DWORD()
+        user32.GetWindowThreadProcessId(hwnd, ctypes.byref(proc))
+        if proc.value != pid:
+            return True
+        # Hide even if not yet "visible" — TeraCopy often creates then shows.
+        if user32.IsWindow(hwnd):
+            user32.ShowWindow(hwnd, _SW_HIDE)
+            hidden += 1
+        return True
+
+    try:
+        user32.EnumWindows(_enum, 0)
+    except Exception:
+        return 0
+    return hidden
+
+
+def _window_suppressor(pid, stop_event, interval=0.05):
+    """Tight loop: TeraCopy can recreate/show its main window mid-transfer."""
+    while not stop_event.wait(interval):
+        try:
+            _hide_pid_windows(pid)
+        except Exception:
+            pass
+
+
 def copy_into(src, dest_dir, configured="", log=None):
     """Copy ``src`` into ``dest_dir`` via TeraCopy (same basename).
 
@@ -83,23 +135,44 @@ def copy_into(src, dest_dir, configured="", log=None):
     out = os.path.join(dest_dir, os.path.basename(src))
 
     cmd = [exe, "Copy", src, dest_dir, "/OverwriteAll", "/Close"]
-    log("[Offload] TeraCopy → %s" % dest_dir)
-    # run_kwargs applies CREATE_NO_WINDOW + SW_HIDE so no console / window flash.
-    # If TeraCopy refuses to run hidden, callers fall back to the silent built-in.
+    log("[Offload] TeraCopy → %s (background)" % dest_dir)
     kwargs = run_kwargs()
     kwargs.update({
         "cwd": os.path.dirname(exe),
-        "timeout": _timeout_for(src),
         "stdin": subprocess.DEVNULL,
         "stdout": subprocess.DEVNULL,
         "stderr": subprocess.DEVNULL,
     })
+    # Prefer Popen so we can suppress windows for the whole lifetime.
+    stop = threading.Event()
+    suppressor = None
     try:
-        result = subprocess.run(cmd, **kwargs)
-    except subprocess.TimeoutExpired as exc:
-        raise RuntimeError("TeraCopy timed out") from exc
+        proc = subprocess.Popen(cmd, **kwargs)
     except OSError as exc:
         raise RuntimeError("TeraCopy failed to start: %s" % exc) from exc
+
+    try:
+        # Hide immediately, then keep suppressing until exit.
+        _hide_pid_windows(proc.pid)
+        suppressor = threading.Thread(
+            target=_window_suppressor,
+            args=(proc.pid, stop),
+            name="teracopy-hide",
+            daemon=True,
+        )
+        suppressor.start()
+        try:
+            proc.wait(timeout=_timeout_for(src))
+        except subprocess.TimeoutExpired as exc:
+            try:
+                proc.kill()
+            except OSError:
+                pass
+            raise RuntimeError("TeraCopy timed out") from exc
+    finally:
+        stop.set()
+        if suppressor is not None:
+            suppressor.join(timeout=1.0)
 
     # Give the filesystem a beat after /Close before we inspect the result.
     deadline = time.time() + 8
@@ -110,7 +183,7 @@ def copy_into(src, dest_dir, configured="", log=None):
     else:
         raise RuntimeError(
             "TeraCopy finished without a destination file (exit %s)"
-            % getattr(result, "returncode", "?"))
+            % getattr(proc, "returncode", "?"))
 
     try:
         if os.path.getsize(out) != os.path.getsize(src):

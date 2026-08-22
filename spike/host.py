@@ -26,6 +26,8 @@ from obsauto.obs_client import OBSError, OBSClient
 
 ERROR_ALREADY_EXISTS = 183
 _INSTANCE_MUTEX = None
+# Second-launch pulse — the live host waits on this and calls show().
+WAKE_EVENT_NAME = "Local\\Nebula.Wake"
 
 
 def claim_single_instance(name="Nebula.SingleInstance"):
@@ -36,6 +38,37 @@ def claim_single_instance(name="Nebula.SingleInstance"):
         return ctypes.windll.kernel32.GetLastError() != ERROR_ALREADY_EXISTS
     except Exception:
         return True
+
+
+def focus_existing_instance():
+    """Ask the already-running Nebula to show, then exit this process.
+
+    Pulses :data:`WAKE_EVENT_NAME` (host listener → ``show()``) and best-effort
+    restores the HWND titled ``Nebula``. Returns True if either path looked
+    successful — callers still exit either way.
+    """
+    signaled = False
+    try:
+        kernel32 = ctypes.windll.kernel32
+        handle = kernel32.OpenEventW(0x00100002, False, WAKE_EVENT_NAME)  # SYNCHRONIZE|EVENT_MODIFY_STATE
+        if handle:
+            kernel32.SetEvent(handle)
+            kernel32.CloseHandle(handle)
+            signaled = True
+    except Exception:
+        pass
+    focused = False
+    try:
+        user32 = ctypes.windll.user32
+        hwnd = user32.FindWindowW(None, "Nebula")
+        if hwnd:
+            SW_RESTORE = 9
+            user32.ShowWindow(hwnd, SW_RESTORE)
+            user32.SetForegroundWindow(hwnd)
+            focused = True
+    except Exception:
+        pass
+    return signaled or focused
 
 
 def _format_bytes(n):
@@ -136,6 +169,9 @@ class NebulaHost:
         self._awake = True
         self._suspended = False
         self._suspend_seen = set()
+        # Defer WebView TrySuspend until first paint has had a chance.
+        # A false "off screen" at boot freezes the HTML placeholders.
+        self._suspend_after = time.time() + 20.0
         self._quitting = False
         self._tray = None
         self._tray_state = None
@@ -169,6 +205,9 @@ class NebulaHost:
         self._taskbar_icon_stop = threading.Event()
         self._taskbar_icon_thread = None
         self._taskbar_icon_handles = []  # keep HICONs alive
+        self._preview_still_seq = 0
+        self._preview_uri = ""
+        self._preview_last_fetch = 0.0
 
         self.hotkeys = HotkeyManager(on_log=self._log)
         self._windows = NebulaWindows(self, config)
@@ -296,6 +335,74 @@ class NebulaHost:
                 "scene": self._scene_name,
             }
 
+    # Hero still: WebView only (img data-URI). Safe here — unlike Tk canvas,
+    # this does not force a window composite. Fetch on the poll thread while
+    # recording/paused + window visible; serve cache from the API bridge.
+    _PREVIEW_INTERVAL_S = 2.0
+    _PREVIEW_W = 640
+    _PREVIEW_H = 360
+
+    def preview_still_seq(self):
+        """Bump when a new OBS still is available. 0 = none yet (honest empty)."""
+        with self._state_lock:
+            return int(self._preview_still_seq or 0)
+
+    def preview_still(self):
+        """Cached OBS scene still for the hero tile (no live OBS call)."""
+        with self._state_lock:
+            return {
+                "uri": self._preview_uri or "",
+                "seq": int(self._preview_still_seq or 0),
+                "scene": self._scene_name or "",
+            }
+
+    def _clear_preview_still(self):
+        with self._state_lock:
+            self._preview_uri = ""
+            self._preview_still_seq = 0
+            self._preview_last_fetch = 0.0
+
+    def _refresh_preview_still(self):
+        """Grab a scaled program-scene still when the hero would show one."""
+        with self._state_lock:
+            recording = bool(self._is_recording)
+            visible = bool(self._visible)
+            scene = self._scene_name or ""
+            last = float(self._preview_last_fetch or 0.0)
+        if not recording:
+            self._clear_preview_still()
+            return
+        if not visible:
+            return
+        if not self.obs or not self.obs.connected:
+            return
+        now = time.monotonic()
+        if (now - last) < self._PREVIEW_INTERVAL_S:
+            return
+        try:
+            if not scene:
+                scene = self.obs.get_current_program_scene() or ""
+                if scene:
+                    with self._state_lock:
+                        self._scene_name = scene
+            if not scene:
+                return
+            uri = self.obs.get_source_screenshot(
+                scene,
+                image_width=self._PREVIEW_W,
+                image_height=self._PREVIEW_H,
+                image_format="jpg",
+                compression_quality=60,
+            )
+        except OBSError:
+            return
+        if not isinstance(uri, str) or not uri.startswith("data:image/"):
+            return
+        with self._state_lock:
+            self._preview_uri = uri
+            self._preview_still_seq = int(self._preview_still_seq or 0) + 1
+            self._preview_last_fetch = now
+
     # --- window lifecycle: frame 2j -------------------------------------
 
     def attach(self, window):
@@ -339,6 +446,17 @@ class NebulaHost:
                 self.monitor.stop()
             except Exception:
                 pass
+        # Offloader may be attached on the host without a Monitor yet.
+        offloader = getattr(self, "offloader", None)
+        if offloader is None and self.monitor:
+            offloader = getattr(self.monitor, "offloader", None)
+        if offloader is not None:
+            try:
+                stop = getattr(offloader, "stop", None)
+                if callable(stop):
+                    stop()
+            except Exception:
+                pass
         if self.obs and self.obs.connected:
             try:
                 self.obs.disconnect()
@@ -368,14 +486,14 @@ class NebulaHost:
 
         CSS `.asleep` pauses animations and hides the backdrop; WebView2
         TrySuspend stops the renderer/GPU path entirely while minimised.
+
+        Deliberately does **not** ``evaluate_js('setAwake(...)')``. The page
+        already polls ``page_awake()`` once a second. Pushing JS from the
+        window-watch thread while the page is mid-``await snapshot()``
+        deadlocks pywebview's bridge — the UI freezes on the HTML placeholders
+        (``checking…``, ``reading sessions.jsonl…``) forever.
         """
         self._awake = bool(awake)
-        if self.window:
-            js = "setAwake(%s)" % ("true" if awake else "false")
-            try:
-                self.window.evaluate_js(js)
-            except Exception as exc:
-                self._log("[Window] setAwake(%s) failed: %s" % (awake, exc))
         self._suspend_webview(not awake)
 
     def _suspend_webview(self, suspend):
@@ -396,6 +514,8 @@ class NebulaHost:
            get here once the window is minimised or hidden to the tray.
         """
         if not self.window:
+            return
+        if suspend and time.time() < getattr(self, "_suspend_after", 0):
             return
         # Measurement switch, in the same spirit as the page's ?nowind=1 /
         # ?nosheet=1. This is how the ~115 MB in FINDINGS.md was attributed to
@@ -477,6 +597,13 @@ class NebulaHost:
             hwnd = 0
             awake = True
             last_dpi = 0
+            # First paint: the HWND can exist before IsWindowVisible is true.
+            # Suspending the renderer in that window freezes the page on the
+            # HTML placeholders and never recovers. Wait out a short grace, and
+            # never suspend until we've seen the window on-screen once (unless
+            # we started intentionally hidden to the tray).
+            started = time.time()
+            seen_on_screen = not self._visible
             while not self._quitting:
                 time.sleep(1.0)
                 try:
@@ -484,11 +611,13 @@ class NebulaHost:
                         hwnd = user32.FindWindowW(None, "Nebula")
                         if not hwnd:
                             continue
-                        on_screen = bool(user32.IsWindowVisible(hwnd)) and                             not bool(user32.IsIconic(hwnd))
-                        awake = on_screen
-                        self._sleep(awake)
+                    on_screen = (bool(user32.IsWindowVisible(hwnd))
+                                 and not bool(user32.IsIconic(hwnd)))
+                    if on_screen:
+                        seen_on_screen = True
+                    grace = (time.time() - started) < 4.0
+                    if (not on_screen) and (grace or not seen_on_screen):
                         continue
-                    on_screen = bool(user32.IsWindowVisible(hwnd)) and                         not bool(user32.IsIconic(hwnd))
                     if on_screen != awake:
                         awake = on_screen
                         self._sleep(awake)
@@ -502,6 +631,29 @@ class NebulaHost:
                     hwnd = 0
 
         threading.Thread(target=watch, daemon=True).start()
+
+    def start_wake_listener(self):
+        """Second Start Menu launch pulses WAKE_EVENT_NAME → show this window."""
+        def listen():
+            kernel32 = ctypes.windll.kernel32
+            # CreateEventW(lpAttributes, bManualReset, bInitialState, lpName)
+            handle = kernel32.CreateEventW(None, True, False, WAKE_EVENT_NAME)
+            if not handle:
+                return
+            try:
+                while not self._quitting:
+                    # WAIT_OBJECT_0 == 0
+                    rc = kernel32.WaitForSingleObject(handle, 500)
+                    if rc == 0:
+                        kernel32.ResetEvent(handle)
+                        self.call_soon(self.show)
+            finally:
+                try:
+                    kernel32.CloseHandle(handle)
+                except Exception:
+                    pass
+
+        threading.Thread(target=listen, name="NebulaWake", daemon=True).start()
 
     @staticmethod
     def _window_dpi(hwnd):
@@ -690,6 +842,7 @@ class NebulaHost:
             self._handshake_ms = None
             self._video_label = ""
             self._scene_name = ""
+        self._clear_preview_still()
 
     def _connect_failed(self, error):
         if self._abort_connect:
@@ -845,7 +998,12 @@ class NebulaHost:
         if was != now:
             self.refresh_tray_icon()
 
-    # --- transport ------------------------------------------------------
+        # Scene still for the WebView hero tile (recording/paused only).
+        try:
+            self._refresh_preview_still()
+        except Exception as exc:
+            self._log("[Preview] %s" % exc)
+
         # 2k: the overlay never shows while idle, so it is driven by the
         # same poll that owns the recording state rather than by a timer
         # of its own - one source of truth, one chain.
@@ -935,8 +1093,8 @@ class NebulaHost:
                 title = "Record again?"
                 sub = n or b or "this game"
             else:
-                title = "New game detected"
-                sub = "Record %s?" % (n or b)
+                title = "Record this game?"
+                sub = n or b or "this game"
             self._log("[Monitor] Prompt: %s (%s)" % (sub, r))
 
             def accept():

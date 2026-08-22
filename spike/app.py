@@ -42,7 +42,7 @@ from obsauto.app_log import LOG_FILE, log_to_file, setup_logging
 from obsauto.classifier import Classifier
 from obsauto.obs_client import OBSClient
 from obsauto.config import CONFIG_FILE, load_config, save_config
-from obsauto.gamesync import GameSync
+from obsauto.gamesync import GameSync, MultiGameSync, NasGameSync
 from obsauto.clip_catalog import ClipCatalog
 from obsauto.offload import Offloader
 from obsauto.paths import RESOURCE_DIR
@@ -110,6 +110,30 @@ def _apply_sync_folder(config):
     steam_scanner.CACHE_FILE = os.path.join(sync_folder, "steam_appid_cache.json")
 
 
+def _seed_nas_games_from_legacy(config, classifier, log):
+    """If NAS hub is empty, copy the current local/OneDrive list once."""
+    try:
+        nas = NasGameSync(config, on_log=log)
+        if not nas.enabled or not nas._nas_reachable():
+            return
+        remote = nas.fetch()
+        if remote is None:
+            return
+        if remote.get("games") or remote.get("non_games"):
+            return  # already seeded
+        snap = classifier.snapshot() if classifier else None
+        if not snap or not (snap.get("games") or snap.get("non_games")):
+            return
+        if nas.push(snap) is not None:
+            log("[Sync] Seeded NAS game list from this machine (%d games)."
+                % len(snap.get("games") or {}))
+    except Exception as exc:
+        try:
+            log("[Sync] NAS seed skipped: %s" % exc)
+        except Exception:
+            pass
+
+
 class _GameListSync:
     """Pull remote classifications at startup; debounce pushes on local save."""
 
@@ -129,10 +153,11 @@ class _GameListSync:
             if remote:
                 added = self._classifier.absorb(remote)
                 if added:
-                    self._log("[Sync] Pulled %d classification(s) from GitHub."
+                    self._log("[Sync] Pulled %d classification(s) from shared store."
                               % added)
             self._sync.push(self._classifier.snapshot())
-            self._log("[Sync] Game list synced with GitHub.")
+            self._log("[Sync] Game list synced (%s)."
+                      % (getattr(self._sync, "status_label", lambda: "ok")()))
 
         threading.Thread(target=worker, daemon=True).start()
 
@@ -525,6 +550,19 @@ class Api:
             return {"uri": "", "seq": 0, "scene": ""}
         return self._host.preview_still()
 
+    def _hero_preview_seq(self):
+        """Seq for the hero still — never raises; missing host method → 0."""
+        host = self._host
+        if not host:
+            return 0
+        fn = getattr(host, "preview_still_seq", None)
+        if not callable(fn):
+            return 0
+        try:
+            return int(fn() or 0)
+        except Exception:
+            return 0
+
     def bench(self, seconds=10):
         """Average over a window, which is the only honest way to read CPU."""
         procs = _proc_tree()
@@ -538,17 +576,24 @@ class Api:
     # --- real data, straight out of the existing modules ----------------
 
     def snapshot(self):
-        return {"obs": self._obs(),
-                "hero": self._hero(),
-                "tiles": self._tiles(),
-                "activity": self._activity(),
-                "ribbon": self._ribbon(),
-                "clips_panel": self._clips_panel(),
-                "forecast": self._forecast(),
-                "games": self._games(),
-                "settings": self._settings_payload(),
-                "macropad": self._macropad(),
-                "remote": self._remote()}
+        t0 = time.perf_counter()
+        try:
+            out = {"obs": self._obs(),
+                   "hero": self._hero(),
+                   "tiles": self._tiles(),
+                   "activity": self._activity(),
+                   "ribbon": self._ribbon(),
+                   "clips_panel": self._clips_panel(),
+                   "forecast": self._forecast(),
+                   "games": self._games(),
+                   "settings": self._settings_payload(),
+                   "macropad": self._macropad(),
+                   "remote": self._remote()}
+            return out
+        finally:
+            ms = (time.perf_counter() - t0) * 1000.0
+            if ms >= 750:
+                log_to_file("[UI] snapshot slow: %.0f ms" % ms)
 
     def _obs(self):
         """One source of truth for connection state: the host.
@@ -653,7 +698,7 @@ class Api:
             "bitrate": readouts["bitrate"],
             "scene": scene,
             "video": video,
-            "preview_seq": (self._host.preview_still_seq() if self._host else 0),
+            "preview_seq": self._hero_preview_seq(),
             "actions": list(spec.get("actions") or ()),
             "actions_enabled": [a for a in (spec.get("actions") or ())
                                 if a != "Mark clip"],
@@ -1143,13 +1188,10 @@ class Api:
         }
 
     def appearance(self):
-        """The four appearance keys, validated against design_v3's menus.
+        """Appearance keys, validated against design_v3's menus.
 
         Sent with every snapshot rather than only at boot so a change applies
-        live - the whole point of putting these over tokens is that none of
-        them needs a restart. An unknown value (hand-edited config, or a hue
-        that was renamed) falls back to the default instead of leaving the
-        front end to reason about it.
+        live. An unknown value falls back to the default.
         """
         def pick(key, menu, fallback):
             value = self.cfg.get(key)
@@ -1160,8 +1202,14 @@ class Api:
             "density": pick("appearance_density", dv.DENSITIES, dv.DENSITY_DEFAULT),
             "radius": pick("appearance_radius", dv.RADII, dv.RADIUS_DEFAULT),
             "motion": pick("appearance_motion", dv.MOTION_MODES, dv.MOTION_DEFAULT),
+            "glass": pick("appearance_glass", dv.GLASS_MODES, dv.GLASS_DEFAULT),
+            "glow": pick("appearance_glow", dv.GLOW_MODES, dv.GLOW_DEFAULT),
+            "stars": pick("appearance_stars", dv.STAR_MODES, dv.STAR_DEFAULT),
+            "chrome": pick("appearance_chrome", dv.CHROME_MODES, dv.CHROME_DEFAULT),
+            "orbit": pick("appearance_orbit", dv.ORBIT_MODES, dv.ORBIT_DEFAULT),
             "densities": dict(dv.DENSITIES),
             "radii": dict(dv.RADII),
+            "star_mults": dict(dv.STAR_MODES),
         }
 
     def _settings_obs_footer(self):
@@ -1191,8 +1239,9 @@ class Api:
             blurb = ("Running Nebula %s (packaged). Check GitHub Releases and "
                      "install over this exe." % info["display"])
         else:
-            blurb = ("Running Nebula %s. Pull always syncs the main branch "
-                     "from GitHub, then restart." % info["display"])
+            blurb = ("Running Nebula %s. Sync pulls and pushes the main "
+                     "branch with GitHub when the tree is clean, then restart "
+                     "after a pull." % info["display"])
         if last:
             blurb = last
         can_install = bool(
@@ -1293,9 +1342,12 @@ class Api:
             rows.append({"label": "Last run", "value": st["message"]})
 
         gamesync_note = (
-            "Game list synced with GitHub"
-            if gamesync and gamesync.enabled
-            else "Game list is local to this machine")
+            "Game list %s" % gamesync.status_label()
+            if gamesync and hasattr(gamesync, "status_label")
+            else (
+                "Game list synced with GitHub"
+                if gamesync and gamesync.enabled
+                else "Game list is local to this machine"))
 
         text = headline
         if reach_label and "Tailscale" not in "".join(r["label"] for r in rows):
@@ -1400,6 +1452,13 @@ class Api:
                 self._host.offloader.refresh()
             except Exception as exc:
                 self._api_log("[Manual] Offload refresh after %s: %s" % (key, exc))
+        if (key.startswith("github_") or key in ("games_sync_nas", "nas_offload_root")
+                ) and self._gamesync is not None:
+            try:
+                self._gamesync.configure(self.cfg)
+            except Exception as exc:
+                self._api_log("[Manual] Game sync reconfigure after %s: %s"
+                              % (key, exc))
         return {"ok": True, "value": _settings_display(field, value),
                 "saved_at": time.strftime("%H:%M:%S",
                                           time.localtime(self._settings_saved_at)),
@@ -1420,9 +1479,15 @@ class Api:
             rel = result.get("release") or {}
             tag = rel.get("tag") or rel.get("version") or "?"
             if result["status"] == "current":
-                msg = "You're on the latest (%s)." % result["local"]
+                msg = "Latest release matches (%s)." % result["local"]
             elif result["status"] == "no_asset":
-                msg = ("%s is on GitHub but has no .exe asset yet." % tag)
+                if (rel.get("tag_only")
+                        or not rel.get("asset_url")):
+                    msg = (
+                        "%s is tagged on GitHub but has no Release .exe yet "
+                        "(you have %s)." % (tag, result["local"]))
+                else:
+                    msg = ("%s is on GitHub but has no .exe asset yet." % tag)
             else:
                 msg = "%s is available (you have %s)." % (tag, result["local"])
             self._update_last_message = msg
@@ -1488,7 +1553,7 @@ class Api:
         return out
 
     def pull_source_update(self):
-        """git pull --ff-only for source checkouts."""
+        """Two-way sync with origin/main for source checkouts (pull + push)."""
         from obsauto import updater as updater_mod
 
         if self._update_busy:
@@ -1499,13 +1564,22 @@ class Api:
                     "error": "Source checkouts only — use Install & relaunch.",
                     "updates_footer": self._settings_updates_footer()}
         self._update_busy = True
+        out = {"ok": False, "message": "", "head": ""}
         try:
-            result = updater_mod.pull_source_update()
+            result = updater_mod.sync_source_checkout()
             self._update_last_message = result.get("message") or ""
             self._api_log("[Update] %s" % self._update_last_message)
             out = {"ok": bool(result.get("ok")),
                    "message": self._update_last_message,
-                   "head": result.get("head") or ""}
+                   "head": result.get("head") or "",
+                   "pulled": bool(result.get("pulled")),
+                   "pushed": bool(result.get("pushed")),
+                   "skipped": bool(result.get("skipped"))}
+        except Exception as exc:
+            msg = "Sync failed: %s" % exc
+            self._update_last_message = msg
+            self._api_log("[Update] %s" % msg)
+            out = {"ok": False, "error": str(exc), "message": msg}
         finally:
             self._update_busy = False
         out["updates_footer"] = self._settings_updates_footer()
@@ -2919,13 +2993,16 @@ def main():
     except Exception as exc:
         log_to_file("[Launch] Start Menu shortcut: %s" % exc)
 
-    dev = "--dev" in sys.argv
-    if not dev and not host_mod.claim_single_instance():
-        # Same mutex name main.py uses, on purpose - see host.py. Two Nebulas
-        # fight over OBS, over the global hotkey, and over APP_DIR's data.
-        log_to_file("[App] Another Nebula is already running - exiting.")
-        print("Another Nebula is already running. Use --dev to run anyway.")
-        return 1
+    # Single instance always — `--dev` / `--allow-multi` is the only escape
+    # hatch (agent smoke tests). The Start Menu shortcut must NOT pass --dev:
+    # that used to skip the mutex and left two Nebulas fighting over OBS/hotkeys.
+    allow_multi = ("--dev" in sys.argv) or ("--allow-multi" in sys.argv)
+    if not allow_multi and not host_mod.claim_single_instance():
+        log_to_file("[App] Another Nebula is already running — focusing it.")
+        host_mod.focus_existing_instance()
+        print("Nebula is already running — brought that window forward.")
+        print("Use --allow-multi (or --dev) only when you intentionally want two.")
+        return 0
 
     api = Api()
     host = host_mod.NebulaHost(api.cfg)
@@ -2936,7 +3013,11 @@ def main():
         except Exception:
             log_to_file(msg)
 
-    gamesync = GameSync(api.cfg, on_log=route)
+    gamesync = MultiGameSync(
+        [NasGameSync(api.cfg, on_log=route),
+         GameSync(api.cfg, on_log=route)],
+        on_log=route,
+    )
     offloader = Offloader(api.cfg, on_log=route)
     api._gamesync = gamesync
     coordinator = _GameListSync(gamesync, api._classifier, route)
@@ -2946,6 +3027,12 @@ def main():
     api._host = host
     offloader.start(on_state=host.on_offload_state)
     coordinator.pull_at_startup()
+    # Seed NAS from the legacy OneDrive games.json once if the hub is empty.
+    threading.Thread(
+        target=_seed_nas_games_from_legacy,
+        args=(api.cfg, api._classifier, route),
+        daemon=True,
+    ).start()
 
     # 2j: start hidden. Nebula is a tray app; the window is a thing you open,
     # not the thing that is running. `--show` is for development.
@@ -2981,12 +3068,41 @@ def main():
         host.start_taskbar_icon()
         host.start_replay()
         host.start_hotkeys()
+        host.start_wake_listener()
         # Style bits only at boot. Never SWP_FRAMECHANGED — blanks WebView2
         # on this frameless form. HTML grips + thick-frame bit do the resize.
         host.enable_user_resize()
         host.start_window_watch()
         host.start_poll()
         host.autostart()
+        # Quiet machine-to-machine sync: when the tree is clean, pull/push
+        # origin/main so Alien ↔ Strix stay aligned without opening Settings.
+        def _auto_sync():
+            try:
+                from obsauto import updater as updater_mod
+                if updater_mod.is_frozen():
+                    return
+                if not updater_mod.source_checkout_root():
+                    return
+                if api._update_busy:
+                    return
+                api._update_busy = True
+                try:
+                    result = updater_mod.sync_source_checkout()
+                finally:
+                    api._update_busy = False
+                msg = (result.get("message") or "").strip()
+                if not msg:
+                    return
+                if result.get("skipped"):
+                    return  # dirty WIP — stay quiet
+                api._update_last_message = msg
+                host._log("[Update] %s" % msg)
+            except Exception as exc:
+                api._update_busy = False
+                host._log("[Update] auto-sync skipped: %s" % exc)
+
+        threading.Timer(12.0, _auto_sync).start()
         # --toast-demo: fire real toast events through the real pipeline
         # (host._on_notify -> NebulaWindows.toast_replace), so 2i can be looked
         # at without OBS. Monitor is the only other thing that emits these, and

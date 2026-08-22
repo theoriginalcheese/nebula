@@ -197,6 +197,7 @@ html, body {
   padding: 0 var(--titlebar-pad-r) 0 var(--titlebar-pad-l);
   background: rgb(var(--ground-rgb) / var(--chrome-a));
   border-bottom: 1px solid rgb(var(--hairline-rgb) / var(--hairline-a));
+  box-shadow: inset 0 1px 0 rgb(var(--hairline-rgb) / var(--chrome-edge, 0.1));
 }
 
 .brand {
@@ -284,6 +285,7 @@ html, body {
   padding: var(--rail-pad-y) var(--rail-pad-x);
   background: rgb(var(--ground-rgb) / var(--chrome-a));
   border-right: 1px solid rgb(var(--hairline-rgb) / var(--hairline-a));
+  box-shadow: inset 1px 0 0 rgb(var(--hairline-rgb) / var(--chrome-edge, 0.1));
 }
 
 .eyebrow {
@@ -319,7 +321,7 @@ html, body {
 .rail-item.is-active .ri {
   opacity: 1; transform: scale(1.3);
   background: var(--accent);
-  box-shadow: 0 0 8px rgb(var(--accent-rgb) / .9);
+  box-shadow: 0 0 8px rgb(var(--accent-rgb) / calc(var(--accent-glow, .48) + .35));
 }
 
 .forecast-line { font-size: var(--t-row-size); color: var(--text); }
@@ -791,6 +793,8 @@ html, body {
   border-radius: var(--panel-core-r);
   padding: 16px 18px;
   background: rgb(var(--card-core-rgb) / var(--core-a));
+  backdrop-filter: blur(var(--glass-blur, 0px));
+  -webkit-backdrop-filter: blur(var(--glass-blur, 0px));
 }
 
 .card-head {
@@ -1366,6 +1370,7 @@ html, body {
 .card.hero.is-accent {
   border-color: rgb(var(--accent-rgb) / .28);
   background: rgb(var(--accent-rgb) / .06);
+  box-shadow: 0 0 32px rgb(var(--accent-rgb) / var(--accent-glow, .48));
 }
 .hero-core { padding: 18px 20px; }
 .hero-cols {
@@ -2666,3 +2671,38 @@ html.nosheet .aurora-sheet {
   color: var(--ember);
   opacity: var(--disabled-a);
 }
+
+/* --- appearance extras: glass / glow / chrome / orbit ------------------- */
+:root {
+  --glass-blur: 22px;
+  --accent-glow: 0.48;
+  --chrome-edge: 0.1;
+  --star-mult: 1;
+}
+
+@keyframes hero-orbit-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.4; transform: scale(1.4); }
+}
+
+:root.orbit-slow .hero-badge .dot {
+  animation: hero-orbit-pulse 2.8s var(--ease) infinite;
+}
+:root.orbit-pulse .hero-badge .dot {
+  animation: hero-orbit-pulse 1.05s var(--ease) infinite;
+}
+:root.orbit-off .hero-badge .dot,
+:root.motion-off.orbit-slow .hero-badge .dot,
+:root.motion-off.orbit-pulse .hero-badge .dot {
+  animation: none;
+}
+
+:root.glow-neon .card.hero.is-accent {
+  box-shadow:
+    0 0 18px rgb(var(--accent-rgb) / .55),
+    0 0 48px rgb(var(--accent-rgb) / var(--accent-glow));
+}
+:root.glow-soft .card.hero.is-accent {
+  box-shadow: 0 0 18px rgb(var(--accent-rgb) / var(--accent-glow));
+}
+

@@ -51,6 +51,11 @@ DEFAULTS = {
     "appearance_density": design_v3.DENSITY_DEFAULT,
     "appearance_radius": design_v3.RADIUS_DEFAULT,
     "appearance_motion": design_v3.MOTION_DEFAULT,
+    "appearance_glass": design_v3.GLASS_DEFAULT,
+    "appearance_glow": design_v3.GLOW_DEFAULT,
+    "appearance_stars": design_v3.STAR_DEFAULT,
+    "appearance_chrome": design_v3.CHROME_DEFAULT,
+    "appearance_orbit": design_v3.ORBIT_DEFAULT,
     # ---- command palette (spec 7e) ----
     "palette_hotkey": "ctrl+k",       # blank = no global palette key
     # Legacy folder-based sync for games.json / steam_appid_cache.json (was
@@ -64,6 +69,10 @@ DEFAULTS = {
     "github_token": "",
     "github_gamedata_repo": "",   # "owner/name", e.g. "you/nebula-gamedata"
     "github_gamedata_path": "games.json",
+    # When nas_offload_root is set, also keep games.json on the NAS
+    # ({root}/.nebula/games.json) so Alien + Strix share classifications
+    # without a GitHub token. GitHub sync above remains optional.
+    "games_sync_nas": True,
     # ---- recording offload to the NAS ----
     # After a clip is finalized it's copied to nas_offload_root/<game>/ and
     # byte-verified (SHA-256) before, in "move" mode, the local original is

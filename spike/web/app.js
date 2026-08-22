@@ -35,6 +35,12 @@ let currentPane = "dashboard";
 let settingsGroup = "obs";
 let bootCfg = null;
 let lastSnapshot = null;
+/* First successful snapshot. Until then we refuse .asleep — otherwise a
+   boot race (visibilitychange / page_awake / renderer suspend) skips load()
+   forever and the HTML placeholders (checking…, reading sessions.jsonl…)
+   stick for the whole session. */
+let dataReady = false;
+let loadInFlight = false;
 let clipState = { game: "", query: "", sort: "Newest" };
 let paletteState = { open: false, query: "", index: 0, flat: [], total: 0, groups: [] };
 let profileState = { basename: "", name: "", profile: null, summary: "", gb: null };
@@ -841,21 +847,13 @@ function bakeAurora(aurora, wisps, W, H, bg) {
   aurora.appendChild(sheet);
 }
 
-function buildBackdrop(bg, seed) {
-  /* Measurement switches - see the note in app.css. */
-  const q = new URLSearchParams(location.search);
-  if (q.get("nowind") === "1") document.documentElement.classList.add("nowind");
-  if (q.get("nosheet") === "1") document.documentElement.classList.add("nosheet");
+let backdropState = { bg: null, seed: 0, starMult: 1 };
 
-  rnd = mulberry32(seed);
-  const core = document.querySelector(".core");
-  const W = core.clientWidth || 1268;
-  const H = core.clientHeight || 796;
-
-  bakeAurora($("aurora"), $("wisps"), W, H, bg);
-
+function bakeStarLayers(bg, W, H, mult) {
   const STAR_RGB = "198 190 255";
+  const density = Math.max(8, Math.round((bg.star_density || 80) * mult));
   const mkLayer = (el, count, sizeRange, alphaRange, bright) => {
+    if (!el) return;
     const shadows = [];
     for (let i = 0; i < count; i++) {
       const x = rand(0, W);
@@ -888,10 +886,36 @@ function buildBackdrop(bg, seed) {
     el.appendChild(dot);
   };
 
-  mkLayer($("stars-near"), bg.star_density,
+  mkLayer($("stars-near"), density,
           bg.star_size_near, bg.star_alpha_near, true);
-  mkLayer($("stars-far"), Math.round(bg.star_density * 0.75),
+  mkLayer($("stars-far"), Math.round(density * 0.75),
           [0.6, bg.star_size_far_max], [0.14, bg.star_alpha_far_max], false);
+}
+
+function rebakeStars() {
+  const { bg, seed, starMult } = backdropState;
+  if (!bg) return;
+  rnd = mulberry32(seed ^ Math.round(starMult * 1000));
+  const core = document.querySelector(".core");
+  const W = core.clientWidth || 1268;
+  const H = core.clientHeight || 796;
+  bakeStarLayers(bg, W, H, starMult);
+}
+
+function buildBackdrop(bg, seed) {
+  /* Measurement switches - see the note in app.css. */
+  const q = new URLSearchParams(location.search);
+  if (q.get("nowind") === "1") document.documentElement.classList.add("nowind");
+  if (q.get("nosheet") === "1") document.documentElement.classList.add("nosheet");
+
+  rnd = mulberry32(seed);
+  const core = document.querySelector(".core");
+  const W = core.clientWidth || 1268;
+  const H = core.clientHeight || 796;
+
+  bakeAurora($("aurora"), $("wisps"), W, H, bg);
+  backdropState = { bg, seed, starMult: backdropState.starMult || 1 };
+  bakeStarLayers(bg, W, H, backdropState.starMult);
 }
 
 /* --- pointer spotlight + window lean ----------------------------------- */
@@ -1981,9 +2005,10 @@ function renderClips(d) {
 }
 
 function renderForecast(d) {
-  const f = d.forecast;
-  $("fc-days").textContent = f.label;
-  $("fc-rate").textContent = f.rate;
+  const f = d && d.forecast;
+  if (!f) return;
+  $("fc-days").textContent = f.label || "—";
+  $("fc-rate").textContent = f.rate || "";
   // scaleX, NOT width. The bar is laid out at width:100% and scaled down -
   // animating width relayouts every frame, which the token lint rejects.
   // Setting width here did nothing except leave the initial scaleX(0) in
@@ -2662,6 +2687,44 @@ function applyAppearance(a) {
   for (const mode of ["aurora", "subtle", "off"]) {
     root.classList.toggle(`motion-${mode}`, a.motion === mode);
   }
+
+  const glass = a.glass || "frosted";
+  const glassA = { clearer: 0.58, frosted: 0.78, solid: 0.94 };
+  const glassBlur = { clearer: "14px", frosted: "22px", solid: "0px" };
+  root.style.setProperty("--core-a", String(glassA[glass] ?? 0.78));
+  root.style.setProperty("--glass-blur", glassBlur[glass] ?? "22px");
+  for (const g of ["clearer", "frosted", "solid"]) {
+    root.classList.toggle(`glass-${g}`, glass === g);
+  }
+
+  const glow = a.glow || "vivid";
+  const glowA = { soft: 0.22, vivid: 0.48, neon: 0.85 };
+  root.style.setProperty("--accent-glow", String(glowA[glow] ?? 0.48));
+  for (const g of ["soft", "vivid", "neon"]) {
+    root.classList.toggle(`glow-${g}`, glow === g);
+  }
+
+  const chrome = a.chrome || "satin";
+  const chromeA = { matte: 0.03, satin: 0.1, chrome: 0.22 };
+  root.style.setProperty("--chrome-edge", String(chromeA[chrome] ?? 0.1));
+  for (const c of ["matte", "satin", "chrome"]) {
+    root.classList.toggle(`chrome-${c}`, chrome === c);
+  }
+
+  const orbit = a.orbit || "slow";
+  for (const o of ["off", "slow", "pulse"]) {
+    root.classList.toggle(`orbit-${o}`, orbit === o);
+  }
+
+  const starKey = a.stars || "default";
+  const mult = (a.star_mults && a.star_mults[starKey]) ?? ({ sparse: 0.45, default: 1, dense: 1.75 }[starKey] ?? 1);
+  const prev = backdropState.starMult;
+  backdropState.starMult = mult;
+  root.style.setProperty("--star-mult", String(mult));
+  for (const s of ["sparse", "default", "dense"]) {
+    root.classList.toggle(`stars-${s}`, starKey === s);
+  }
+  if (backdropState.bg && prev !== mult) rebakeStars();
 }
 
 /* Settings fields write on blur. The 1–5s snapshot poll used to rebuild
@@ -2767,7 +2830,7 @@ function renderSettings(d) {
     if (u.can_install) {
       actions.push(`<button class="pill primary no-drag" id="btn-apply-update"${u.busy ? " disabled" : ""}>Install &amp; relaunch</button>`);
     } else if (u.can_pull) {
-      actions.push(`<button class="pill primary no-drag" id="btn-pull-update"${u.busy ? " disabled" : ""}>Pull from GitHub</button>`);
+      actions.push(`<button class="pill primary no-drag" id="btn-pull-update"${u.busy ? " disabled" : ""}>Sync with GitHub</button>`);
     }
     if (u.status === "update" || u.status === "no_asset") {
       actions.push(`<button class="pill ghost no-drag" id="btn-open-release">Open release</button>`);
@@ -2838,22 +2901,40 @@ function fieldHtml(f) {
 }
 
 async function load() {
-  const d = await window.pywebview.api.snapshot();
-  lastSnapshot = d;
-  renderConn(d);
-  renderHero(d);
-  await applyPreviewStill(d.hero);
-  renderTiles(d);
-  renderActivity(d);
-  renderRibbon(d);
-  renderClips(d);
-  renderForecast(d);
-  renderGames(d);
-  renderProfilePanel();
-  renderMacropad(d);
-  renderRemote(d);
-  renderSettings(d);
-  ensureSpots();
+  if (loadInFlight) return;
+  if (!window.pywebview || !window.pywebview.api) return;
+  loadInFlight = true;
+  const rateEl = $("fc-rate");
+  const connEl = $("conn-label");
+  try {
+    if (rateEl && !dataReady) rateEl.textContent = "loading storage…";
+    const d = await window.pywebview.api.snapshot();
+    lastSnapshot = d;
+    try { renderConn(d); } catch (e) { fail("conn", e); }
+    try { renderHero(d); } catch (e) { fail("hero", e); }
+    try { await applyPreviewStill(d.hero); } catch (e) { fail("preview", e); }
+    try { renderTiles(d); } catch (e) { fail("tiles", e); }
+    try { renderActivity(d); } catch (e) { fail("activity", e); }
+    try { renderRibbon(d); } catch (e) { fail("ribbon", e); }
+    try { renderClips(d); } catch (e) { fail("clips", e); }
+    try { renderForecast(d); } catch (e) { fail("forecast", e); }
+    try { renderGames(d); } catch (e) { fail("games", e); }
+    try { renderProfilePanel(); } catch (e) { fail("profile", e); }
+    try { renderMacropad(d); } catch (e) { fail("macropad", e); }
+    try { renderRemote(d); } catch (e) { fail("remote", e); }
+    try { renderSettings(d); } catch (e) { fail("settings", e); }
+    try { ensureSpots(); } catch (e) { fail("spots", e); }
+    dataReady = true;
+  } catch (e) {
+    fail("snapshot", e);
+    if (rateEl) rateEl.textContent = "storage read failed — see log";
+    if (connEl && connEl.textContent === "checking…") {
+      connEl.textContent = "data stuck";
+    }
+    throw e;
+  } finally {
+    loadInFlight = false;
+  }
 }
 
 /* --- 1l first run ------------------------------------------------------ */
@@ -3101,6 +3182,9 @@ function startHud() {
   }
 
   document.addEventListener("visibilitychange", () => {
+    // Frameless WebView2 can report document.hidden at boot even while the
+    // Win32 window is on screen. Never sleep on that signal before first paint.
+    if (!dataReady) return;
     setAwake(!document.hidden);
   });
 
@@ -3119,6 +3203,10 @@ function startHud() {
     // page polls for it. Gate this and the backdrop never goes to sleep.
     try {
       const a = await window.pywebview.api.page_awake();
+      // Refuse sleep until the first snapshot has painted — otherwise a
+      // false "asleep" at boot leaves checking… / reading sessions.jsonl…
+      // on screen forever.
+      if (!dataReady && !a.awake) return;
       setAwake(a.awake);
     } catch (_) { /* bridge not ready yet */ }
   }, 1000);
@@ -3134,6 +3222,9 @@ function startHud() {
    frameless WebView2 does not background the document - so the Python host
    calls setAwake(false) on hide and setAwake(true) on show. */
 function setAwake(on) {
+  // First paint wins. Sleep is a GPU optimisation for the tray life; it must
+  // never prevent the dashboard from leaving its HTML placeholders.
+  if (!on && !dataReady) return;
   const wasAsleep = document.documentElement.classList.contains("asleep");
   document.documentElement.classList.toggle("asleep", !on);
   const el = document.getElementById("hud-vis");
@@ -3156,14 +3247,21 @@ function ready() {
 }
 
 function fail(where, err) {
+  const msg = String((err && (err.message || err.name)) || err).slice(0, 90);
+  console.error(where, err);
+  // hud is hidden unless ?hud=1 — surface on the storage line so a stuck
+  // dashboard is diagnosable without a developer query string.
+  const rate = $("fc-rate");
+  if (rate && !dataReady) {
+    rate.textContent = where + ": " + msg;
+  }
   const hud = $("hud");
+  if (!hud) return;
   const row = document.createElement("div");
   row.className = "hud-row";
   row.style.display = "block";
-  row.innerHTML = `<span>${where}</span> <b class="warn">${
-    String((err && (err.message || err.name)) || err).slice(0, 90)}</b>`;
+  row.innerHTML = `<span>${where}</span> <b class="warn">${msg}</b>`;
   hud.appendChild(row);
-  console.error(where, err);
 }
 
 /** Frameless main window: edge/corner grips → native Windows resize loop. */
@@ -3207,8 +3305,9 @@ function wireResizeEdges() {
   } catch (e) { fail("backdrop", e); }
   try { startHud(); } catch (e) { fail("hud", e); }
   try {
-    const bootAsleep = document.documentElement.classList.contains("asleep");
-    if (!bootAsleep) await load();
+    // Always attempt a first paint. Trailing polls still honour .asleep for
+    // GPU, but boot must not depend on "not asleep yet".
+    await load();
     let bootPane = "dashboard";
     try {
       const r = await window.pywebview.api.consume_goto_pane();
@@ -3216,14 +3315,19 @@ function wireResizeEdges() {
       if (r && r.group) settingsGroup = r.group;
     } catch (_) { /* bridge not ready */ }
     showPane(bootPane);
-    let pollMs = 5000;
+    let pollMs = 2000;
     const pollLoop = async () => {
       const asleep = document.documentElement.classList.contains("asleep");
-      if (!asleep) await load();
+      // Keep retrying until the first snapshot lands, even if something
+      // flipped .asleep during boot.
+      if (!asleep || !dataReady) {
+        try { await load(); } catch (_) { /* fail() already surfaced */ }
+      }
       const live = lastSnapshot && lastSnapshot.hero &&
         (lastSnapshot.hero.state === "recording" || lastSnapshot.hero.state === "paused");
       const onClips = currentPane === "clips";
-      pollMs = asleep ? 8000 : (live ? 1000 : (onClips ? 3000 : 5000));
+      if (!dataReady) pollMs = 2000;
+      else pollMs = asleep ? 8000 : (live ? 1000 : (onClips ? 3000 : 5000));
       setTimeout(pollLoop, pollMs);
     };
     setTimeout(pollLoop, pollMs);
@@ -3549,6 +3653,8 @@ document.addEventListener("click", async (e) => {
         /* stay on the pane with the error text in the footer */
       }
     } catch (_) {
+      /* footer may be stale; button still re-enables in finally */
+    } finally {
       if (btn) btn.disabled = false;
     }
     return;

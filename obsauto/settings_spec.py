@@ -180,12 +180,17 @@ FIELDS = (
                "the name \u2014 needed when one character maps to several scan "
                "codes (41 is the backtick key). Blank = bind by name."),
 
-    # ---- GitHub game-list sync ----
-    Field("github_gamedata_repo", "Repo", "text", "gamesync",
-          hint="owner/name of the private repo holding games.json."),
+    # ---- game-list sync (NAS hub + optional GitHub) ----
+    Field("games_sync_nas", "Sync via NAS", "bool", "gamesync",
+          hint="Keeps games.json on the NAS at {NAS root}/.nebula/games.json "
+               "so every PC shares the same list over Tailscale. Needs NAS "
+               "root set under Offload. On by default."),
+    Field("github_gamedata_repo", "GitHub repo (optional)", "text", "gamesync",
+          hint="owner/name of a private repo holding games.json. Optional if "
+               "NAS sync is on."),
     Field("github_gamedata_path", "Path in repo", "text", "gamesync",
           hint="File path within that repo."),
-    Field("github_token", "Token", "secret", "gamesync",
+    Field("github_token", "GitHub token", "secret", "gamesync",
           hint="Needs repo scope. Stays in this machine's config.json \u2014 "
                "never committed, never carried in the synced games.json."),
 
@@ -264,6 +269,24 @@ FIELDS = (
           choices=tuple(design_v3.MOTION_MODES),
           hint="Off pauses the aurora drift, the star wind and the pointer "
                "spotlight. Worth having on a GPU that is also encoding."),
+    Field("appearance_glass", "Glass depth", "choice", "appearance",
+          choices=tuple(design_v3.GLASS_MODES),
+          hint="How see-through cards are against the aurora — clearer shows "
+               "more sky, solid locks the surface down."),
+    Field("appearance_glow", "Accent glow", "choice", "appearance",
+          choices=tuple(design_v3.GLOW_MODES),
+          hint="How hard the accent blooms on the hero and active rail."),
+    Field("appearance_stars", "Starfield", "choice", "appearance",
+          choices=tuple(design_v3.STAR_MODES),
+          hint="How crowded the dust field is. Rebuilds the star layers live."),
+    Field("appearance_chrome", "Chrome sheen", "choice", "appearance",
+          choices=tuple(design_v3.CHROME_MODES),
+          hint="Edge highlight on the titlebar and rail — matte is flat, "
+               "chrome catches a bright rim."),
+    Field("appearance_orbit", "Hero pulse", "choice", "appearance",
+          choices=tuple(design_v3.ORBIT_MODES),
+          hint="The Live/REC badge dot — off, slow breath, or a sharper pulse. "
+               "Transform and opacity only."),
 
     Field("holdoff_same_game_seconds", "Re-record prompt delay", "int", "recording",
           minimum=0, maximum=3600,

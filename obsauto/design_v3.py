@@ -548,6 +548,18 @@ RADIUS_DEFAULT = "soft"
 MOTION_MODES = ("aurora", "subtle", "off")
 MOTION_DEFAULT = "aurora"
 
+# Extra appearance knobs (WebView). Values are menu keys; CSS/JS map them.
+GLASS_MODES = ("clearer", "frosted", "solid")
+GLASS_DEFAULT = "frosted"
+GLOW_MODES = ("soft", "vivid", "neon")
+GLOW_DEFAULT = "vivid"
+STAR_MODES = {"sparse": 0.45, "default": 1.0, "dense": 1.75}
+STAR_DEFAULT = "default"
+CHROME_MODES = ("matte", "satin", "chrome")
+CHROME_DEFAULT = "satin"
+ORBIT_MODES = ("off", "slow", "pulse")
+ORBIT_DEFAULT = "slow"
+
 # ---------------------------------------------------------------------------
 # Session ribbon (7b) and storage forecast (7c)
 # ---------------------------------------------------------------------------

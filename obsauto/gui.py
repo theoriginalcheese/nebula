@@ -3478,8 +3478,8 @@ class AppWindow:
                     outcome["message"] = f"You're on the latest ({result['local']})."
                 elif result["status"] == "no_asset":
                     outcome["message"] = (
-                        f"{tag} is on GitHub but has no .exe asset yet — "
-                        "open the release page or pull source.")
+                        f"{tag} is tagged on GitHub but has no Release .exe yet "
+                        f"(you have {result['local']}).")
                 else:
                     outcome["message"] = (
                         f"{tag} is available (you have {result['local']}).")
@@ -3504,11 +3504,9 @@ class AppWindow:
         if status == "current":
             self._toast_replace("pause", outcome["message"])
             return
-        if status == "no_asset":
-            self._toast_replace("pause", outcome["message"])
-            return
 
-        # Update available — offer download for frozen builds.
+        # Newer tag/release — offer Install (frozen + asset), Pull (source),
+        # or open the page when the tag exists but has no .exe yet.
         from . import updater as updater_mod
         release = outcome["release"] or {}
         tag = release.get("tag") or "update"
@@ -3520,7 +3518,8 @@ class AppWindow:
             self._toast_dismiss_now()
 
         actions = [("Open release", open_page)]
-        if updater_mod.is_frozen() and release.get("asset_url"):
+        if (status == "update" and updater_mod.is_frozen()
+                and release.get("asset_url")):
             def install():
                 self._toast_dismiss_now()
                 self._install_update(release)
@@ -3532,8 +3531,10 @@ class AppWindow:
                 self._pull_source_update()
 
             actions.insert(0, ("Pull from GitHub", pull))
+        title = ("Update tagged" if status == "no_asset"
+                 else "Update available")
         self._toast_replace(
-            "prompt", tag, {"title": "Update available"},
+            "prompt", tag, {"title": title},
             actions=actions,
         )
 

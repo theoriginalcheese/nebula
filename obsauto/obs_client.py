@@ -256,6 +256,30 @@ class OBSClient:
         data = self.call("GetCurrentProgramScene")
         return data.get("currentProgramSceneName") or data.get("sceneName") or ""
 
+    def get_source_screenshot(
+        self,
+        source_name,
+        image_width=640,
+        image_height=360,
+        image_format="jpg",
+        compression_quality=60,
+    ):
+        """Base64 data-URI still of a source/scene (GetSourceScreenshot).
+
+        Scaled "inner" by OBS so aspect is preserved. Returns ``imageData`` as
+        OBS sends it (already a ``data:image/...;base64,...`` URI), or ``""``.
+        """
+        if not source_name:
+            return ""
+        data = self.call("GetSourceScreenshot", {
+            "sourceName": source_name,
+            "imageFormat": image_format,
+            "imageWidth": int(image_width),
+            "imageHeight": int(image_height),
+            "imageCompressionQuality": int(compression_quality),
+        })
+        return data.get("imageData") or ""
+
     # ---- replay buffer (spec 7a) ----
     # The buffer is OBS's own rolling window in RAM. Nebula's job is only to arm
     # it, ask for a save, and file the result - it never holds video itself.

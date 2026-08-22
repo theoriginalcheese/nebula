@@ -283,7 +283,7 @@ html, body {
   animation: toast-dust-scatter 1.8s var(--ease) infinite;
 }
 .toast-dust[data-style="orbit"] span {
-  animation: toast-dust-orbit 4.2s linear infinite;
+  animation: toast-dust-orbit 4.2s linear infinite;  /* lint-allow: orbit is constant-speed; ease would lurch each lap */
 }
 
 @keyframes toast-dust-burst {

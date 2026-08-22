@@ -160,6 +160,42 @@ def run():
 
 
 run()
+
+# ---- NAS + MultiGameSync -------------------------------------------------
+import tempfile
+from obsauto.gamesync import NasGameSync, MultiGameSync
+
+nas_root = tempfile.mkdtemp(prefix="nebula-nas-games-")
+nas_cfg = {"nas_offload_root": nas_root, "games_sync_nas": True}
+nas = NasGameSync(nas_cfg, on_log=lambda m: None)
+check("nas enabled with root", nas.enabled)
+empty = nas.fetch()
+check("nas empty fetch", empty == {"games": {}, "non_games": {}})
+seed = {"games": {"a.exe": {"name": "A"}}, "non_games": {}}
+pushed = nas.push(seed)
+check("nas push ok", pushed is not None and "a.exe" in pushed["games"])
+again = nas.fetch()
+check("nas fetch sees push", "a.exe" in (again or {}).get("games", {}))
+
+other = {"games": {"b.exe": {"name": "B"}}, "non_games": {}}
+merged = nas.push(other)
+check("nas merge keeps both",
+      merged and "a.exe" in merged["games"] and "b.exe" in merged["games"])
+
+off = NasGameSync({"nas_offload_root": "", "games_sync_nas": True})
+check("nas disabled without root", not off.enabled)
+
+multi = MultiGameSync([nas, GameSync({"github_token": "", "github_gamedata_repo": ""})])
+check("multi enabled via nas", multi.enabled)
+check("multi status mentions NAS", "NAS" in multi.status_label())
+mf = multi.fetch()
+check("multi fetch has games", mf and "a.exe" in mf["games"])
+
+# unreachable root
+gone = NasGameSync({"nas_offload_root": os.path.join(nas_root, "missing-dir"),
+                    "games_sync_nas": True})
+check("nas fetch None when root missing", gone.fetch() is None)
+
 passed_all = all(p for _, p, _ in results)
 for name, passed, detail in results:
     print(f"{'PASS' if passed else 'FAIL'}  {name:<38} {detail}")

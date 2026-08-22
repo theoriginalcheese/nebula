@@ -8,6 +8,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from obsauto.updater import is_newer, parse_version
+from obsauto import updater as updater_mod
 
 results = []
 
@@ -23,12 +24,24 @@ check("not older", not is_newer("0.9.1", "0.9.2"))
 check("equal not newer", not is_newer("0.9.2", "0.9.2"))
 check("longer remote", is_newer("1.0.1", "1.0"))
 check("empty remote", not is_newer("", "0.9.2"))
+check("tag ahead of release", is_newer("4.0.1", "4.0.0"))
+check("ssh auth detects publickey", updater_mod._ssh_auth_failed_text(
+    "git@github.com: Permission denied (publickey)."))
+check("ssh auth ignores unrelated", not updater_mod._ssh_auth_failed_text(
+    "Already up to date."))
 
 # install helper writes a wait-copy-relaunch script (frozen path only — we
 # exercise the file shape without claiming to be frozen).
 import tempfile
 from unittest import mock
-from obsauto import updater as updater_mod
+
+# source_checkout_root accepts a .git file (worktree)
+wt = tempfile.mkdtemp(prefix="nebula-wt-")
+open(os.path.join(wt, ".git"), "w", encoding="utf-8").write("gitdir: /tmp/x\n")
+with mock.patch.object(updater_mod, "is_frozen", return_value=False), \
+     mock.patch.object(updater_mod, "APP_DIR", wt):
+    check("worktree .git file is a checkout",
+          updater_mod.source_checkout_root() == wt)
 
 tmpdir = tempfile.mkdtemp(prefix="nebula-upd-")
 src = os.path.join(tmpdir, "Nebula-update.exe")
