@@ -17,7 +17,11 @@ def check(name, passed, detail=""):
     results.append((name, bool(passed), str(detail)))
 
 
-check("release is semver", bool(re_match := __import__("re").match(
+def _snap(describe, branch="main", subject="commit"):
+    return {"describe": describe, "branch": branch, "subject": subject}
+
+
+check("release is semver", bool(__import__("re").match(
     r"^\d+\.\d+\.\d+$", ver.__version__)), ver.__version__)
 check("bump target is 4.x", ver.__version__.startswith("4."), ver.__version__)
 
@@ -27,24 +31,36 @@ with mock.patch.object(ver, "is_frozen", return_value=True):
     check("frozen channel release", info["channel"] == "release")
 
 with mock.patch.object(ver, "is_frozen", return_value=False), \
-     mock.patch.object(ver, "git_describe", return_value="v4.0.0-8-g2af435c"):
+     mock.patch.object(ver, "_git_snapshot",
+                       return_value=_snap("v4.0.0-8-g2af435c")):
     info = ver.version_info()
-    check("ahead shows +N", info["display"] == "4.0.0+8", info["display"])
+    check("ahead shows +N", info["display"] == "%s+8" % ver.__version__,
+          info["display"])
     check("source channel", info["channel"] == "source")
 
 with mock.patch.object(ver, "is_frozen", return_value=False), \
-     mock.patch.object(ver, "git_describe", return_value="v4.0.0"):
+     mock.patch.object(ver, "_git_snapshot", return_value=_snap("v4.0.0")):
     info = ver.version_info()
-    check("on tag is clean release label", info["display"] == "4.0.0", info["display"])
+    check("on tag is clean release label",
+          info["display"] == ver.__version__, info["display"])
 
 with mock.patch.object(ver, "is_frozen", return_value=False), \
-     mock.patch.object(ver, "git_describe", return_value="v4.0.0-3-gabcdef-dirty"):
+     mock.patch.object(ver, "_git_snapshot",
+                       return_value=_snap("v4.0.0-3-gabcdef-dirty")):
     info = ver.version_info()
-    check("dirty still shows +N", info["display"] == "4.0.0+3", info["display"])
+    check("dirty shows +N*", info["display"] == "%s+3*" % ver.__version__,
+          info["display"])
     check("dirty mentioned in detail", "uncommitted" in info["detail"])
 
 with mock.patch.object(ver, "is_frozen", return_value=False), \
-     mock.patch.object(ver, "git_describe", return_value=""):
+     mock.patch.object(ver, "_git_snapshot",
+                       return_value=_snap("v4.0.1-dirty")):
+    info = ver.version_info()
+    check("dirty on release is star only",
+          info["display"] == "%s*" % ver.__version__, info["display"])
+
+with mock.patch.object(ver, "is_frozen", return_value=False), \
+     mock.patch.object(ver, "_git_snapshot", return_value=_snap("")):
     info = ver.version_info()
     check("no git shows ·dev", info["display"].endswith("·dev"), info["display"])
 

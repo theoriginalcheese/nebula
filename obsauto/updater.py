@@ -1,7 +1,7 @@
 """Check GitHub Releases for a newer Nebula build, and install it when frozen.
 
-Dev / source clones use ``scripts/update-from-github.ps1`` (git pull) instead —
-this module is for the packaged ``Nebula.exe`` next to the user's config.
+Dev / source clones use Settings → Updates → Save this machine / Load latest.
+This module is also for the packaged ``Nebula.exe`` next to the user's config.
 """
 
 from __future__ import annotations
@@ -10,6 +10,7 @@ import json
 import os
 import re
 import sys
+import time
 import urllib.error
 import urllib.request
 
@@ -17,8 +18,8 @@ from . import __version__
 from .paths import APP_DIR
 
 DEFAULT_REPO = "theoriginalcheese/nebula"
-# Source "Pull from GitHub" always tracks this branch — feature branches
-# staying checked out was why Updates said "up to date" after a desktop push.
+# Laptop/desktop Save/Load always uses this branch. No wip shuttle — Anthony
+# tracks one place, and leftover cursor/* branches were the whole problem.
 SYNC_BRANCH = "main"
 USER_AGENT = f"Nebula/{__version__} (+https://github.com/{DEFAULT_REPO})"
 
@@ -94,17 +95,28 @@ def fetch_latest_release(repo=DEFAULT_REPO, token=None, timeout=15):
 
 
 def check_for_update(repo=DEFAULT_REPO, token=None, local_version=__version__):
-    """Compare local version to the latest release.
+    """Compare this install to GitHub.
 
-    Returns ``{"status": "update"|"current"|"no_asset", "release": {...}, ...}``.
+    Source checkouts compare ``HEAD`` to ``origin/main``. Packaged builds
+    still compare Releases.
     """
+    if not is_frozen() and source_checkout_root():
+        return check_source_sync()
     release = fetch_latest_release(repo=repo, token=token)
     remote = release.get("version") or release.get("tag") or ""
     if not is_newer(remote, local_version):
-        return {"status": "current", "release": release, "local": local_version}
+        return {"status": "current", "release": release, "local": local_version,
+                "kind": "release",
+                "message": "You're on the latest (%s)." % local_version}
     if not release.get("asset_url"):
-        return {"status": "no_asset", "release": release, "local": local_version}
-    return {"status": "update", "release": release, "local": local_version}
+        return {"status": "no_asset", "release": release, "local": local_version,
+                "kind": "release",
+                "message": "%s is on GitHub but has no .exe asset yet." % (
+                    release.get("tag") or remote or "?")}
+    return {"status": "update", "release": release, "local": local_version,
+            "kind": "release",
+            "message": "%s is available (you have %s)." % (
+                release.get("tag") or remote, local_version)}
 
 
 def download_update(asset_url, dest_path, token=None, timeout=120):
@@ -143,146 +155,325 @@ def source_checkout_root():
     """Repo root when running from a git clone; else None."""
     if is_frozen():
         return None
-    # APP_DIR in dev is the package parent (repo root).
     if os.path.isdir(os.path.join(APP_DIR, ".git")):
         return APP_DIR
     return None
 
 
-def pull_source_update(root=None, timeout=90, branch=None):
-    """Fetch and fast-forward the sync branch (``main`` by default).
-
-    Always targets :data:`SYNC_BRANCH`, not whatever feature branch happens to
-    be checked out — that mismatch is what made Updates claim "up to date"
-    after work landed on another branch.
-
-    Returns ``{"ok": bool, "message": str, "head": str}``.
-    """
+def _run_git(root, args, timeout=90, rewrite=None):
     import subprocess
+    from .silent_proc import resolve_git, run_kwargs
+
+    cmd = list(args)
+    if cmd and cmd[0] == "git":
+        cmd = [resolve_git()] + list(rewrite or []) + cmd[1:]
+    kwargs = {
+        "cwd": root,
+        "capture_output": True,
+        "text": True,
+        "timeout": timeout,
+    }
+    kwargs.update(run_kwargs())
+    return subprocess.run(cmd, **kwargs)
+
+
+def _ssh_auth_failed(proc):
+    err = (proc.stderr or proc.stdout or "")
+    return (
+        "Permission denied" in err
+        or "Could not read from remote" in err
+        or "Host key verification failed" in err
+    )
+
+
+def _https_rewrite(root, timeout=15):
+    origin = _run_git(root, ["git", "remote", "get-url", "origin"], timeout)
+    url = (origin.stdout or "").strip()
+    if not url or url.startswith("https://") or url.startswith("http://"):
+        return []
+    path = ""
+    if url.startswith("git@"):
+        _, _, rest = url.partition(":")
+        path = rest
+    elif url.startswith("ssh://"):
+        after = url.split("://", 1)[-1]
+        path = after.split("/", 1)[-1] if "/" in after else ""
+    path = path.removeprefix("/").removesuffix(".git")
+    if "/" not in path:
+        path = DEFAULT_REPO
+    https = "https://github.com/%s.git" % path
+    return ["-c", "url.%s.insteadOf=%s" % (https, url)]
+
+
+def _fetch_origin(root, timeout=90):
+    rewrite = []
+    fetch = _run_git(root, ["git", "fetch", "origin"], timeout)
+    if fetch.returncode != 0 and _ssh_auth_failed(fetch):
+        rewrite = _https_rewrite(root)
+        if rewrite:
+            fetch = _run_git(
+                root, ["git", "fetch", "origin"], timeout, rewrite=rewrite)
+    return fetch, rewrite
+
+
+def _head_oneline(root):
+    proc = _run_git(root, ["git", "log", "-1", "--oneline"], 15)
+    return (proc.stdout or "").strip()
+
+
+def _porcelain(root):
+    proc = _run_git(root, ["git", "status", "--porcelain"], 15)
+    return (proc.stdout or "").strip()
+
+
+def _rev_parse(root, ref):
+    proc = _run_git(
+        root, ["git", "rev-parse", "--verify", "--quiet", ref], 15)
+    if proc.returncode != 0:
+        return ""
+    return (proc.stdout or "").strip()
+
+
+def _ahead_count(root, a, b):
+    proc = _run_git(root, ["git", "rev-list", "--count", "%s..%s" % (a, b)], 15)
+    if proc.returncode != 0:
+        return 0
+    try:
+        return int((proc.stdout or "0").strip() or "0")
+    except ValueError:
+        return 0
+
+
+def _refresh_version():
+    try:
+        from . import version as version_mod
+        version_mod.git_describe(force=True)
+    except Exception:
+        pass
+
+
+def _git_exc_result(exc, head=""):
+    import subprocess
+    if isinstance(exc, FileNotFoundError):
+        return {"ok": False, "message": "git is not on PATH.", "head": head}
+    if isinstance(exc, subprocess.TimeoutExpired):
+        return {"ok": False, "message": "git timed out.", "head": head}
+    return {"ok": False, "message": str(exc), "head": head}
+
+
+def check_source_sync(root=None, timeout=90):
+    from .version import display_version
 
     root = root or source_checkout_root()
     if not root:
+        raise RuntimeError("Not a git checkout.")
+    fetch, _rewrite = _fetch_origin(root, timeout)
+    if fetch.returncode != 0:
+        err = (fetch.stderr or fetch.stdout or "fetch failed").strip()
+        raise RuntimeError(err)
+    remote = "origin/%s" % SYNC_BRANCH
+    ahead = _ahead_count(root, "HEAD", remote) if _rev_parse(root, remote) else 0
+    dirty = bool(_porcelain(root))
+    local_label = display_version()
+    if ahead > 0:
+        status = "update"
+        message = "GitHub is %d commit%s ahead. Load latest." % (
+            ahead, "" if ahead == 1 else "s")
+    else:
+        status = "current"
+        message = "You're on the latest snapshot (%s)." % local_label
+        if dirty:
+            message = (
+                "You're on the latest snapshot (%s) with uncommitted "
+                "changes — Save this machine before switching PCs."
+                % local_label)
+    return {
+        "status": status,
+        "release": {},
+        "local": local_label,
+        "message": message,
+        "kind": "source",
+        "ahead": ahead,
+        "head": _rev_parse(root, "HEAD"),
+        "dirty": dirty,
+    }
+
+
+def save_source_snapshot(root=None, timeout=90, now=None, host=None):
+    """Commit the working tree onto ``main`` and push it."""
+    root = root or source_checkout_root()
+    if not root:
         return {"ok": False, "message": "Not a git checkout.", "head": ""}
-    sync = (branch or SYNC_BRANCH or "main").strip() or "main"
-
-    def run(args, t=timeout):
-        from .silent_proc import resolve_git, run_kwargs
-        # Rewrite bare "git" to the non-flashing binary (Git\cmd\git.exe
-        # re-execs and briefly pops a console under pythonw).
-        if args and args[0] == "git":
-            args = [resolve_git()] + list(args[1:])
-        kwargs = {
-            "cwd": root,
-            "capture_output": True,
-            "text": True,
-            "timeout": t,
-        }
-        kwargs.update(run_kwargs())
-        return subprocess.run(args, **kwargs)
-
-    def ssh_auth_failed(proc):
-        err = (proc.stderr or proc.stdout or "")
-        return (
-            "Permission denied" in err
-            or "Could not read from remote" in err
-            or "Host key verification failed" in err
-        )
-
-    def https_rewrite_args():
-        """Map whatever SSH origin URL we have onto HTTPS for public fetch.
-
-        Remotes are often ``git@github.com-alias:owner/repo.git`` (custom SSH
-        host), so a hard-coded ``git@github.com:`` insteadOf does nothing.
-        """
-        origin = run(["git", "remote", "get-url", "origin"], t=15)
-        url = (origin.stdout or "").strip()
-        if not url or url.startswith("https://") or url.startswith("http://"):
-            return []
-        # git@host:owner/repo.git  OR  ssh://git@host/owner/repo.git
-        path = ""
-        if url.startswith("git@"):
-            # git@host:path
-            _, _, rest = url.partition(":")
-            path = rest
-        elif url.startswith("ssh://"):
-            # ssh://git@host/path
-            after = url.split("://", 1)[-1]
-            path = after.split("/", 1)[-1] if "/" in after else ""
-        path = path.removeprefix("/").removesuffix(".git")
-        if "/" not in path:
-            path = DEFAULT_REPO
-        https = "https://github.com/%s.git" % path
-        return ["-c", "url.%s.insteadOf=%s" % (https, url)]
-
     try:
-        rewrite = []
-        fetch = run(["git", "fetch", "origin"])
-        if fetch.returncode != 0 and ssh_auth_failed(fetch):
-            # Dev machines often have SSH remotes without a key loaded.
-            rewrite = https_rewrite_args()
-            if rewrite:
-                fetch = run(["git"] + rewrite + ["fetch", "origin"])
-        if fetch.returncode != 0:
-            err = (fetch.stderr or fetch.stdout or "fetch failed").strip()
-            return {"ok": False, "message": err, "head": ""}
-
-        current = run(["git", "rev-parse", "--abbrev-ref", "HEAD"], t=15)
-        current_name = (current.stdout or "").strip() or "HEAD"
-        switched = False
-        if current_name != sync:
-            # Move onto the sync branch so the working tree matches what Pull
-            # claims to update. Refuse if checkout is blocked by local edits.
-            co = run(["git", "checkout", sync], t=30)
+        current = _run_git(
+            root, ["git", "rev-parse", "--abbrev-ref", "HEAD"], 15)
+        name = (current.stdout or "").strip() or "HEAD"
+        if name != SYNC_BRANCH:
+            co = _run_git(root, ["git", "checkout", "-B", SYNC_BRANCH], 30)
             if co.returncode != 0:
                 err = (co.stderr or co.stdout or "checkout failed").strip()
                 return {
                     "ok": False,
-                    "message": (
-                        "Pull syncs %s, but checkout failed (you are on %s): %s"
-                        % (sync, current_name, err)
-                    ),
-                    "head": "",
+                    "message": "Could not switch to main: %s" % err,
+                    "head": _head_oneline(root),
                 }
-            switched = True
 
-        pull_cmd = ["git"] + rewrite + ["pull", "--ff-only", "origin", sync]
-        pull = run(pull_cmd)
-        if pull.returncode != 0 and ssh_auth_failed(pull) and not rewrite:
-            rewrite = https_rewrite_args()
-            if rewrite:
-                pull = run(["git"] + rewrite + [
-                    "pull", "--ff-only", "origin", sync])
-        head = run(["git", "log", "-1", "--oneline"], t=15)
-        head_line = (head.stdout or "").strip()
-        if pull.returncode != 0:
-            err = (pull.stderr or pull.stdout or "pull failed").strip()
-            return {"ok": False, "message": err, "head": head_line}
-        out = (pull.stdout or "").strip()
-        if "Already up to date" in out or "Already up-to-date" in out:
-            if switched:
-                msg = "Switched to %s — already up to date (%s)." % (
-                    sync, head_line or sync)
+        add = _run_git(root, ["git", "add", "-A"], timeout)
+        if add.returncode != 0:
+            err = (add.stderr or add.stdout or "git add failed").strip()
+            return {"ok": False, "message": err, "head": _head_oneline(root)}
+        _run_git(
+            root,
+            ["git", "rm", "--cached", "-f", "--ignore-unmatch",
+             "--", "offload_queue.json"],
+            15,
+        )
+
+        committed = False
+        if _porcelain(root):
+            host = host or (
+                os.environ.get("COMPUTERNAME")
+                or os.environ.get("HOSTNAME")
+                or "machine")
+            if now is None:
+                stamp = time.strftime("%Y-%m-%d %H:%M")
+            elif hasattr(now, "strftime"):
+                stamp = now.strftime("%Y-%m-%d %H:%M")
             else:
-                msg = "Already up to date on %s (%s)." % (
-                    sync, head_line or sync)
+                stamp = str(now)
+            msg = "nebula: save %s %s" % (host, stamp)
+            commit = _run_git(root, [
+                "git",
+                "-c", "user.name=Nebula",
+                "-c", "user.email=nebula@local",
+                "commit", "-m", msg,
+            ], timeout)
+            if commit.returncode != 0:
+                err = (commit.stderr or commit.stdout or "commit failed").strip()
+                if "nothing to commit" in err.lower():
+                    committed = False
+                else:
+                    return {"ok": False, "message": err,
+                            "head": _head_oneline(root)}
+            else:
+                committed = True
+
+        push = _run_git(
+            root, ["git", "push", "-u", "origin", SYNC_BRANCH], timeout)
+        replaced = False
+        if push.returncode != 0:
+            err = (push.stderr or push.stdout or "push failed").strip()
+            rejected = (
+                "non-fast-forward" in err
+                or "Updates were rejected" in err
+                or "failed to push some refs" in err
+            )
+            if rejected:
+                lease = _run_git(
+                    root,
+                    ["git", "push", "--force-with-lease",
+                     "origin", SYNC_BRANCH],
+                    timeout,
+                )
+                if lease.returncode == 0:
+                    replaced = True
+                else:
+                    err2 = (lease.stderr or lease.stdout or err).strip()
+                    return {"ok": False, "message": err2,
+                            "head": _head_oneline(root)}
+            else:
+                return {"ok": False, "message": err,
+                        "head": _head_oneline(root)}
+
+        _refresh_version()
+        head = _head_oneline(root)
+        if replaced:
+            out_msg = (
+                "Saved — replaced the previous GitHub snapshot (%s)." % head)
+        elif committed:
+            out_msg = "Saved this machine to GitHub (%s)." % head
         else:
-            prefix = ("Switched to %s and updated" % sync
-                      if switched else "Updated")
-            msg = "%s to %s. Restart Nebula to load it." % (
-                prefix, head_line or sync)
-        # Refresh the version badge cache after a successful pull.
-        try:
-            from . import version as version_mod
-            version_mod.git_describe(force=True)
-        except Exception:
-            pass
-        return {"ok": True, "message": msg, "head": head_line}
-    except FileNotFoundError:
-        return {"ok": False, "message": "git is not on PATH.", "head": ""}
-    except subprocess.TimeoutExpired:
-        return {"ok": False, "message": "git timed out.", "head": ""}
+            out_msg = "Already saved (%s)." % head
+        return {
+            "ok": True, "message": out_msg, "head": head,
+            "replaced": replaced, "committed": committed,
+        }
     except Exception as exc:
-        return {"ok": False, "message": str(exc), "head": ""}
+        return _git_exc_result(exc, _head_oneline(root) if root else "")
+
+
+def load_source_snapshot(root=None, timeout=90):
+    """Make this checkout match origin/main."""
+    root = root or source_checkout_root()
+    if not root:
+        return {"ok": False, "message": "Not a git checkout.", "head": ""}
+    try:
+        if _porcelain(root):
+            return {
+                "ok": False,
+                "message": (
+                    "Save this machine first or you will lose uncommitted "
+                    "work."),
+                "head": _head_oneline(root),
+            }
+        fetch, _rewrite = _fetch_origin(root, timeout)
+        if fetch.returncode != 0:
+            err = (fetch.stderr or fetch.stdout or "fetch failed").strip()
+            return {"ok": False, "message": err, "head": ""}
+
+        remote = "origin/%s" % SYNC_BRANCH
+        if not _rev_parse(root, remote):
+            return {"ok": False, "message": "No origin/main to load.",
+                    "head": ""}
+        local_ahead = _ahead_count(root, remote, "HEAD")
+        if local_ahead > 0:
+            return {
+                "ok": False,
+                "message": (
+                    "This PC has %d unpushed commit%s — Save this machine "
+                    "first or you will lose them." % (
+                        local_ahead, "" if local_ahead == 1 else "s")),
+                "head": _head_oneline(root),
+            }
+        co = _run_git(
+            root, ["git", "checkout", "-B", SYNC_BRANCH, remote], 30)
+        if co.returncode != 0:
+            err = (co.stderr or co.stdout or "checkout failed").strip()
+            return {"ok": False, "message": err, "head": ""}
+        _refresh_version()
+        head = _head_oneline(root)
+        return {
+            "ok": True,
+            "message": (
+                "Loaded latest snapshot (%s). Restart Nebula to load it."
+                % head),
+            "head": head,
+        }
+    except Exception as exc:
+        return _git_exc_result(exc)
+
+
+def pull_source_update(root=None, timeout=90, branch=None):
+    """Load origin/main. ``branch`` is ignored."""
+    return load_source_snapshot(root=root, timeout=timeout)
+
+
+def main(argv=None):
+    argv = list(sys.argv[1:] if argv is None else argv)
+    action = (argv[0] if argv else "load").strip().lower()
+    if action in ("save", "push"):
+        result = save_source_snapshot()
+    elif action in ("load", "pull"):
+        result = load_source_snapshot()
+    elif action == "check":
+        result = check_for_update()
+        print(result.get("message") or "")
+        return 0 if result.get("status") == "current" else 1
+    else:
+        print("usage: python -m obsauto.updater save|load|check")
+        return 2
+    print(result.get("message") or "")
+    return 0 if result.get("ok") else 1
 
 
 def install_and_relaunch(update_path, target_path=None, pid=None):
@@ -372,3 +563,7 @@ def install_and_relaunch(update_path, target_path=None, pid=None):
         stderr=subprocess.DEVNULL,
     )
     return helper
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

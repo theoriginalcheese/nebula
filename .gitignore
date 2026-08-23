@@ -51,7 +51,9 @@ tools/_toast_demo_spike_capsule/
 # Parallel-agent worktrees — isolated checkouts, not project source.
 .claude/worktrees/
 
-# Offloader worker checkpoint — regenerated from offload_queue.json on each run.
+# Offloader queue + worker checkpoint — per-machine, regenerated / retried locally.
+# Never upload the queue: Save this machine would otherwise ship it between PCs.
+offload_queue.json
 offload_state.json
 
 # On-demand Clips catalog — per-machine index + re-evictable cache/posters.

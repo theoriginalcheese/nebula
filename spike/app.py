@@ -1191,14 +1191,15 @@ class Api:
             blurb = ("Running Nebula %s (packaged). Check GitHub Releases and "
                      "install over this exe." % info["display"])
         else:
-            blurb = ("Running Nebula %s. Pull always syncs the main branch "
-                     "from GitHub, then restart." % info["display"])
+            blurb = ("Running Nebula %s. Save this machine before you leave; "
+                     "Load latest when you sit down, then restart."
+                     % info["display"])
         if last:
             blurb = last
         can_install = bool(
             pending.get("status") == "update" and pending.get("release", {}).get("asset_url")
             and frozen)
-        can_pull = (not frozen) and bool(updater_mod.source_checkout_root())
+        can_sync = (not frozen) and bool(updater_mod.source_checkout_root())
         return {
             "text": blurb,
             "kind": info["channel"],
@@ -1208,7 +1209,9 @@ class Api:
             "status": pending.get("status") or "",
             "tag": (pending.get("release") or {}).get("tag") or "",
             "can_install": can_install,
-            "can_pull": can_pull,
+            "can_pull": can_sync,
+            "can_save": can_sync,
+            "can_load": can_sync,
             "busy": bool(getattr(self, "_update_busy", False)),
         }
 
@@ -1419,12 +1422,15 @@ class Api:
             self._update_pending = result
             rel = result.get("release") or {}
             tag = rel.get("tag") or rel.get("version") or "?"
-            if result["status"] == "current":
-                msg = "You're on the latest (%s)." % result["local"]
-            elif result["status"] == "no_asset":
-                msg = ("%s is on GitHub but has no .exe asset yet." % tag)
-            else:
-                msg = "%s is available (you have %s)." % (tag, result["local"])
+            msg = result.get("message") or ""
+            if not msg:
+                if result["status"] == "current":
+                    msg = "You're on the latest (%s)." % result["local"]
+                elif result["status"] == "no_asset":
+                    msg = ("%s is on GitHub but has no .exe asset yet." % tag)
+                else:
+                    msg = "%s is available (you have %s)." % (
+                        tag, result["local"])
             self._update_last_message = msg
             self._api_log("[Update] %s" % msg)
             out = {"ok": True, "status": result["status"], "message": msg,
@@ -1452,7 +1458,7 @@ class Api:
                     "updates_footer": self._settings_updates_footer()}
         if not updater_mod.is_frozen():
             return {"ok": False,
-                    "error": "Packaged builds only — use Pull from GitHub.",
+                    "error": "Packaged builds only — use Load latest on a source checkout.",
                     "updates_footer": self._settings_updates_footer()}
         pending = self._update_pending or {}
         release = pending.get("release") or {}
@@ -1488,7 +1494,18 @@ class Api:
         return out
 
     def pull_source_update(self):
-        """git pull --ff-only for source checkouts."""
+        """Load origin/main. Kept as the old API name so older UI still works."""
+        return self.load_source_update()
+
+    def load_source_update(self):
+        """Make this checkout match origin/main."""
+        return self._run_source_snapshot("load")
+
+    def save_source_update(self):
+        """Commit this working tree onto main and push it."""
+        return self._run_source_snapshot("save")
+
+    def _run_source_snapshot(self, action):
         from obsauto import updater as updater_mod
 
         if self._update_busy:
@@ -1500,12 +1517,20 @@ class Api:
                     "updates_footer": self._settings_updates_footer()}
         self._update_busy = True
         try:
-            result = updater_mod.pull_source_update()
+            if action == "save":
+                result = updater_mod.save_source_snapshot()
+            else:
+                result = updater_mod.load_source_snapshot()
             self._update_last_message = result.get("message") or ""
             self._api_log("[Update] %s" % self._update_last_message)
             out = {"ok": bool(result.get("ok")),
                    "message": self._update_last_message,
                    "head": result.get("head") or ""}
+        except Exception as exc:
+            msg = "%s failed: %s" % (action.title(), exc)
+            self._update_last_message = msg
+            self._api_log("[Update] %s" % msg)
+            out = {"ok": False, "error": str(exc), "message": msg}
         finally:
             self._update_busy = False
         out["updates_footer"] = self._settings_updates_footer()

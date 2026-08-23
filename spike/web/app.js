@@ -2760,18 +2760,22 @@ function renderSettings(d) {
       foot.innerHTML = `<span>${esc(sync.text || "")}</span>`;
     }
   } else if (settingsGroup === "updates") {
-    foot.classList.remove("settings-footer-stack");
     const u = s.updates_footer || { text: "", kind: "source" };
     const actions = [];
     actions.push(`<button class="pill ghost no-drag" id="btn-check-update"${u.busy ? " disabled" : ""}>Check for updates</button>`);
     if (u.can_install) {
       actions.push(`<button class="pill primary no-drag" id="btn-apply-update"${u.busy ? " disabled" : ""}>Install &amp; relaunch</button>`);
-    } else if (u.can_pull) {
-      actions.push(`<button class="pill primary no-drag" id="btn-pull-update"${u.busy ? " disabled" : ""}>Pull from GitHub</button>`);
+    }
+    if (u.can_load || u.can_pull) {
+      actions.push(`<button class="pill ghost no-drag" id="btn-load-update"${u.busy ? " disabled" : ""}>Load latest</button>`);
+    }
+    if (u.can_save) {
+      actions.push(`<button class="pill primary no-drag" id="btn-save-update"${u.busy ? " disabled" : ""}>Save this machine</button>`);
     }
     if (u.status === "update" || u.status === "no_asset") {
       actions.push(`<button class="pill ghost no-drag" id="btn-open-release">Open release</button>`);
     }
+    foot.classList.toggle("settings-footer-stack", Boolean(u.can_save || u.can_load || u.can_pull));
     foot.classList.remove("is-hidden");
     foot.innerHTML = `
       <span>${esc(u.text || "")}</span>
@@ -3553,11 +3557,27 @@ document.addEventListener("click", async (e) => {
     }
     return;
   }
-  if (e.target.closest("#btn-pull-update")) {
-    const btn = e.target.closest("#btn-pull-update");
+  if (e.target.closest("#btn-load-update") || e.target.closest("#btn-pull-update")) {
+    const btn = e.target.closest("#btn-load-update") || e.target.closest("#btn-pull-update");
     if (btn) btn.disabled = true;
     try {
-      const r = await window.pywebview.api.pull_source_update();
+      const r = await window.pywebview.api.load_source_update();
+      if (lastSnapshot && r && r.updates_footer) {
+        lastSnapshot.settings.updates_footer = r.updates_footer;
+        renderSettings(lastSnapshot);
+      } else {
+        await load();
+      }
+    } finally {
+      if (btn) btn.disabled = false;
+    }
+    return;
+  }
+  if (e.target.closest("#btn-save-update")) {
+    const btn = e.target.closest("#btn-save-update");
+    if (btn) btn.disabled = true;
+    try {
+      const r = await window.pywebview.api.save_source_update();
       if (lastSnapshot && r && r.updates_footer) {
         lastSnapshot.settings.updates_footer = r.updates_footer;
         renderSettings(lastSnapshot);

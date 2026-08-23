@@ -183,13 +183,13 @@ falls back to `obs_path` only if the task is missing.
   [releases/latest](https://github.com/theoriginalcheese/nebula/releases/latest)
   by hand.
 - **Source clone (`python main.py` / `python spike/app.py`):** Settings → Updates
-  → **Pull from GitHub** (or the script below), then restart Nebula.
+  → **Save this machine** before you leave a PC, **Load latest** when you sit
+  down at the other, then restart Nebula. Both talk to `origin/main`.
 
 ```powershell
+powershell -ExecutionPolicy Bypass -File scripts\save-to-github.ps1
 powershell -ExecutionPolicy Bypass -File scripts\update-from-github.ps1
 ```
-
-  That `git fetch` + `git pull --ff-only` from `origin`.
 
 ### Cross-device sync setup
 

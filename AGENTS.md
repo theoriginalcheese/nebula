@@ -13,7 +13,7 @@ below loads on demand, so you pay for depth only when you need it.
 |---|---|
 | Session start | Live checkout identity + gate status are injected for you |
 | Any shell command | Launching Nebula/OBS is **denied**; destructive commands denied or confirmed |
-| You stop / a subagent stops | ruff + token lint + skill-sync run; failures come back as a follow-up |
+| You stop | ruff + token lint + skill-sync run in the background; verdict is recorded, the chat is **not** auto-continued |
 | Session end | A usage row is appended to `.cursor/handoff/token-ledger.jsonl` |
 
 So: don't announce "done" ahead of the gate, and don't plan a workflow around
@@ -69,6 +69,8 @@ gate fails, fix it and re-run.
 4. **No fabricated data.** Build the source or omit the element — never a
    plausible placeholder, never a `0` meaning "not implemented".
 5. **`print()` goes nowhere** — it runs as `pythonw`. Diagnostics via `app_log`.
+6. **Laptop/desktop handoff is `origin/main`.** Settings → Updates → Save this
+   machine / Load latest. Do not invent `wip` or `cursor/*` for that job.
 
 ## Definition of done
 

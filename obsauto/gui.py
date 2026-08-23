@@ -3424,7 +3424,7 @@ class AppWindow:
         self._refresh_settings_obs_footer()
 
     def _build_settings_updates_footer(self):
-        """Check GitHub Releases (exe) or point at the git-pull script (source)."""
+        """Check Releases (exe) or Save / Load origin/main (source)."""
         from . import updater as updater_mod
         from .version import display_version
 
@@ -3437,19 +3437,37 @@ class AppWindow:
             blurb = (f"Running Nebula {label} (packaged). Check GitHub "
                      "Releases — Install & relaunch replaces this exe.")
         else:
-            blurb = (f"Running Nebula {label}. Check for a newer release, or "
-                     "Pull from GitHub to fast-forward this clone.")
+            blurb = (f"Running Nebula {label}. Save this machine before you "
+                     "leave; Load latest when you sit down, then restart.")
         self._settings_updates_label = ctk.CTkLabel(
-            foot, text=blurb, anchor="w", justify="left", wraplength=400,
+            foot, text=blurb, anchor="w", justify="left", wraplength=360,
             text_color=ACCENT_LIGHT, font=ctk.CTkFont(size=12))
-        self._settings_updates_label.pack(side="left", padx=14, pady=10)
-        btn = ctk.CTkButton(
-            foot, text="Check for updates", command=self._check_for_updates,
+        self._settings_updates_label.pack(side="left", padx=14, pady=10, fill="x",
+                                          expand=True)
+        ghost = dict(
             fg_color="transparent", hover_color=SURFACE_HOVER, text_color=TEXT,
             border_width=1, border_color=dv.over(ACCENT, 0.42, dv.CARD_CORE),
-            corner_radius=999, font=ctk.CTkFont(size=12), width=140, height=34)
-        self._focus_ring(btn)
-        btn.pack(side="right", padx=8, pady=8)
+            corner_radius=999, font=ctk.CTkFont(size=12), height=34)
+        check = ctk.CTkButton(
+            foot, text="Check for updates", command=self._check_for_updates,
+            width=140, **ghost)
+        self._focus_ring(check)
+        if updater_mod.is_frozen():
+            check.pack(side="right", padx=8, pady=8)
+            return
+        save = ctk.CTkButton(
+            foot, text="Save this machine", command=self._save_source_update,
+            fg_color=ACCENT, hover_color=ACCENT_HOVER, text_color=TEXT,
+            corner_radius=999, font=ctk.CTkFont(size=12), width=150, height=34)
+        self._focus_ring(save)
+        load = ctk.CTkButton(
+            foot, text="Load latest", command=self._load_source_update,
+            width=110, **ghost)
+        self._focus_ring(load)
+        # pack side=right: first packed is rightmost → Save, Load, Check
+        save.pack(side="right", padx=(4, 8), pady=8)
+        load.pack(side="right", padx=4, pady=8)
+        check.pack(side="right", padx=4, pady=8)
 
     def _check_for_updates(self):
         """Worker → toast. Never blocks the Tk thread on GitHub."""
@@ -3471,18 +3489,21 @@ class AppWindow:
                     token=self.config.get("github_token") or None)
                 outcome["ok"] = True
                 outcome["status"] = result["status"]
-                outcome["release"] = result["release"]
-                rel = result["release"]
+                outcome["release"] = result.get("release") or {}
+                rel = outcome["release"]
                 tag = rel.get("tag") or rel.get("version") or "?"
-                if result["status"] == "current":
-                    outcome["message"] = f"You're on the latest ({result['local']})."
-                elif result["status"] == "no_asset":
-                    outcome["message"] = (
-                        f"{tag} is on GitHub but has no .exe asset yet — "
-                        "open the release page or pull source.")
-                else:
-                    outcome["message"] = (
-                        f"{tag} is available (you have {result['local']}).")
+                msg = result.get("message") or ""
+                if not msg:
+                    if result["status"] == "current":
+                        msg = f"You're on the latest ({result['local']})."
+                    elif result["status"] == "no_asset":
+                        msg = (
+                            f"{tag} is on GitHub but has no .exe asset yet — "
+                            "open the release page or Load latest.")
+                    else:
+                        msg = (
+                            f"{tag} is available (you have {result['local']}).")
+                outcome["message"] = msg
             except Exception as exc:
                 outcome["message"] = f"Update check failed: {exc}"
             self.root.after(0, lambda o=outcome: self._check_for_updates_done(o))
@@ -3527,33 +3548,46 @@ class AppWindow:
 
             actions.insert(0, ("Install & relaunch", install))
         elif not updater_mod.is_frozen() and updater_mod.source_checkout_root():
-            def pull():
+            def load():
                 self._toast_dismiss_now()
-                self._pull_source_update()
+                self._load_source_update()
 
-            actions.insert(0, ("Pull from GitHub", pull))
+            actions.insert(0, ("Load latest", load))
         self._toast_replace(
             "prompt", tag, {"title": "Update available"},
             actions=actions,
         )
 
     def _pull_source_update(self):
+        self._load_source_update()
+
+    def _load_source_update(self):
+        self._run_source_snapshot("load", "Loading latest…")
+
+    def _save_source_update(self):
+        self._run_source_snapshot("save", "Saving this machine…")
+
+    def _run_source_snapshot(self, action, waiting):
         if getattr(self, "_update_download_busy", False):
             return
         self._update_download_busy = True
-        self._log("[Update] Pulling from GitHub…")
-        self._toast_replace("pause", "Pulling from GitHub…")
+        self._log("[Update] %s" % waiting)
+        self._toast_replace("pause", waiting)
 
         def worker():
             from . import updater as updater_mod
-            result = updater_mod.pull_source_update()
-            self.root.after(0, lambda r=result: self._pull_source_update_done(r))
+            if action == "save":
+                result = updater_mod.save_source_snapshot()
+            else:
+                result = updater_mod.load_source_snapshot()
+            self.root.after(0, lambda r=result: self._source_snapshot_done(r))
 
         threading.Thread(target=worker, daemon=True).start()
 
-    def _pull_source_update_done(self, result):
+    def _source_snapshot_done(self, result):
         self._update_download_busy = False
-        msg = result.get("message") or ("Done." if result.get("ok") else "Pull failed.")
+        msg = result.get("message") or (
+            "Done." if result.get("ok") else "Update failed.")
         self._log("[Update] %s" % msg)
         label = getattr(self, "_settings_updates_label", None)
         if label is not None:
@@ -3562,6 +3596,9 @@ class AppWindow:
             except Exception:
                 pass
         self._toast_replace("start" if result.get("ok") else "error", msg)
+
+    def _pull_source_update_done(self, result):
+        self._source_snapshot_done(result)
 
     def _install_update(self, release):
         if getattr(self, "_update_download_busy", False):
