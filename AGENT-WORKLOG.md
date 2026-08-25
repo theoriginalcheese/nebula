@@ -1,7 +1,26 @@
 # Agent improvement loop — worklog
 
 Autonomous improvement session started 2026-08-25 (Anthony away, endless loop requested).
-Machine: Alien-PC. Repo: `C:\Users\antho\Downloads\nebula`, branch `cursor/wip`.
+Machine: Alien-PC. Repo: `C:\Users\antho\Downloads\nebula`, branch `main`.
+
+## TL;DR for Anthony
+1. **Merged your Strix-laptop save with the desktop WIP** — both feature sets
+   survive (Save/Load updates + webview_power from laptop; preview stills,
+   wake-focus, NAS seed, quiet auto-sync from desktop). Pushed to main.
+2. **Fixed 4 real bugs**: UI froze on manual Stop (Steam API call on UI thread);
+   `setQuiet()` never existed so play-mode GPU saving never engaged; culled
+   clips' time vanished from the Recorded tile; pythonw crash path on second launch.
+3. **Made the two aspirational GPU checks real**: asleep now drops backdrop
+   tiles outright; snapshot fetch is promise-single-flight.
+4. **New: "Restart now" button** — completes Save/Load between PCs without a
+   manual restart dance.
+5. **New: clip cache auto-prune** (50 GB default, Settings > Storage) so
+   Tailscale clip opens can't silently fill C:. NAS originals never touched.
+6. **New tool: `python tools/run_tests.py`** — whole suite under per-file
+   watchdogs (three tests used to hang forever, hiding real regressions).
+7. **Docs reality pass**: CLAUDE.md module map updated to v4/spike era.
+8. Everything green: 50/50 test files, gate clean, ruff clean, toast audit
+   48/48, 21/21 modules import, live data healthy.
 
 ## Ground rules honoured
 - OBS footage is sacred; nothing in this session touches recordings.
