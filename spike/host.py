@@ -8,12 +8,15 @@ lifecycle rule that frame 2j states outright:
 `tray_app.py`, `icon_art.py` and `hotkey.py` are the shipping v3 modules.
 This file is the adapter that lets them drive a webview instead of Tk.
 """
+import atexit
 import ctypes
 import os
 import queue
 import subprocess
 import threading
 import time
+
+import psutil
 
 from obsauto import design_v3 as dv
 from obsauto import hotkey as hotkey_mod
@@ -23,19 +26,37 @@ from obsauto import tray_app
 from obsauto.app_log import log_to_file
 from obsauto.monitor import Monitor, ensure_obs_running, is_obs_running
 from obsauto.obs_client import OBSError, OBSClient
+from spike.webview_power import apply_webview_power, gpu_page_state, window_on_screen
 
 ERROR_ALREADY_EXISTS = 183
 _INSTANCE_MUTEX = None
 # Second-launch pulse — the live host waits on this and calls show().
 WAKE_EVENT_NAME = "Local\\Nebula.Wake"
+_kernel32 = ctypes.windll.kernel32
 
 
 def claim_single_instance(name="Nebula.SingleInstance"):
-    """True if we are the only instance holding `name`."""
+    """True if we are the only live process holding ``name``.
+
+    The kernel drops a mutex when the last handle closes, so a crashed
+    instance cannot leave it held. A *live* second launch sees
+    ERROR_ALREADY_EXISTS and must exit. ``bInitialOwner=True`` so we own
+    the object we created; ``release_single_instance`` is atexit + quit.
+    """
     global _INSTANCE_MUTEX
+    if _INSTANCE_MUTEX:
+        return True
     try:
-        _INSTANCE_MUTEX = ctypes.windll.kernel32.CreateMutexW(None, False, name)
-        return ctypes.windll.kernel32.GetLastError() != ERROR_ALREADY_EXISTS
+        handle = _kernel32.CreateMutexW(None, True, name)
+        err = _kernel32.GetLastError()
+        if not handle:
+            return True
+        if err == ERROR_ALREADY_EXISTS:
+            _kernel32.CloseHandle(handle)
+            return False
+        _INSTANCE_MUTEX = handle
+        atexit.register(release_single_instance)
+        return True
     except Exception:
         return True
 
@@ -69,6 +90,37 @@ def focus_existing_instance():
     except Exception:
         pass
     return signaled or focused
+
+
+def release_single_instance():
+    """Drop our mutex handle. Safe to call twice."""
+    global _INSTANCE_MUTEX
+    handle = _INSTANCE_MUTEX
+    _INSTANCE_MUTEX = None
+    if not handle:
+        return
+    try:
+        _kernel32.ReleaseMutex(handle)
+    except Exception:
+        pass
+    try:
+        _kernel32.CloseHandle(handle)
+    except Exception:
+        pass
+
+
+def kill_own_webviews(pid=None):
+    """Kill this process's msedgewebview2 children only — never by name."""
+    try:
+        root = psutil.Process(pid or os.getpid())
+        for child in root.children(recursive=True):
+            try:
+                if "msedgewebview2" in (child.name() or "").lower():
+                    child.kill()
+            except psutil.Error:
+                continue
+    except psutil.Error:
+        pass
 
 
 def _format_bytes(n):
@@ -167,6 +219,7 @@ class NebulaHost:
         self.offloader = None
         self._visible = False
         self._awake = True
+        self._quiet = False
         self._suspended = False
         self._suspend_seen = set()
         # Defer WebView TrySuspend until first paint has had a chance.
@@ -186,6 +239,7 @@ class NebulaHost:
         self._pause_reason = None   # "idle" | "session" | None — monitor auto-pause
         self._monitoring_on = False
         self._connecting = False
+        self._connect_gen = 0
         self._abort_connect = False
         self._transport_busy = False
         self._poll_timer = None
@@ -297,6 +351,10 @@ class NebulaHost:
             return list(self._log_lines)
 
     # --- hero state (single enum) ---------------------------------------
+
+    def is_connecting(self):
+        """True while a connect/launch worker is in flight (hero 'looking')."""
+        return bool(self._connecting)
 
     def hero_state(self):
         """disconnected | idle | recording | paused — the one source of truth."""
@@ -412,10 +470,10 @@ class NebulaHost:
         if not self.window:
             return
         try:
+            self._visible = True
             self.window.show()
             self.window.restore()
             self._sleep(True)
-            self._visible = True
         except Exception as exc:
             self._log("[Window] Show failed: %s" % exc)
 
@@ -423,8 +481,8 @@ class NebulaHost:
         if not self.window:
             return
         try:
-            self.window.hide()
             self._visible = False
+            self.window.hide()
             self._sleep(False)
         except Exception as exc:
             self._log("[Window] Hide failed: %s" % exc)
@@ -478,23 +536,39 @@ class NebulaHost:
                 self.window.destroy()
         except Exception:
             pass
+        kill_own_webviews()
+        release_single_instance()
 
     # --- page sleep (GPU) ------------------------------------------------
 
     def _sleep(self, awake):
-        """Pause backdrop compositing when the window is off-screen.
+        """Back-compat: on-screen + focused if awake, else full tray sleep."""
+        self._apply_page_gpu(bool(awake), focused=bool(awake))
 
-        CSS `.asleep` pauses animations and hides the backdrop; WebView2
-        TrySuspend stops the renderer/GPU path entirely while minimised.
+    def _apply_page_gpu(self, on_screen, focused):
+        """Drive .asleep / .quiet / TrySuspend from real window state."""
+        st = gpu_page_state(on_screen, focused)
+        self._awake = st["awake"]
+        self._quiet = st["quiet"]
+        if self.window:
+            js = "setAwake(%s); setQuiet(%s)" % (
+                "true" if st["awake"] else "false",
+                "true" if st["quiet"] else "false",
+            )
+            window = self.window
 
-        Deliberately does **not** ``evaluate_js('setAwake(...)')``. The page
-        already polls ``page_awake()`` once a second. Pushing JS from the
-        window-watch thread while the page is mid-``await snapshot()``
-        deadlocks pywebview's bridge — the UI freezes on the HTML placeholders
-        (``checking…``, ``reading sessions.jsonl…``) forever.
-        """
-        self._awake = bool(awake)
-        self._suspend_webview(not awake)
+            def push_js():
+                try:
+                    window.evaluate_js(js)
+                except Exception as exc:
+                    self._log("[Window] setAwake/setQuiet failed: %s" % exc)
+
+            threading.Thread(target=push_js, daemon=True).start()
+        self._suspend_webview(st["suspend"])
+        try:
+            self._windows.sleep_aux(st["suspend"])
+        except Exception:
+            pass
 
     def _suspend_webview(self, suspend):
         """Suspend / resume the Edge WebView2 renderer (UI thread).
@@ -512,6 +586,9 @@ class NebulaHost:
         3. WebView2 refuses to suspend a *visible* control, so the control is
            hidden first. Nothing is on screen at this point anyway - we only
            get here once the window is minimised or hidden to the tray.
+
+        MemoryUsageTargetLevel.Low rides the same path so hidden VRAM tiles
+        (shared iGPU memory on this laptop) actually get released.
         """
         if not self.window:
             return
@@ -528,53 +605,26 @@ class NebulaHost:
         # would resume a renderer that has never suspended.
         if suspend == self._suspended:
             return
-        native = self.window.native
-        browser = getattr(native, "browser", None)
-        if not browser:
+        ok = apply_webview_power(
+            self.window, suspend, log=self._log, prefix="[Window]")
+        if not ok:
             return
-
-        def action():
-            try:
-                wv = browser.webview
-                core = wv.CoreWebView2
-                if core is None:
-                    return
-                if suspend:
-                    wv.Visible = False
-                    core.TrySuspendAsync()
-                    note = "suspend requested"
-                else:
-                    # Read before resuming: this is the only direct evidence
-                    # the *previous* suspend actually took, since
-                    # TrySuspendAsync completes after we stop looking.
-                    was = core.IsSuspended
-                    core.Resume()
-                    wv.Visible = True
-                    note = "resumed (renderer had suspended: %s)" % bool(was)
-            except Exception as exc:
-                self._log("[Window] Renderer %s failed: %s"
-                          % ("suspend" if suspend else "resume", exc))
-                return
-            self._suspended = suspend
-            # Once per direction, never per minimise - silence here would be
-            # ambiguous (an early return looks exactly like a success), and
-            # this is the only evidence the renderer really does stop.
-            if suspend not in self._suspend_seen:
-                self._suspend_seen.add(suspend)
-                self._log("[Window] Renderer %s." % note)
-
-        try:
-            if native.InvokeRequired:
-                from System import Func, Type
-                native.Invoke(Func[Type](action))
-            else:
-                action()
-        except Exception as exc:
-            self._log("[Window] suspend marshal failed: %s" % exc)
+        self._suspended = suspend
+        # Once per direction, never per minimise - silence here would be
+        # ambiguous (an early return looks exactly like a success), and
+        # this is the only evidence the renderer really does stop.
+        if suspend not in self._suspend_seen:
+            self._suspend_seen.add(suspend)
+            self._log("[Window] Renderer %s."
+                      % ("suspend requested" if suspend else "resumed"))
 
     def awake(self):
         """Last sleep state the host asked for (for tests / API polling)."""
         return self._awake
+
+    def quiet(self):
+        """True when the window is on screen but aurora should stay frozen."""
+        return self._quiet
 
     # --- tray -----------------------------------------------------------
 
@@ -595,7 +645,7 @@ class NebulaHost:
         def watch():
             user32 = ctypes.windll.user32
             hwnd = 0
-            awake = True
+            last_key = None
             last_dpi = 0
             # First paint: the HWND can exist before IsWindowVisible is true.
             # Suspending the renderer in that window freezes the page on the
@@ -608,20 +658,28 @@ class NebulaHost:
                 time.sleep(1.0)
                 try:
                     if not hwnd:
-                        hwnd = user32.FindWindowW(None, "Nebula")
+                        hwnd = self._main_hwnd(user32)
                         if not hwnd:
                             continue
-                    on_screen = (bool(user32.IsWindowVisible(hwnd))
-                                 and not bool(user32.IsIconic(hwnd)))
-                    if on_screen:
-                        seen_on_screen = True
-                    grace = (time.time() - started) < 4.0
-                    if (not on_screen) and (grace or not seen_on_screen):
-                        continue
-                    if on_screen != awake:
-                        awake = on_screen
-                        self._sleep(awake)
-                        self._overlay_follow(awake)
+                    on_screen = window_on_screen(
+                        self._visible,
+                        user32.IsWindowVisible(hwnd),
+                        user32.IsIconic(hwnd),
+                    )
+                    fg = user32.GetForegroundWindow()
+                    focused = bool(fg) and (
+                        fg == hwnd or bool(user32.IsChild(hwnd, fg)))
+                    key = (on_screen, focused)
+                    if key != last_key:
+                        prev_screen = None if last_key is None else last_key[0]
+                        last_key = key
+                        self._apply_page_gpu(on_screen, focused)
+                        if prev_screen is None or on_screen != prev_screen:
+                            self._overlay_follow(on_screen)
+                    elif not on_screen and not self._suspended:
+                        # First TrySuspend can miss (CoreWebView2 not ready).
+                        # Do not wait for another visibility edge.
+                        self._suspend_webview(True)
                     dpi = self._window_dpi(hwnd)
                     if dpi and dpi != last_dpi:
                         if last_dpi:
@@ -629,6 +687,7 @@ class NebulaHost:
                         last_dpi = dpi
                 except Exception:
                     hwnd = 0
+                    last_key = None
 
         threading.Thread(target=watch, daemon=True).start()
 
@@ -654,6 +713,28 @@ class NebulaHost:
                     pass
 
         threading.Thread(target=listen, name="NebulaWake", daemon=True).start()
+
+    def _main_hwnd(self, user32):
+        """This process's main form, not a leftover 'Nebula' title."""
+        native = getattr(self.window, "native", None) if self.window else None
+        if native is not None:
+            handle = getattr(native, "Handle", None)
+            if handle is not None:
+                try:
+                    value = int(handle)
+                except (TypeError, ValueError):
+                    value = 0
+                    for name in ("ToInt64", "ToInt32"):
+                        fn = getattr(handle, name, None)
+                        if fn is not None:
+                            try:
+                                value = int(fn())
+                            except Exception:
+                                value = 0
+                            break
+                if value:
+                    return value
+        return user32.FindWindowW(None, "Nebula")
 
     @staticmethod
     def _window_dpi(hwnd):
@@ -734,7 +815,8 @@ class NebulaHost:
             "paused": ("Paused — stream ended"
                        if self._pause_reason == "session" else "Paused"),
             "idle": "Watching for a game",
-            "disconnected": "OBS disconnected",
+            "disconnected": ("Looking for OBS" if self._connecting
+                             else "OBS disconnected"),
         }[state]
 
         game = self._current_game or self._tray_game
@@ -780,28 +862,79 @@ class NebulaHost:
 
     # --- OBS connect ----------------------------------------------------
 
-    def autostart(self):
-        """Launch OBS if needed, connect on a worker, start the monitor."""
+    def autostart(self, force=False):
+        """Launch OBS if needed, connect on a worker, start the monitor.
+
+        ``force=True`` (hero Retry) cancels an in-flight attempt so a hung
+        websocket handshake cannot block every later click.
+        """
         if not self.monitor or not self.obs:
             return
-        if self.monitor._running or self._connecting:
+        if self._quitting:
             return
+        already_up = bool(self.obs.connected and self.monitor._running)
+        if already_up and not force:
+            return
+        if self._connecting and not force:
+            return
+        self._connect_gen += 1
+        gen = self._connect_gen
         self._connecting = True
         self._abort_connect = False
         self._clear_obs_meta()
+        host = self.config.get("obs_host") or "localhost"
+        port = self.config.get("obs_port") or 4455
+        self._log("[OBS] Looking for OBS on %s:%s..." % (host, port))
 
         def worker():
             meta = {}
             try:
                 ensure_obs_running(self.config.get("obs_path"), log=self._log)
+                if gen != self._connect_gen or self._abort_connect:
+                    return
                 self.obs.connect()
+                if gen != self._connect_gen or self._abort_connect:
+                    try:
+                        self.obs.disconnect()
+                    except Exception:
+                        pass
+                    return
                 meta = self._fetch_obs_meta()
             except Exception as exc:
                 error = exc
-                self.call_soon(lambda: self._connect_failed(error))
+                # OBS often needs a few seconds after process start before
+                # obs-websocket accepts Hello. Keep trying while the process
+                # is up; do not sit here if OBS never launched.
+                if is_obs_running() and not self._abort_connect:
+                    deadline = time.monotonic() + 20.0
+                    last = error
+                    while time.monotonic() < deadline:
+                        if gen != self._connect_gen or self._abort_connect:
+                            return
+                        try:
+                            self.obs.connect()
+                            if gen != self._connect_gen or self._abort_connect:
+                                try:
+                                    self.obs.disconnect()
+                                except Exception:
+                                    pass
+                                return
+                            meta = self._fetch_obs_meta()
+                            last = None
+                            break
+                        except Exception as retry_exc:
+                            last = retry_exc
+                            time.sleep(0.5)
+                    if last is None:
+                        self.call_soon(lambda m=meta: self._connect_succeeded(m))
+                        return
+                    error = last
+                if gen == self._connect_gen:
+                    self.call_soon(lambda: self._connect_failed(error))
                 return
             finally:
-                self._connecting = False
+                if gen == self._connect_gen:
+                    self._connecting = False
             self.call_soon(lambda m=meta: self._connect_succeeded(m))
 
         threading.Thread(target=worker, daemon=True).start()
@@ -847,14 +980,20 @@ class NebulaHost:
     def _connect_failed(self, error):
         if self._abort_connect:
             return
+        try:
+            delay = float(self.config.get("reconnect_interval_seconds") or 10)
+        except (TypeError, ValueError):
+            delay = 10.0
+        delay = max(1.0, min(delay, 30.0))
         if is_obs_running():
             self._log("[Monitor] OBS is running but its WebSocket server isn't "
                       "accepting connections. In OBS: Tools -> WebSocket Server "
                       "Settings -> tick 'Enable WebSocket server' (or restart OBS). "
-                      "Retrying in 10s...")
+                      "Retrying in %.0fs..." % delay)
         else:
-            self._log("[Monitor] OBS not available yet (%s); retrying in 10s..." % error)
-        self._schedule_retry(10.0)
+            self._log("[Monitor] OBS not available yet (%s); retrying in %.0fs..."
+                      % (error, delay))
+        self._schedule_retry(delay)
 
     def _connect_succeeded(self, meta=None):
         if self._abort_connect:

@@ -41,11 +41,11 @@ import time
 
 from . import tailscale as ts
 from . import teracopy as tc
+from .fsprobe import isdir_within
 from .silent_proc import run_kwargs
 
 _CHUNK = 4 * 1024 * 1024  # 4 MiB
 _RETRY_BACKOFF = 10       # seconds to wait before retrying a failed item
-_UNREACHABLE_LOG_INTERVAL = 60.0  # rate-limit the silent-spin explanation
 _IDLE_PROBE_S = 10.0
 _FRESH_CLIP_S = 60.0      # skip files still being written (mtime too new)
 _VIDEO_EXTS = (".mkv", ".mp4", ".mov", ".flv", ".ts", ".m4v")
@@ -113,6 +113,7 @@ class Offloader:
         self._worker = None
         self._on_state = None       # optional callback(pending, reachability=None)
         self._last_unreachable_log = 0.0
+        self._unreachable_logged = False  # one Activity line until NAS returns
         self._last_root_up = None   # None unknown; True/False last seen isdir
         self._reachability = None   # last diagnose() code, for the Settings line
         self._last_scan_at = 0.0
@@ -138,6 +139,15 @@ class Offloader:
     def root(self):
         return self._resolve_root()
 
+    def cached_root(self):
+        """Last chosen destination without probing SMB. Empty if never resolved."""
+        root, _, _ = self._path_choice
+        if root:
+            return root
+        if not self._auto_lan_enabled():
+            return self._normalize_root(self._config.get("nas_offload_root"))
+        return ""
+
     def _auto_lan_enabled(self):
         return bool(self._config.get("nas_offload_auto_lan"))
 
@@ -154,24 +164,32 @@ class Offloader:
         if cached_root and (now - cached_at) < _PATH_PROBE_TTL:
             return cached_root
 
+        # Public CurAddr ⇒ another site (overlapping 192.168.68.x at dad's).
+        # Never fall through to the LAN UNC in that case.
+        cur = ts.peer_cur_addr("nas")
+        away = bool(cur) and not ts._endpoint_looks_lan(cur)
+
         if ts.home_lan_preferred(lan):
             chosen, reason = lan, "lan"
         else:
             chosen, reason = remote, "remote"
 
-        # Preferred side may not be mounted (SMB creds are per-host). Fall
-        # back carefully: when *away*, never prefer the LAN UNC just because
-        # dad's Deco also has 192.168.68.x — use the manual root (often Z:)
-        # first. When *home*, remote Tailscale UNC is a safe second choice.
-        if chosen and not os.path.isdir(chosen):
-            manual_ok = manual if (manual and os.path.isdir(manual)) else ""
-            if reason == "remote":
-                if manual_ok:
+        # Preferred side may not be mounted (SMB creds are per-host). Timed
+        # probes — unbounded isdir on a dead Z: or Tailscale UNC blocks 20–60s.
+        if chosen and not isdir_within(chosen):
+            manual_ok = manual if (manual and isdir_within(manual)) else ""
+            if away:
+                if remote and isdir_within(remote):
+                    chosen, reason = remote, "remote"
+                elif manual_ok:
                     chosen, reason = manual_ok, "manual_fallback"
-                elif lan and os.path.isdir(lan) and ts.home_lan_preferred(lan):
+            elif reason == "remote":
+                if lan and isdir_within(lan):
                     chosen, reason = lan, "lan_fallback"
+                elif manual_ok:
+                    chosen, reason = manual_ok, "manual_fallback"
             else:
-                if remote and os.path.isdir(remote):
+                if remote and isdir_within(remote):
                     chosen, reason = remote, "remote_fallback"
                 elif manual_ok:
                     chosen, reason = manual_ok, "manual_fallback"
@@ -281,11 +299,14 @@ class Offloader:
         with self._lock:
             return {item["path"] for item in self._queue}
 
-    def reachability(self):
+    def reachability(self, probe=True):
         """Last diagnose() code, or a fresh one if we have never probed.
 
-        Safe to call from the UI thread for a cached snapshot; the worker
-        refreshes it on each unreachable attempt and on successful path checks.
+        ``probe=False`` is the UI-thread path: return the cache or None, never
+        ``isdir()`` / ``tailscale diagnose``. A cache miss used to call
+        ``ts.diagnose`` here, which hangs 20–60s on a dead mapped drive and
+        freezes the v4 snapshot (checking… / reading sessions.jsonl…).
+        The worker refreshes the cache on each unreachable attempt.
         """
         with self._lock:
             cached = self._reachability
@@ -293,6 +314,8 @@ class Offloader:
             return cached
         if not self.enabled:
             return "off"
+        if not probe:
+            return None
         return ts.diagnose(self.root)
 
     def status_snapshot(self):
@@ -548,6 +571,8 @@ class Offloader:
         """Track isdir flips so a Tailscale/NAS return wakes the backoff."""
         prev = self._last_root_up
         self._last_root_up = up
+        if up:
+            self._unreachable_logged = False
         return prev is False and up is True
 
     def _auto_scan_due(self):
@@ -625,7 +650,7 @@ class Offloader:
                     if self._wake.wait(timeout=1.0):
                         self._wake.clear()
                         break
-                    if self.enabled and os.path.isdir(self.root):
+                    if self.enabled and isdir_within(self.root):
                         # Path returned - retry now rather than finishing backoff.
                         code = ts.diagnose(self.root)
                         self._set_reachability(code)
@@ -636,10 +661,11 @@ class Offloader:
                         break
 
     def _log_unreachable(self, code):
-        now = time.monotonic()
-        if now - self._last_unreachable_log < _UNREACHABLE_LOG_INTERVAL:
+        """One Activity line while the share is down; again only after recovery."""
+        if self._unreachable_logged:
             return
-        self._last_unreachable_log = now
+        self._unreachable_logged = True
+        self._last_unreachable_log = time.monotonic()
         clause = ts.diagnose_label(code)
         extra = f" ({clause})" if clause else ""
         self._log(f"[Offload] NAS unreachable at {self.root}{extra} - "
@@ -651,7 +677,7 @@ class Offloader:
             self._log(f"[Offload] Source gone, skipping: {src}")
             return True  # nothing to do; drop it
         root = self.root
-        up = bool(root) and os.path.isdir(root)
+        up = bool(root) and isdir_within(root)
         code = ts.diagnose(root) if root else "off"
         changed = self._set_reachability(code)
         recovered = self._note_root_state(up)

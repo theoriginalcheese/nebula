@@ -75,6 +75,102 @@ finally:
     except OSError:
         pass
 
+
+# --- Save / Load on a throwaway pair of clones --------------------------------
+import shutil
+import subprocess
+import tempfile as _tempfile
+
+from obsauto.updater import (
+    SYNC_BRANCH, load_source_snapshot, save_source_snapshot,
+)
+
+
+def _git(cwd, *args, check=True):
+    proc = subprocess.run(
+        ["git", *args], cwd=cwd, capture_output=True, text=True)
+    if check and proc.returncode != 0:
+        raise RuntimeError(
+            (proc.stderr or proc.stdout or "git failed").strip()
+            or "git %s" % " ".join(args))
+    return proc
+
+
+work = _tempfile.mkdtemp(prefix="nebula-sync-")
+bare = os.path.join(work, "origin.git")
+clone_a = os.path.join(work, "a")
+clone_b = os.path.join(work, "b")
+try:
+    os.makedirs(bare)
+    _git(bare, "init", "--bare", "-b", SYNC_BRANCH)
+    seed = os.path.join(work, "seed")
+    os.makedirs(seed)
+    _git(seed, "init", "-b", SYNC_BRANCH)
+    _git(seed, "config", "user.email", "nebula-test@local")
+    _git(seed, "config", "user.name", "Nebula Test")
+    with open(os.path.join(seed, "README.md"), "w", encoding="utf-8") as fh:
+        fh.write("seed\n")
+    _git(seed, "add", "README.md")
+    _git(seed, "commit", "-m", "seed")
+    _git(seed, "remote", "add", "origin", bare)
+    _git(seed, "push", "-u", "origin", SYNC_BRANCH)
+
+    subprocess.run(
+        ["git", "clone", bare, clone_a], check=True,
+        capture_output=True, text=True)
+    subprocess.run(
+        ["git", "clone", bare, clone_b], check=True,
+        capture_output=True, text=True)
+    for clone in (clone_a, clone_b):
+        _git(clone, "config", "user.email", "nebula-test@local")
+        _git(clone, "config", "user.name", "Nebula Test")
+
+    marker = os.path.join(clone_a, "handoff.txt")
+    with open(marker, "w", encoding="utf-8") as fh:
+        fh.write("from A\n")
+    queue = os.path.join(clone_a, "offload_queue.json")
+    with open(queue, "w", encoding="utf-8") as fh:
+        fh.write("{}\n")
+    ignore = os.path.join(clone_a, ".gitignore")
+    with open(ignore, "w", encoding="utf-8") as fh:
+        fh.write("offload_queue.json\n")
+    # Pretend the queue was tracked (the bug Save has to kill).
+    _git(clone_a, "add", "-f", "offload_queue.json")
+    _git(clone_a, "commit", "-m", "track queue by mistake")
+
+    result = save_source_snapshot(root=clone_a, host="TEST-PC", now="2026-08-23 02:00")
+    check("save ok", result.get("ok"), result.get("message"))
+    check("save commits onto main",
+          _git(clone_a, "rev-parse", "--abbrev-ref", "HEAD").stdout.strip()
+          == SYNC_BRANCH)
+    check("save does not keep queue tracked",
+          "offload_queue.json" not in _git(clone_a, "ls-files").stdout)
+    check("save committed the handoff file",
+          os.path.isfile(os.path.join(clone_a, "handoff.txt")))
+
+    dirty = os.path.join(clone_b, "scratch.txt")
+    with open(dirty, "w", encoding="utf-8") as fh:
+        fh.write("nope\n")
+    refused = load_source_snapshot(root=clone_b)
+    check("load refuses dirty", not refused.get("ok"), refused.get("message"))
+    check("load dirty names Save",
+          "Save this machine" in (refused.get("message") or ""))
+    os.remove(dirty)
+
+    loaded = load_source_snapshot(root=clone_b)
+    check("load ok on clean clone", loaded.get("ok"), loaded.get("message"))
+    got = os.path.join(clone_b, "handoff.txt")
+    check("second clone received the file",
+          os.path.isfile(got) and open(got, encoding="utf-8").read() == "from A\n")
+    check("second clone did not receive the queue",
+          not os.path.isfile(os.path.join(clone_b, "offload_queue.json"))
+          or "offload_queue.json" not in _git(clone_b, "ls-files").stdout)
+except Exception as exc:
+    check("save/load temp-repo", False, str(exc))
+finally:
+    shutil.rmtree(work, ignore_errors=True)
+
+
 failed = 0
 for name, passed, detail in results:
     mark = "PASS" if passed else "FAIL"

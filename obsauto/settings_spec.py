@@ -84,7 +84,7 @@ GROUPS = (
      "already exists, so nothing here can invent a colour."),
     ("updates", "Updates",
      "Keep this install in sync with GitHub. Packaged builds check Releases; "
-     "source checkouts use a one-line git pull script."),
+     "source checkouts Save this machine / Load latest on main."),
     ("legacy", "Legacy",
      "Superseded, kept so an older config still resolves."),
 )

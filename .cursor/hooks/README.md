@@ -8,7 +8,7 @@ stdout. Everything here **fails open** — a broken hook must never wedge an age
 | `session-brief.py` | `sessionStart` | Injects the checkout identity (`tools/nebula_identity.py`) and the current gate status as `additional_context`. Only facts that *change* — the static "what's wired" lives in `AGENTS.md`, which Cursor loads for free. |
 | `guard-destructive.py` | `beforeShellExecution` | `deny` for unrecoverable commands, `ask` for merely expensive ones. |
 | `guard-app-launch.py` | `beforeShellExecution` | Denies commands that would launch Nebula or OBS. Four agent files repeat this as prose; this makes it structural. |
-| `gate.py` | `stop`, `subagentStop` | Runs ruff + the read-only token checks. On failure returns `followup_message`, so the agent auto-continues into fixing rather than stopping on a false "done". |
+| `gate.py` | `stop` | Runs ruff + the read-only token checks. Writes the verdict to `.cursor/handoff/.gate-state.json`. Does **not** return `followup_message` — that was injecting fake user turns and looping chats whenever the repo was red. |
 | `record-usage.py` | `sessionEnd` | Appends a row to `.cursor/handoff/token-ledger.jsonl`, enriched from Cursor's own attribution DB. |
 
 ## Why destructive_command_guard is not installed
@@ -93,12 +93,14 @@ would be invented.
 ## Notes
 
 - `afterFileEdit` deliberately isn't used. It returns **no output fields**, so a
-  lint hook there would run silently and change nothing the agent can see. The
-  gate lives on `stop`/`subagentStop` because those return `followup_message`.
+  lint hook there would run silently and change nothing the agent can see.
 - `failClosed` is off everywhere. Turning it on for `guard-app-launch.py` makes
   the OBS guard a hard guarantee, at the cost of blocking every shell command if
   the script itself ever fails. Worth flipping once it has some mileage.
-- `loop_limit: 2` caps gate follow-ups. Cursor enforces it; the gate also tells
-  the agent to stop and report rather than silently fixing unrelated failures.
+- `subagentStop` is intentionally unwired. It ran the same gate as `stop` and
+  doubled the (now-removed) follow-ups. Parent `stop` is enough to refresh
+  `.gate-state.json`.
+- Do **not** re-add `followup_message` on the gate. Auto-continuing the agent
+  when the repo is red hijacks unrelated chats and burns a turn per pause.
 - Changes to `hooks.json` are picked up on **new** sessions. Reload the window to
   apply them to an open one.

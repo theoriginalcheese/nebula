@@ -1,8 +1,14 @@
-"""stop / subagentStop - run the cheap half of the Definition of done.
+"""stop - run the cheap half of the Definition of done, silently.
 
 nebula-gate exists because agents claim "done" without evidence. As a rule it
 only works when the model remembers to invoke it; as a stop hook it runs by
 construction.
+
+Deliberately does NOT return followup_message. That field is injected as a
+fake user turn, which kept chats alive and burning tokens whenever the repo
+was red (including pre-existing lint unrelated to the current task). The
+verdict is written to .gate-state.json for session-brief / record-usage;
+claiming "done" is still on the agent via AGENTS.md + nebula-gate.
 
 Deliberately does NOT shell out to tools/lint_tokens.py. That script's
 check_tokens_in_sync() regenerates spike/web/tokens.css in place - a 35s
@@ -31,14 +37,6 @@ SKIP_STATUS = {"aborted", "error"}
 # gate.py writes its verdict here so record-usage.py can report it at sessionEnd
 # without paying for a second run.
 STATE = os.path.join(".cursor", "handoff", ".gate-state.json")
-
-FOLLOWUP = (
-    "Definition-of-done gate failed before this turn could be called finished.\n\n"
-    "{report}\n"
-    "Fix what your changes caused, then stop again to re-run the gate. "
-    "If a failure is pre-existing and unrelated to this task, say so explicitly "
-    "and stop - do not fix it silently, and do not claim the gate passed."
-)
 
 
 def _load_lint_module(root: str):
@@ -212,10 +210,8 @@ def main() -> int:
     root = project_dir()
     failures = run_gate(root)
     write_state(root, failures)
-    if not failures:
-        return emit()
-
-    return emit({"followup_message": FOLLOWUP.format(report=report(failures))})
+    # Record only. Never followup_message — that auto-continues the agent.
+    return emit()
 
 
 if __name__ == "__main__":

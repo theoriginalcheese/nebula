@@ -40,6 +40,8 @@ _TIMEOUT = 15
 class GameSync:
     def __init__(self, config, on_log=None):
         self._log = on_log or (lambda msg: None)
+        self._last_ok = None
+        self._last_error = ""
         self.configure(config)
 
     def configure(self, config):
@@ -66,6 +68,16 @@ class GameSync:
     def enabled(self):
         return bool(requests and self.repo and self.token)
 
+    def status_label(self):
+        """One line for the Games pane footer. Never invents a sync."""
+        if not self.enabled:
+            return "this machine only"
+        if self._last_ok is True:
+            return "shared via GitHub"
+        if self._last_ok is False:
+            return "GitHub sync failed — local list only"
+        return "GitHub sync pending"
+
     def _headers(self):
         return {
             "Authorization": f"Bearer {self.token}",
@@ -87,6 +99,11 @@ class GameSync:
             if resp.status_code == 404:
                 self._sha = None
                 return {"games": {}, "non_games": {}}
+            if resp.status_code == 401:
+                self._last_ok = False
+                self._last_error = "token rejected"
+                self._log("[Sync] GitHub token was rejected. Update github_token in Settings.")
+                return None
             resp.raise_for_status()
             payload = resp.json()
             self._sha = payload.get("sha")
@@ -96,6 +113,8 @@ class GameSync:
             data.setdefault("non_games", {})
             return data
         except Exception as exc:
+            self._last_ok = False
+            self._last_error = str(exc)
             self._log(f"[Sync] GitHub fetch failed: {exc}")
             return None
 

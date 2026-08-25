@@ -40,7 +40,6 @@ let lastSnapshot = null;
    forever and the HTML placeholders (checking…, reading sessions.jsonl…)
    stick for the whole session. */
 let dataReady = false;
-let loadInFlight = false;
 let clipState = { game: "", query: "", sort: "Newest" };
 let paletteState = { open: false, query: "", index: 0, flat: [], total: 0, groups: [] };
 let profileState = { basename: "", name: "", profile: null, summary: "", gb: null };
@@ -1276,13 +1275,15 @@ function renderHero(d) {
   const h = d.hero;
   const card = $("hero");
   card.classList.remove("is-ember", "is-accent", "is-recording", "is-paused");
-  if (h.state === "disconnected") card.classList.add("is-ember");
+  if (h.state === "disconnected" && !h.connecting) card.classList.add("is-ember");
   else if (h.state === "recording" || h.state === "paused") card.classList.add("is-accent");
   if (h.state === "recording") card.classList.add("is-recording");
   if (h.state === "paused") card.classList.add("is-paused");
 
   $("hero-eyebrow").textContent = h.eyebrow;
-  $("hero-sub").textContent = h.state === "disconnected" ? "Can't reach OBS" : "";
+  $("hero-sub").textContent = h.connecting
+    ? "Looking for OBS"
+    : (h.state === "disconnected" ? "Can't reach OBS" : "");
   $("hero-title").textContent = h.title;
   $("hero-source").textContent = h.source || "";
   $("hero-hint").textContent = h.hint || "";
@@ -2823,18 +2824,22 @@ function renderSettings(d) {
       foot.innerHTML = `<span>${esc(sync.text || "")}</span>`;
     }
   } else if (settingsGroup === "updates") {
-    foot.classList.remove("settings-footer-stack");
     const u = s.updates_footer || { text: "", kind: "source" };
     const actions = [];
     actions.push(`<button class="pill ghost no-drag" id="btn-check-update"${u.busy ? " disabled" : ""}>Check for updates</button>`);
     if (u.can_install) {
       actions.push(`<button class="pill primary no-drag" id="btn-apply-update"${u.busy ? " disabled" : ""}>Install &amp; relaunch</button>`);
-    } else if (u.can_pull) {
-      actions.push(`<button class="pill primary no-drag" id="btn-pull-update"${u.busy ? " disabled" : ""}>Sync with GitHub</button>`);
+    }
+    if (u.can_load || u.can_pull) {
+      actions.push(`<button class="pill ghost no-drag" id="btn-load-update"${u.busy ? " disabled" : ""}>Load latest</button>`);
+    }
+    if (u.can_save) {
+      actions.push(`<button class="pill primary no-drag" id="btn-save-update"${u.busy ? " disabled" : ""}>Save this machine</button>`);
     }
     if (u.status === "update" || u.status === "no_asset") {
       actions.push(`<button class="pill ghost no-drag" id="btn-open-release">Open release</button>`);
     }
+    foot.classList.toggle("settings-footer-stack", Boolean(u.can_save || u.can_load || u.can_pull));
     foot.classList.remove("is-hidden");
     foot.innerHTML = `
       <span>${esc(u.text || "")}</span>
@@ -2900,10 +2905,12 @@ function fieldHtml(f) {
   </div>`;
 }
 
+let loadBusy = false;
+
 async function load() {
-  if (loadInFlight) return;
-  if (!window.pywebview || !window.pywebview.api) return;
-  loadInFlight = true;
+  if (loadBusy) return lastSnapshot;
+  if (!window.pywebview || !window.pywebview.api) return lastSnapshot;
+  loadBusy = true;
   const rateEl = $("fc-rate");
   const connEl = $("conn-label");
   try {
@@ -2933,7 +2940,7 @@ async function load() {
     }
     throw e;
   } finally {
-    loadInFlight = false;
+    loadBusy = false;
   }
 }
 
@@ -3305,9 +3312,11 @@ function wireResizeEdges() {
   } catch (e) { fail("backdrop", e); }
   try { startHud(); } catch (e) { fail("hud", e); }
   try {
-    // Always attempt a first paint. Trailing polls still honour .asleep for
-    // GPU, but boot must not depend on "not asleep yet".
-    await load();
+    const bootAsleep = document.documentElement.classList.contains("asleep");
+    // Boot never awaits load(): the poll loop below keeps retrying until the
+    // first snapshot lands (even asleep, while !dataReady), so a hidden or
+    // sleeping start must not force a paint before the window is shown.
+    if (!bootAsleep) load();
     let bootPane = "dashboard";
     try {
       const r = await window.pywebview.api.consume_goto_pane();
@@ -3326,11 +3335,14 @@ function wireResizeEdges() {
       const live = lastSnapshot && lastSnapshot.hero &&
         (lastSnapshot.hero.state === "recording" || lastSnapshot.hero.state === "paused");
       const onClips = currentPane === "clips";
+      const looking = lastSnapshot && lastSnapshot.hero && lastSnapshot.hero.connecting;
+      const disc = lastSnapshot && lastSnapshot.hero &&
+        lastSnapshot.hero.state === "disconnected";
       if (!dataReady) pollMs = 2000;
-      else pollMs = asleep ? 8000 : (live ? 1000 : (onClips ? 3000 : 5000));
+      else pollMs = asleep ? 8000 : (live || looking || disc ? 1000 : (onClips ? 3000 : 5000));
       setTimeout(pollLoop, pollMs);
     };
-    setTimeout(pollLoop, pollMs);
+    setTimeout(pollLoop, 400);
     /* Dev shoot-loop: write a pane name to shots/goto_pane.txt (repo root)
        and this polls it, or pass it at boot before the window opens. */
     setInterval(async () => {
@@ -3659,11 +3671,27 @@ document.addEventListener("click", async (e) => {
     }
     return;
   }
-  if (e.target.closest("#btn-pull-update")) {
-    const btn = e.target.closest("#btn-pull-update");
+  if (e.target.closest("#btn-load-update") || e.target.closest("#btn-pull-update")) {
+    const btn = e.target.closest("#btn-load-update") || e.target.closest("#btn-pull-update");
     if (btn) btn.disabled = true;
     try {
-      const r = await window.pywebview.api.pull_source_update();
+      const r = await window.pywebview.api.load_source_update();
+      if (lastSnapshot && r && r.updates_footer) {
+        lastSnapshot.settings.updates_footer = r.updates_footer;
+        renderSettings(lastSnapshot);
+      } else {
+        await load();
+      }
+    } finally {
+      if (btn) btn.disabled = false;
+    }
+    return;
+  }
+  if (e.target.closest("#btn-save-update")) {
+    const btn = e.target.closest("#btn-save-update");
+    if (btn) btn.disabled = true;
+    try {
+      const r = await window.pywebview.api.save_source_update();
       if (lastSnapshot && r && r.updates_footer) {
         lastSnapshot.settings.updates_footer = r.updates_footer;
         renderSettings(lastSnapshot);

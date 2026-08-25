@@ -30,6 +30,11 @@ const state = {
   actions: [],
 };
 
+function setAsleep(on) {
+  document.documentElement.classList.toggle("asleep", !!on);
+}
+window.setAsleep = setAsleep;
+
 function waitApi(timeoutMs) {
   const limit = typeof timeoutMs === "number" ? timeoutMs : 8000;
   return new Promise((resolve, reject) => {
@@ -90,7 +95,8 @@ function seedDust(content) {
     const [dx, dy, r, a] = spec;
     const el = document.createElement("span");
     const size = Math.max(1.5, r * 2);
-    // lint-allow: dust motes sized once when seeded; not animated layout
+    // lint-allow: speck size is set once when the toast is seeded, then never
+    // written again — motion is transform/opacity on the same nodes.
     el.style.width = size + "px";
     el.style.height = size + "px";
     el.style.setProperty("--dust-dx", (dx * amp) + "px");

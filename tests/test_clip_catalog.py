@@ -329,6 +329,32 @@ def run():
     check("nas_up hint short-circuits",
           multi.nas_online(dead, reachability="nas_up") is True)
 
+    probes = {"n": 0}
+    real_isdir = os.path.isdir
+
+    def counting_isdir(path):
+        probes["n"] += 1
+        return real_isdir(path)
+
+    os.path.isdir = counting_isdir
+    try:
+        check("nas_down cache is offline",
+              multi.nas_online(dead, reachability="nas_down") is False)
+        check("nas_down cache does not isdir", probes["n"] == 0, probes["n"])
+        check("off cache is offline",
+              multi.nas_online(dead, reachability="off") is False)
+        check("off cache does not isdir", probes["n"] == 0, probes["n"])
+    finally:
+        os.path.isdir = real_isdir
+    check("online_from_reachability nas_up",
+          ClipCatalog.online_from_reachability("nas_up") is True)
+    check("online_from_reachability nas_reachable",
+          ClipCatalog.online_from_reachability("nas_reachable") is True)
+    check("online_from_reachability nas_down",
+          ClipCatalog.online_from_reachability("nas_down") is False)
+    check("online_from_reachability missing is unknown",
+          ClipCatalog.online_from_reachability(None) is None)
+
     passed = sum(1 for _, ok, _ in results if ok)
     failed = [(n, d) for n, ok, d in results if not ok]
     print("test_clip_catalog: %d/%d" % (passed, len(results)))
