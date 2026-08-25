@@ -647,13 +647,6 @@ class NebulaHost:
             hwnd = 0
             last_key = None
             last_dpi = 0
-            # First paint: the HWND can exist before IsWindowVisible is true.
-            # Suspending the renderer in that window freezes the page on the
-            # HTML placeholders and never recovers. Wait out a short grace, and
-            # never suspend until we've seen the window on-screen once (unless
-            # we started intentionally hidden to the tray).
-            started = time.time()
-            seen_on_screen = not self._visible
             while not self._quitting:
                 time.sleep(1.0)
                 try:

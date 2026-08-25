@@ -569,19 +569,6 @@ class Api:
             return {"uri": "", "seq": 0, "scene": ""}
         return self._host.preview_still()
 
-    def _hero_preview_seq(self):
-        """Seq for the hero still — never raises; missing host method → 0."""
-        host = self._host
-        if not host:
-            return 0
-        fn = getattr(host, "preview_still_seq", None)
-        if not callable(fn):
-            return 0
-        try:
-            return int(fn() or 0)
-        except Exception:
-            return 0
-
     def bench(self, seconds=10):
         """Average over a window, which is the only honest way to read CPU."""
         procs = _proc_tree()
