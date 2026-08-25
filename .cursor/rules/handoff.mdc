@@ -1,6 +1,6 @@
 ---
 description: The handoff protocol. Claude Code writes task briefs into .cursor/handoff/inbox/; you do them and report back to outbox/. Load whenever the user says "work the handoff inbox", "check the inbox", or mentions a task id like t001.
-alwaysApply: true
+alwaysApply: false
 ---
 
 # Handoff protocol

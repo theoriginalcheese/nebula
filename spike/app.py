@@ -122,16 +122,36 @@ class _GameListSync:
 
     def pull_at_startup(self):
         if not self._sync.enabled:
+            self._log("[Sync] GitHub game-list sync is off "
+                      "(no repo or token) — using local games.json only.")
             return
 
         def worker():
             remote = self._sync.fetch()
-            if remote:
-                added = self._classifier.absorb(remote)
-                if added:
-                    self._log("[Sync] Pulled %d classification(s) from GitHub."
-                              % added)
-            self._sync.push(self._classifier.snapshot())
+            if remote is None:
+                self._log("[Sync] GitHub fetch failed — local games.json unchanged.")
+                return
+            added = self._classifier.absorb(remote)
+            n_games = len(remote.get("games") or {})
+            n_non = len(remote.get("non_games") or {})
+            if added:
+                self._log("[Sync] Pulled %d new classification(s) from GitHub "
+                          "(%d games, %d apps on remote)."
+                          % (added, n_games, n_non))
+            else:
+                self._log("[Sync] Game list matches GitHub "
+                          "(%d games, %d apps)." % (n_games, n_non))
+            merged = self._sync.push(self._classifier.snapshot())
+            if merged is None:
+                self._sync._last_ok = False
+                self._log("[Sync] GitHub push skipped or failed — "
+                          "will retry on the next local save.")
+                return
+            extra = self._classifier.absorb(merged)
+            self._sync._last_ok = True
+            if extra:
+                self._log("[Sync] Adopted %d extra classification(s) from the merge."
+                          % extra)
             self._log("[Sync] Game list synced with GitHub.")
 
         threading.Thread(target=worker, daemon=True).start()
@@ -538,17 +558,67 @@ class Api:
     # --- real data, straight out of the existing modules ----------------
 
     def snapshot(self):
-        return {"obs": self._obs(),
-                "hero": self._hero(),
-                "tiles": self._tiles(),
-                "activity": self._activity(),
-                "ribbon": self._ribbon(),
-                "clips_panel": self._clips_panel(),
-                "forecast": self._forecast(),
-                "games": self._games(),
-                "settings": self._settings_payload(),
-                "macropad": self._macropad(),
-                "remote": self._remote()}
+        """UI payload. Each section is isolated so one hang/fault cannot blank the rest."""
+        def part(name, fn, fallback):
+            try:
+                return fn()
+            except Exception as exc:
+                seen = getattr(self, "_snapshot_faults", None)
+                if seen is None:
+                    self._snapshot_faults = seen = {}
+                key = "%s:%s" % (name, type(exc).__name__)
+                if key not in seen:
+                    seen[key] = True
+                    log_to_file("[UI] snapshot %s failed: %s" % (name, exc))
+                return fallback
+
+        return {
+            "obs": part("obs", self._obs, {
+                "connected": False, "live": False,
+                "label": "Not connected · no sessions logged",
+                "state": "disconnected",
+            }),
+            "hero": part("hero", self._hero, {
+                "state": "disconnected", "eyebrow": "OBS disconnected",
+                "tint": "", "title": "Looking for OBS", "source": "",
+                "hint": "", "show_readouts": False, "elapsed": "",
+                "size": "", "bitrate": "", "scene": "", "video": "",
+                "preview_seq": 0, "actions": ["Retry now"],
+                "actions_enabled": ["Retry now"], "connecting": True,
+            }),
+            "tiles": part("tiles", self._tiles, []),
+            "activity": part("activity", self._activity,
+                             {"rows": [], "tags": ["All"], "filter": "All"}),
+            "ribbon": part("ribbon", self._ribbon, {
+                "spans": [], "total_s": 0,
+                "axis": ["00:00", "06:00", "12:00", "18:00", "24:00"],
+                "by_game": [], "now_pct": 0, "hour_marks": [],
+            }),
+            "clips_panel": part("clips_panel", self._clips_panel, {
+                "scanning": False, "indexing": False, "root": "",
+                "error": None, "clips": [], "games": [],
+                "summary": {"count": 0, "total_bytes": 0, "total_label": ""},
+                "min_clip_note": "", "ffmpeg": False,
+            }),
+            "forecast": part("forecast", self._forecast, {
+                "label": "Not enough history",
+                "rate": "", "used_pct": 0,
+            }),
+            "games": part("games", self._games, {
+                "pending": [], "games": [], "non_games": [],
+                "foot_games": "", "foot_non": "",
+            }),
+            "settings": part("settings", self._settings_payload, {
+                "groups": [], "fields": [], "saved_at": None,
+                "config_path": "", "appearance": {},
+            }),
+            "macropad": part("macropad", self._macropad, {
+                "empty": True, "title": "", "body": "", "foot": "",
+            }),
+            "remote": part("remote", self._remote, {
+                "moonlight": {}, "tailscale": {}, "blurb": "",
+            }),
+        }
 
     def _obs(self):
         """One source of truth for connection state: the host.
@@ -604,20 +674,21 @@ class Api:
         idle = int(self.cfg.get("idle_timeout_seconds") or 4)
         reconnect = int(self.cfg.get("reconnect_interval_seconds") or 10)
         pause_reason = self._host.pause_reason() if self._host else None
+        connecting = bool(self._host and getattr(self._host, "is_connecting", lambda: False)())
         if state == "paused" and pause_reason == "session":
             paused_eyebrow = "Paused — stream ended"
         else:
             paused_eyebrow = "Paused — idle %d s" % idle
 
         eyebrow = {
-            "disconnected": "OBS disconnected",
+            "disconnected": "Connecting" if connecting else "OBS disconnected",
             "idle": "Idle — watching",
             "recording": "Recording",
             "paused": paused_eyebrow,
         }.get(state, spec["eyebrow"])
 
         title = s.get("heading") or {
-            "disconnected": "Can't reach OBS",
+            "disconnected": "Looking for OBS" if connecting else "Can't reach OBS",
             "idle": "No game in focus",
             "recording": "Recording",
             "paused": "Paused",
@@ -625,7 +696,13 @@ class Api:
 
         hint = ""
         source = ""
-        if state == "disconnected":
+        if state == "disconnected" and connecting:
+            host = (self.cfg.get("obs_host") or "localhost")
+            port = self.cfg.get("obs_port") or 4455
+            hint = ("Scanning %s:%s — starting OBS in the background if it isn't open."
+                    % (host, port))
+            title = "Looking for OBS"
+        elif state == "disconnected":
             hint = ("Retrying every %ds — launching from obs_path if it's set."
                     % reconnect)
             title = "Can't reach OBS"
@@ -640,6 +717,12 @@ class Api:
         show_readouts = state in ("recording", "paused")
         scene = meta.get("scene") or ""
         video = meta.get("video_label") or ""
+        seq = 0
+        if self._host:
+            try:
+                seq = int(getattr(self._host, "preview_still_seq", lambda: 0)() or 0)
+            except Exception:
+                seq = 0
         return {
             "state": state,
             "eyebrow": eyebrow,
@@ -653,7 +736,8 @@ class Api:
             "bitrate": readouts["bitrate"],
             "scene": scene,
             "video": video,
-            "preview_seq": (self._host.preview_still_seq() if self._host else 0),
+            "preview_seq": seq,
+            "connecting": connecting and state == "disconnected",
             "actions": list(spec.get("actions") or ()),
             "actions_enabled": [a for a in (spec.get("actions") or ())
                                 if a != "Mark clip"],
@@ -1344,7 +1428,7 @@ class Api:
             return {"ok": False, "error": "no host"}
         label = (label or "").strip()
         routes = {
-            "Retry now": self._host.autostart,
+            "Retry now": lambda: self._host.autostart(force=True),
             "Record anyway": self._host._toggle_record,
             "Pause monitoring": self._host._toggle_monitoring,
             "Stop recording": self._host._toggle_record,
@@ -1731,6 +1815,20 @@ class Api:
         self._ensure_clips_scan(force=True)
         return {"ok": True}
 
+    def _cached_nas_root(self):
+        """Offloader's last path or the configured root — never isdir()."""
+        offloader = self._offloader()
+        if offloader is not None:
+            cached = getattr(offloader, "cached_root", None)
+            if callable(cached):
+                try:
+                    root = (cached() or "").strip()
+                    if root:
+                        return root
+                except Exception:
+                    pass
+        return self._clip_catalog.nas_root()
+
     def _resolved_nas_root(self):
         """Prefer Offloader's live root (LAN/remote auto); else any live candidate."""
         preferred = ""
@@ -1743,12 +1841,17 @@ class Api:
         return self._clip_catalog.resolve_active_root(preferred)
 
     def _nas_up_hint(self):
-        """Offloader diagnose when available — avoids trusting a dead Z: mapping."""
+        """Offloader diagnose when available — never probes on the UI thread."""
         offloader = self._offloader()
         if offloader is None:
             return None
         try:
-            return offloader.reachability()
+            return offloader.reachability(probe=False)
+        except TypeError:
+            try:
+                return offloader.reachability()
+            except Exception:
+                return None
         except Exception:
             return None
 
@@ -2506,34 +2609,18 @@ class Api:
                 "ffmpeg": thumbs.available(),
             }
 
-        nas_root = self._resolved_nas_root()
+        nas_root = self._cached_nas_root()
         reach = self._nas_up_hint()
-        nas_online = self._clip_catalog.nas_online(nas_root, reachability=reach)
+        known = ClipCatalog.online_from_reachability(reach)
+        nas_online = bool(known)
         # Seed often runs before Offloader attaches and only sees a dead Z:
         # mapping. When any live root (or Offloader) says online, restamp
         # Offline badges without waiting for the 30s rescan timer.
         if self._clips_cache:
-            stale = False
             for c in self._clips_cache:
                 if c.get("location") != "remote":
                     continue
-                avail = c.get("availability") or "online"
-                if nas_online and avail == "offline":
-                    stale = True
-                    break
-                if (not nas_online) and avail == "online":
-                    stale = True
-                    break
-            if stale:
-                local_rows = [{
-                    "game": c["game"], "name": c["name"], "path": c["path"],
-                    "rel": c["rel"], "size": c["size"], "mtime": c["mtime"],
-                } for c in self._clips_cache if c.get("location") == "local"]
-                try:
-                    self._clips_cache = self._merge_clips(
-                        local_rows, nas_root=nas_root)
-                except Exception as exc:
-                    self._api_log("[Clips] Availability refresh failed: %s" % exc)
+                c["availability"] = "online" if nas_online else "offline"
 
         ranked = sorted(self._clips_cache, key=lambda c: -c.get("mtime", 0))
         capped = ranked[: self.CLIP_LIST_CAP]
@@ -2971,6 +3058,7 @@ def main():
     api._host = host
     offloader.start(on_state=host.on_offload_state)
     coordinator.pull_at_startup()
+    host.autostart()
 
     # 2j: start hidden. Nebula is a tray app; the window is a thing you open,
     # not the thing that is running. `--show` is for development.

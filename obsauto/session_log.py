@@ -203,20 +203,33 @@ def today():
     recorded = 0.0
     bytes_written = 0
     started = None
+    kept_by_path = {}
+    kept_anon = []
+    culled_paths = set()
     for row in rows:
         kind = row.get("type")
         if kind == "rec_start":
             started = row.get("ts")
         elif kind == "rec_stop":
             started = None
-            recorded += float(row.get("duration") or 0)
+            path = (row.get("path") or "").strip()
             if row.get("culled"):
+                if path:
+                    if path in culled_paths:
+                        continue
+                    culled_paths.add(path)
                 culled += 1
+                continue
+            if path:
+                kept_by_path[path] = row  # last wins — later stop often has duration
             else:
-                clips += 1
-                bytes_written += int(row.get("size") or 0)
+                kept_anon.append(row)
         elif kind == "idle_in":
             idle_pauses += 1
+    for row in list(kept_by_path.values()) + kept_anon:
+        clips += 1
+        recorded += float(row.get("duration") or 0)
+        bytes_written += int(row.get("size") or 0)
     # A recording still in progress counts too. Without this the Recorded tile
     # read "0m today" beside "2 clips · 7.3 GB" an hour into a session, because
     # the duration only lands on rec_stop - which looked like a broken tile

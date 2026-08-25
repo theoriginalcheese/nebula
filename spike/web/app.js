@@ -1252,13 +1252,15 @@ function renderHero(d) {
   const h = d.hero;
   const card = $("hero");
   card.classList.remove("is-ember", "is-accent", "is-recording", "is-paused");
-  if (h.state === "disconnected") card.classList.add("is-ember");
+  if (h.state === "disconnected" && !h.connecting) card.classList.add("is-ember");
   else if (h.state === "recording" || h.state === "paused") card.classList.add("is-accent");
   if (h.state === "recording") card.classList.add("is-recording");
   if (h.state === "paused") card.classList.add("is-paused");
 
   $("hero-eyebrow").textContent = h.eyebrow;
-  $("hero-sub").textContent = h.state === "disconnected" ? "Can't reach OBS" : "";
+  $("hero-sub").textContent = h.connecting
+    ? "Looking for OBS"
+    : (h.state === "disconnected" ? "Can't reach OBS" : "");
   $("hero-title").textContent = h.title;
   $("hero-source").textContent = h.source || "";
   $("hero-hint").textContent = h.hint || "";
@@ -2841,23 +2843,31 @@ function fieldHtml(f) {
   </div>`;
 }
 
+let loadBusy = false;
+
 async function load() {
-  const d = await window.pywebview.api.snapshot();
-  lastSnapshot = d;
-  renderConn(d);
-  renderHero(d);
-  await applyPreviewStill(d.hero);
-  renderTiles(d);
-  renderActivity(d);
-  renderRibbon(d);
-  renderClips(d);
-  renderForecast(d);
-  renderGames(d);
-  renderProfilePanel();
-  renderMacropad(d);
-  renderRemote(d);
-  renderSettings(d);
-  ensureSpots();
+  if (loadBusy) return lastSnapshot;
+  loadBusy = true;
+  try {
+    const d = await window.pywebview.api.snapshot();
+    lastSnapshot = d;
+    renderConn(d);
+    renderHero(d);
+    await applyPreviewStill(d.hero);
+    renderTiles(d);
+    renderActivity(d);
+    renderRibbon(d);
+    renderClips(d);
+    renderForecast(d);
+    renderGames(d);
+    renderProfilePanel();
+    renderMacropad(d);
+    renderRemote(d);
+    renderSettings(d);
+    ensureSpots();
+  } finally {
+    loadBusy = false;
+  }
 }
 
 /* --- 1l first run ------------------------------------------------------ */
@@ -3212,7 +3222,7 @@ function wireResizeEdges() {
   try { startHud(); } catch (e) { fail("hud", e); }
   try {
     const bootAsleep = document.documentElement.classList.contains("asleep");
-    if (!bootAsleep) await load();
+    if (!bootAsleep) load();
     let bootPane = "dashboard";
     try {
       const r = await window.pywebview.api.consume_goto_pane();
@@ -3227,10 +3237,13 @@ function wireResizeEdges() {
       const live = lastSnapshot && lastSnapshot.hero &&
         (lastSnapshot.hero.state === "recording" || lastSnapshot.hero.state === "paused");
       const onClips = currentPane === "clips";
-      pollMs = asleep ? 8000 : (live ? 1000 : (onClips ? 3000 : 5000));
+      const looking = lastSnapshot && lastSnapshot.hero && lastSnapshot.hero.connecting;
+      const disc = lastSnapshot && lastSnapshot.hero &&
+        lastSnapshot.hero.state === "disconnected";
+      pollMs = asleep ? 8000 : (live || looking || disc ? 1000 : (onClips ? 3000 : 5000));
       setTimeout(pollLoop, pollMs);
     };
-    setTimeout(pollLoop, pollMs);
+    setTimeout(pollLoop, 400);
     /* Dev shoot-loop: write a pane name to shots/goto_pane.txt (repo root)
        and this polls it, or pass it at boot before the window opens. */
     setInterval(async () => {

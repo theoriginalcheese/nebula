@@ -237,6 +237,30 @@ def test_connect_failure_closure():
     host.quit()
 
 
+def test_retry_force_while_connecting():
+    obs = FakeOBS()
+    gens = []
+
+    def slow_connect():
+        gens.append(1)
+        time.sleep(0.35)
+        obs.connected = True
+        obs._connect_thread = threading.current_thread()
+
+    obs.connect = slow_connect
+    host = make_host(obs=obs)
+    host.autostart()
+    check("first attempt takes the generation", host._connect_gen == 1)
+    host.autostart()
+    check("second autostart is ignored while connecting",
+          host._connect_gen == 1)
+    host.autostart(force=True)
+    check("Retry force starts a new attempt", host._connect_gen == 2)
+    settle(host, 800)
+    check("_connecting cleared after force", host._connecting is False)
+    host.quit()
+
+
 def test_bitrate_honesty():
     check("no sample -> nothing", compute_bitrate(None, 1000, 500) is None)
     check("one prior sample but <500ms -> nothing",

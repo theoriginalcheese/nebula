@@ -40,6 +40,7 @@ import threading
 import time
 
 from . import paths as paths_mod
+from .fsprobe import isdir_within
 
 _CHUNK = 4 * 1024 * 1024
 _VIDEO_EXTS = (".mkv", ".mp4", ".mov", ".flv", ".ts", ".m4v")
@@ -159,21 +160,46 @@ class ClipCatalog:
             if not root:
                 return False
             try:
-                return os.path.isdir(root)
+                return isdir_within(root)
             except OSError:
                 return False
         return any(self.nas_reachable(r) for r in self.candidate_nas_roots())
 
-    def nas_online(self, nas_root: str | None = None, reachability: str | None = None) -> bool:
+    @staticmethod
+    def online_from_reachability(reachability) -> bool | None:
+        """Interpret an Offloader diagnose code without touching the filesystem.
+
+        ``True`` / ``False`` when the code is conclusive. ``None`` means the
+        caller may probe. UI threads must treat ``None`` as offline rather than
+        ``isdir()`` a dead mapped drive or Tailscale UNC (20–60s hang).
+        """
+        if not reachability:
+            return None
+        code = str(reachability)
+        if code.startswith("nas_up") or code == "nas_reachable":
+            return True
+        if code.startswith("nas_down") or code == "off":
+            return False
+        return None
+
+    def nas_online(self, nas_root: str | None = None, reachability: str | None = None,
+                   probe=True) -> bool:
         """Listing-level online signal.
 
-        Prefer Offloader's cached ``nas_up*`` diagnose when provided — it already
-        resolved LAN vs remote. Always fall through to probing every configured
-        root so a dead ``Z:`` mapping cannot hide a live Tailscale UNC, and a
-        stale ``nas_down`` cannot hide a share that just came back.
+        Prefer Offloader's cached diagnose when provided — it already resolved
+        LAN vs remote. A conclusive ``nas_down*`` / ``off`` must not fall
+        through to ``isdir()``: a dead ``Z:`` or unreachable UNC hangs 20–60s
+        on the thread that asked, and the v4 snapshot runs on the JS bridge.
+
+        Live probes (``reachability`` absent/unknown) still walk candidates so
+        a background scan can see a share that just came back. UI threads pass
+        ``probe=False`` and treat unknown as offline.
         """
-        if reachability and str(reachability).startswith("nas_up"):
-            return True
+        known = self.online_from_reachability(reachability)
+        if known is not None:
+            return known
+        if not probe:
+            return False
         if nas_root is not None and self.nas_reachable(nas_root):
             return True
         return self.nas_reachable(None)

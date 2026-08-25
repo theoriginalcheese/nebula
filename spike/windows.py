@@ -36,6 +36,7 @@ import webview
 
 from obsauto import design_v3 as dv
 from obsauto.config import save_config
+from spike.webview_power import apply_webview_power
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 WEB = os.path.join(HERE, "web")
@@ -748,6 +749,33 @@ class ToastController:
         self._fade_dir = 0
         # True after create/hide — next paint soft-fades the HWND in.
         self._needs_appear = True
+        self._renderer_asleep = False
+
+    def _set_renderer_sleep(self, asleep):
+        """Pause toast CSS + TrySuspend while the warm slot is hidden.
+
+        evaluate_js must not run on the WinForms thread (deadlocks). Power
+        COM calls marshal themselves.
+        """
+        if not self._window or asleep == self._renderer_asleep:
+            return
+        win = self._window
+        script = "setAsleep(%s)" % ("true" if asleep else "false")
+
+        def push_js():
+            try:
+                win.evaluate_js(script)
+            except Exception:
+                pass
+
+        _off_gui(push_js)
+        apply_webview_power(
+            win, asleep, log=self._log, prefix="[Toast]")
+        self._renderer_asleep = asleep
+
+    def suspend_if_hidden(self):
+        if not self._showing:
+            self._set_renderer_sleep(True)
 
     def replace(self, event, display_name, details=None, actions=None,
                 on_timeout=None):
@@ -885,6 +913,7 @@ class ToastController:
             # Opacity tick loop (those pause WebView2 CSS animations / drain).
             _show_noactivate(self._window, self._log)
             self._needs_appear = False
+            self._set_renderer_sleep(False)
             self._set_form_opacity(1.0)
         self._schedule_paint_check(self._generation)
 
@@ -917,6 +946,7 @@ class ToastController:
                         return
                     # Handle / ShowWindow must run on the WinForms thread —
                     # this worker only owns evaluate_js (see _off_gui).
+                    self._set_renderer_sleep(False)
                     _show_noactivate(self._window, self._log)
                     self._needs_appear = False
                     self._set_form_opacity(1.0)
@@ -1125,6 +1155,7 @@ class ToastController:
                     pass
                 # Next show fades in from 0 — leave the form dark while hidden.
                 self._set_form_opacity(0.0)
+                self._set_renderer_sleep(True)
             # Shrink back to status size so the next non-prompt event isn't
             # sitting in a tall empty HWND.
             self._prompt = False
@@ -1146,6 +1177,7 @@ class ToastController:
                 except Exception:
                     pass
             self._window = None
+            self._renderer_asleep = False
 
         _run_on_gui(self._host, teardown)
 
@@ -1210,6 +1242,18 @@ class OverlayController:
         self._ready = threading.Event()
         self._snapshot = None
         self._open = False
+        self._renderer_asleep = False
+
+    def _set_renderer_sleep(self, asleep):
+        if not self._window or asleep == self._renderer_asleep:
+            return
+        apply_webview_power(
+            self._window, asleep, log=self._log, prefix="[Overlay]")
+        self._renderer_asleep = asleep
+
+    def suspend_if_hidden(self):
+        if not self._open:
+            self._set_renderer_sleep(True)
 
     def _state_allows(self):
         host = self._host
@@ -1246,6 +1290,7 @@ class OverlayController:
         if self._ready.is_set():
             self._push(self._snapshot)
         try:
+            self._set_renderer_sleep(False)
             _show_noactivate(self._window, self._log)
             self._window.on_top = True
         except Exception:
@@ -1268,6 +1313,7 @@ class OverlayController:
                 self._window.hide()
             except Exception:
                 pass
+            self._set_renderer_sleep(True)
         # host.show() → _sleep(True) → evaluate_js on the MAIN window. We are
         # on the GUI thread here (hide() uses _run_on_gui), so calling show()
         # inline deadlocks the pump — Windows marks Nebula Not Responding and
@@ -1290,6 +1336,7 @@ class OverlayController:
                 except Exception:
                     pass
             self._window = None
+            self._renderer_asleep = False
             self._ready.clear()
             return
         if not self._open:
@@ -1483,6 +1530,7 @@ class OverlayController:
                 except Exception:
                     pass
             self._window = None
+            self._renderer_asleep = False
 
         _run_on_gui(self._host, teardown)
 
@@ -1520,6 +1568,16 @@ class NebulaWindows:
 
     def overlay_hide(self, restore=False):
         self.overlay.hide(restore=restore)
+
+    def sleep_aux(self, _main_hidden=True):
+        """Suspend idle toast/overlay so a warm HWND cannot pin the GPU process.
+
+        Visible toast (an event on screen) and the recording overlay stay up.
+        ``main_hidden`` is unused except as documentation — aux sleep follows
+        each window's own visibility, not the main window's.
+        """
+        self.toast.suspend_if_hidden()
+        self.overlay.suspend_if_hidden()
 
     def overlay_sync(self):
         self.overlay.sync()

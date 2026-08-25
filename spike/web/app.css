@@ -117,6 +117,8 @@ html, body {
   position: absolute;
   left: 0; top: 0;
   width: 100%; height: 200%;
+  background-repeat: no-repeat;
+  background-size: 100% 100%;
   animation: wind-drift var(--star-speed-near) linear infinite;  /* lint-allow: gust drift is constant-speed; easing would pulse the field */
 }
 .stars.near { animation-duration: var(--star-speed-near); }
@@ -2642,6 +2644,23 @@ html, body {
   content-visibility: hidden;
 }
 .asleep .spot { opacity: 0; }
+
+
+/* --- quiet (play mode) --------------------------------------------------
+ * Window is still on screen — second monitor, unfocused — but a game (or
+ * any other app) owns focus. Pause the aurora; do not hide chrome. Pause,
+ * don't reset: restoring focus must not jump the composition.
+ */
+.quiet .aurora-sheet,
+.quiet .stars,
+.quiet .blk.live,
+.quiet .conn.live i {
+  animation-play-state: paused;
+}
+.quiet .backdrop {
+  content-visibility: hidden;
+}
+.quiet .spot { opacity: 0; }
 
 
 /* --- measurement switches ------------------------------------------------

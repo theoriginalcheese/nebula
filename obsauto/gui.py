@@ -7145,7 +7145,9 @@ class AppWindow:
         already running, and retries quietly rather than popping a blocking
         error dialog. Once monitor.start() runs, the monitor's own loop takes
         over reconnecting if OBS later crashes/closes."""
-        if self.monitor._running or self._connecting:
+        if self.obs.connected and self.monitor._running:
+            return
+        if self._connecting:
             return
         self._connecting = True
         self._abort_connect = False
@@ -7242,16 +7244,22 @@ class AppWindow:
         # setting was changed without restarting). The second one is a
         # dead-end retry loop unless the user does something in OBS, so say so
         # clearly rather than looping "not available" forever.
+        try:
+            delay_s = float(self.config.get("reconnect_interval_seconds") or 10)
+        except (TypeError, ValueError):
+            delay_s = 10.0
+        delay_s = max(1.0, min(delay_s, 30.0))
+        delay_ms = int(delay_s * 1000)
         if is_obs_running():
             self._log("[Monitor] OBS is running but its WebSocket server isn't "
                       "accepting connections. In OBS: Tools -> WebSocket Server "
                       "Settings -> tick 'Enable WebSocket server' (or restart OBS). "
-                      "Retrying in 10s...")
+                      "Retrying in %.0fs..." % delay_s)
             self._set_obs_status("enable WS in OBS", AMBER)
         else:
-            self._log(f"[Monitor] OBS not available yet ({error}); retrying in 10s...")
+            self._log(f"[Monitor] OBS not available yet ({error}); retrying in {delay_s:.0f}s...")
             self._set_obs_status("disconnected", RED)
-        self.root.after(10000, self.autostart)
+        self.root.after(delay_ms, self.autostart)
 
     def _connect_succeeded(self, meta=None):
         if self._abort_connect:

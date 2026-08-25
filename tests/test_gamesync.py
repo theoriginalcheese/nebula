@@ -9,6 +9,7 @@ import base64
 import json
 import os
 import sys
+import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -157,6 +158,42 @@ def run():
     check("network error never raises", not raised)
     check("network error fetch -> None", r1 is None)
     check("network error push -> None", r2 is None)
+
+    class Fake401:
+        def get(self, *a, **k):
+            return FakeResponse(401)
+        def put(self, *a, **k):
+            return FakeResponse(401)
+    logs401 = []
+    gamesync_module.requests = Fake401()
+    sync401 = GameSync(CFG, on_log=logs401.append)
+    check("401 fetch -> None", sync401.fetch() is None)
+    check("401 is not treated as empty remote", sync401._sha is None)
+    check("401 logged as token rejected",
+          any("token" in x.lower() for x in logs401), logs401)
+
+    from spike.app import _GameListSync
+
+    class QuietClassifier:
+        def absorb(self, remote):
+            return 0
+
+        def snapshot(self):
+            return {"games": {}, "non_games": {}}
+
+    fail_logs = []
+    gamesync_module.requests = Boom()
+    coord = _GameListSync(
+        GameSync(CFG, on_log=fail_logs.append),
+        QuietClassifier(), fail_logs.append)
+    coord.pull_at_startup()
+    until = time.time() + 2.0
+    while time.time() < until and not any("failed" in x.lower() for x in fail_logs):
+        time.sleep(0.05)
+    check("failed pull does not claim synced",
+          any("failed" in x.lower() for x in fail_logs)
+          and not any("synced with GitHub" in x for x in fail_logs),
+          fail_logs)
 
 
 run()

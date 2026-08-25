@@ -112,6 +112,20 @@ def is_obs_running():
 OBS_LAUNCH_TASK_NAME = "NebulaLaunchOBS"
 
 
+def obs_launch_task_exists():
+    """True when the one-time NebulaLaunchOBS task is registered."""
+    try:
+        from .silent_proc import run_kwargs
+        result = subprocess.run(
+            ["schtasks", "/query", "/tn", OBS_LAUNCH_TASK_NAME],
+            capture_output=True, text=True, timeout=8,
+            **run_kwargs(),
+        )
+        return result.returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+
 def _launch_via_scheduled_task(log):
     """This OBS install is set to always run as Administrator (needed for
     fullscreen capture of some games, e.g. Genshin/ZZZ) - a normal
@@ -129,30 +143,75 @@ def _launch_via_scheduled_task(log):
             capture_output=True, text=True, timeout=10,
             **run_kwargs(),
         )
-        return result.returncode == 0
-    except (OSError, subprocess.TimeoutExpired):
+        if result.returncode == 0:
+            return True
+        err = (result.stderr or result.stdout or "").strip().replace("\n", " ")
+        if err:
+            log("[OBS] Scheduled task %s did not run: %s"
+                % (OBS_LAUNCH_TASK_NAME, err[:240]))
+        return False
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        log("[OBS] Scheduled task %s: %s" % (OBS_LAUNCH_TASK_NAME, exc))
         return False
 
 
-def ensure_obs_running(obs_path, log=lambda msg: None):
+def _wait_for_obs(timeout, log):
+    """OBS's process can take several seconds to appear after schtasks / Popen."""
+    deadline = time.monotonic() + max(0.5, float(timeout))
+    while time.monotonic() < deadline:
+        if is_obs_running():
+            return True
+        time.sleep(0.35)
+    return is_obs_running()
+
+
+def ensure_obs_running(obs_path, log=lambda msg: None, wait=20.0):
     """Launch OBS if it isn't already running. Used both for the initial
     connection (in case OBS isn't set to autostart with Windows) and for
-    recovering after OBS crashes/closes mid-session."""
+    recovering after OBS crashes/closes mid-session.
+
+    Prefers the elevated scheduled task (no UAC). Falls back to a normal
+    ``Popen`` only if that task is missing — that path is not admin and
+    will UAC or fail with WinError 740 if OBS is set to run as admin.
+    """
     if is_obs_running():
-        return
+        return True
+    launched = False
     if _launch_via_scheduled_task(log):
-        log("[OBS] Launched OBS (elevated, via scheduled task).")
-        return
-    if not obs_path or not os.path.exists(obs_path):
-        return
-    try:
-        # --minimize-to-tray is OBS's own supported flag for this - more
-        # reliable than fighting window state externally via CreateProcess
-        # show flags, which OBS's own startup routine can just override.
-        subprocess.Popen([obs_path, "--minimize-to-tray"], cwd=os.path.dirname(obs_path))
-        log(f"[OBS] Launched OBS (minimized) from {obs_path}")
-    except OSError as e:
-        log(f"[OBS] Failed to launch OBS: {e}")
+        log("[OBS] Asked scheduled task %s to start OBS (elevated, no UAC)."
+            % OBS_LAUNCH_TASK_NAME)
+        launched = True
+    elif not obs_launch_task_exists():
+        log("[OBS] Scheduled task %s is missing — OBS cannot start elevated "
+            "without a UAC prompt. Run scripts/setup-obs-elevated-task.ps1 "
+            "once (approve UAC that one time)." % OBS_LAUNCH_TASK_NAME)
+    if not launched:
+        if not obs_path or not os.path.exists(obs_path):
+            log("[OBS] obs_path is missing or not a file: %r" % (obs_path,))
+            return False
+        try:
+            # --minimize-to-tray is OBS's own supported flag for this - more
+            # reliable than fighting window state externally via CreateProcess
+            # show flags, which OBS's own startup routine can just override.
+            subprocess.Popen(
+                [obs_path, "--minimize-to-tray"],
+                cwd=os.path.dirname(obs_path),
+            )
+            log("[OBS] Launched OBS (minimized, not elevated) from %s" % obs_path)
+            launched = True
+        except OSError as e:
+            log("[OBS] Failed to launch OBS: %s" % e)
+            if getattr(e, "winerror", None) == 740:
+                log("[OBS] Windows refused a non-elevated start (error 740). "
+                    "Run scripts/setup-obs-elevated-task.ps1 once so Nebula "
+                    "can start OBS as admin without a prompt.")
+            return False
+    if launched and _wait_for_obs(wait, log):
+        return True
+    if launched:
+        log("[OBS] OBS did not appear within %.0fs; websocket connect will retry."
+            % wait)
+    return is_obs_running()
 
 
 def _window_info(hwnd):

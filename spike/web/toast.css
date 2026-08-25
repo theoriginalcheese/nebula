@@ -260,7 +260,6 @@ html, body {
   background: var(--accent);
   opacity: 0.4;
   transform: translate(-50%, -50%);
-  will-change: transform, opacity;
 }
 
 .toast.is-ember .toast-dust span {
@@ -283,7 +282,7 @@ html, body {
   animation: toast-dust-scatter 1.8s var(--ease) infinite;
 }
 .toast-dust[data-style="orbit"] span {
-  animation: toast-dust-orbit 4.2s linear infinite;
+  animation: toast-dust-orbit 4.2s linear infinite;  /* lint-allow: constant-speed orbit — ease would pulse the rotation */
 }
 
 @keyframes toast-dust-burst {
@@ -316,6 +315,14 @@ html, body {
   .toast-dust span {
     animation-play-state: paused;
   }
+}
+
+/* Hidden warm slot — pause dust so a leftover HWND cannot pin the GPU. */
+html.asleep .toast-dust span {
+  animation-play-state: paused;
+}
+html.asleep .toast-drain {
+  will-change: auto;
 }
 
 .toast-copy {

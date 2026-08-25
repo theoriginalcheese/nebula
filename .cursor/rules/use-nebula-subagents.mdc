@@ -1,6 +1,9 @@
 ---
-description: Prefer Nebula/user subagents for gate, UI audit, handoff, verify, debug, tests, PR review
-alwaysApply: true
+description: >-
+  Prefer Nebula/user subagents for gate, UI audit, handoff, verify, debug,
+  tests, PR review. Load when finishing work, claiming done, running the
+  gate, auditing UI, or reviewing a PR — not on every turn.
+alwaysApply: false
 ---
 
 # Use subagents (Nebula)

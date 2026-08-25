@@ -5,6 +5,24 @@ import os
 import sys
 
 
+def shortcut_args(script, show=True, dev=False):
+    """Start Menu argv. Everyday launches must not pass ``--dev``.
+
+    ``--dev`` skips the single-instance mutex, so a Search/Start Menu
+    shortcut that included it stacked leftover ``pythonw spike/app.py --dev
+    --show`` processes and left the UI on HTML placeholders.
+    """
+    extra = []
+    if dev:
+        extra.append("--dev")
+    if show:
+        extra.append("--show")
+    quoted = '"%s"' % script
+    if not extra:
+        return quoted
+    return "%s %s" % (quoted, " ".join(extra))
+
+
 def install_start_menu_shortcut(
     repo_root=None,
     pythonw=None,
@@ -28,7 +46,7 @@ def install_start_menu_shortcut(
         "Microsoft", "Windows", "Start Menu", "Programs")
     os.makedirs(programs, exist_ok=True)
     lnk = os.path.join(programs, "Nebula.lnk")
-    args = '"%s" --dev%s' % (script, " --show" if show else "")
+    args = shortcut_args(script, show=show, dev=False)
 
     try:
         import win32com.client  # type: ignore
@@ -37,7 +55,7 @@ def install_start_menu_shortcut(
         sc.Targetpath = pythonw
         sc.Arguments = args
         sc.WorkingDirectory = repo_root
-        sc.Description = "Nebula — OBS auto-folder (dev WebView)"
+        sc.Description = "Nebula — OBS auto-folder"
         if os.path.isfile(icon):
             sc.IconLocation = icon
         sc.save()
@@ -49,7 +67,7 @@ def install_start_menu_shortcut(
     ps = (
         "$s = (New-Object -ComObject WScript.Shell).CreateShortcut('%s'); "
         "$s.TargetPath = '%s'; $s.Arguments = '%s'; "
-        "$s.WorkingDirectory = '%s'; $s.Description = 'Nebula — OBS auto-folder (dev WebView)'; "
+        "$s.WorkingDirectory = '%s'; $s.Description = 'Nebula — OBS auto-folder'; "
         "%s"
         "$s.Save()"
     ) % (

@@ -16,6 +16,7 @@ import subprocess
 import time
 
 from .silent_proc import run_kwargs
+from .fsprobe import isdir_within
 
 _STATUS_TTL = 15.0  # snapshot polls often while awake; don't re-shell every beat
 _TIMEOUT = 3
@@ -336,7 +337,7 @@ def home_lan_preferred(lan_root, peer="nas"):
     Never invents "home" from overlapping Deco subnets alone.
     """
     lan_root = (lan_root or "").strip()
-    if not lan_root or not os.path.isdir(lan_root):
+    if not lan_root or not isdir_within(lan_root):
         return False
     cur = peer_cur_addr(peer)
     if cur:

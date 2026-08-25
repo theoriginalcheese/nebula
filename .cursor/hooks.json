@@ -26,15 +26,7 @@
     "stop": [
       {
         "command": "python .cursor/hooks/gate.py",
-        "timeout": 120,
-        "loop_limit": 2
-      }
-    ],
-    "subagentStop": [
-      {
-        "command": "python .cursor/hooks/gate.py",
-        "timeout": 120,
-        "loop_limit": 2
+        "timeout": 120
       }
     ]
   }
