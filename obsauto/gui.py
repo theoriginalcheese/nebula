@@ -6291,7 +6291,7 @@ class AppWindow:
         y = toast["row_y"]
         gap = 8
         detail_text = toast.get("detail_text") or ""
-        # Keep text clear of the capsule's curved ends (radius ≈ H/2).
+        # Keep text clear of the capsule's curved ends (radius ~ H/2).
         w = self.TOAST_PROMPT_W if toast.get("prompt") else self.TOAST_W
         max_x = w - dv.TOAST_TEXT_INSET
 
@@ -6312,7 +6312,7 @@ class AppWindow:
                 return 0.0
 
         def _ellipsize(item, text, left, limit):
-            """Trim from the end until the item's right edge is ≤ limit."""
+            """Trim from the end until the item's right edge is within limit."""
             if not text:
                 canvas.itemconfigure(item, text="", state="hidden")
                 return
@@ -6630,7 +6630,7 @@ class AppWindow:
                 toast["entering"] = False
                 return
             t = min(1.0, i / steps)
-            # Spec easing cubic-bezier(.32,.72,0,1) ≈ ease-out cubic here.
+            # Spec easing cubic-bezier(.32,.72,0,1) is close to ease-out cubic here.
             eased = 1 - (1 - t) ** 3
             try:
                 toast["popup"].geometry(

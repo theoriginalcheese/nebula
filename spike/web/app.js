@@ -2905,43 +2905,49 @@ function fieldHtml(f) {
   </div>`;
 }
 
-let loadBusy = false;
+let loadPromise = null;
 
-async function load() {
-  if (loadBusy) return lastSnapshot;
-  if (!window.pywebview || !window.pywebview.api) return lastSnapshot;
-  loadBusy = true;
-  const rateEl = $("fc-rate");
-  const connEl = $("conn-label");
-  try {
-    if (rateEl && !dataReady) rateEl.textContent = "loading storage…";
-    const d = await window.pywebview.api.snapshot();
-    lastSnapshot = d;
-    try { renderConn(d); } catch (e) { fail("conn", e); }
-    try { renderHero(d); } catch (e) { fail("hero", e); }
-    try { await applyPreviewStill(d.hero); } catch (e) { fail("preview", e); }
-    try { renderTiles(d); } catch (e) { fail("tiles", e); }
-    try { renderActivity(d); } catch (e) { fail("activity", e); }
-    try { renderRibbon(d); } catch (e) { fail("ribbon", e); }
-    try { renderClips(d); } catch (e) { fail("clips", e); }
-    try { renderForecast(d); } catch (e) { fail("forecast", e); }
-    try { renderGames(d); } catch (e) { fail("games", e); }
-    try { renderProfilePanel(); } catch (e) { fail("profile", e); }
-    try { renderMacropad(d); } catch (e) { fail("macropad", e); }
-    try { renderRemote(d); } catch (e) { fail("remote", e); }
-    try { renderSettings(d); } catch (e) { fail("settings", e); }
-    try { ensureSpots(); } catch (e) { fail("spots", e); }
-    dataReady = true;
-  } catch (e) {
-    fail("snapshot", e);
-    if (rateEl) rateEl.textContent = "storage read failed — see log";
-    if (connEl && connEl.textContent === "checking…") {
-      connEl.textContent = "data stuck";
+/* Single-flight snapshot fetch: concurrent callers share one in-flight
+   promise instead of bouncing off a busy flag. A failed run surfaces via
+   fail() and resolves with whatever the last good snapshot was, so fire-
+   and-forget callers never need a catch. */
+function load() {
+  if (loadPromise) return loadPromise;
+  loadPromise = (async () => {
+    const rateEl = $("fc-rate");
+    const connEl = $("conn-label");
+    try {
+      if (rateEl && !dataReady) rateEl.textContent = "loading storage…";
+      const d = await window.pywebview.api.snapshot();
+      lastSnapshot = d;
+      try { renderConn(d); } catch (e) { fail("conn", e); }
+      try { renderHero(d); } catch (e) { fail("hero", e); }
+      try { await applyPreviewStill(d.hero); } catch (e) { fail("preview", e); }
+      try { renderTiles(d); } catch (e) { fail("tiles", e); }
+      try { renderActivity(d); } catch (e) { fail("activity", e); }
+      try { renderRibbon(d); } catch (e) { fail("ribbon", e); }
+      try { renderClips(d); } catch (e) { fail("clips", e); }
+      try { renderForecast(d); } catch (e) { fail("forecast", e); }
+      try { renderGames(d); } catch (e) { fail("games", e); }
+      try { renderProfilePanel(); } catch (e) { fail("profile", e); }
+      try { renderMacropad(d); } catch (e) { fail("macropad", e); }
+      try { renderRemote(d); } catch (e) { fail("remote", e); }
+      try { renderSettings(d); } catch (e) { fail("settings", e); }
+      try { ensureSpots(); } catch (e) { fail("spots", e); }
+      dataReady = true;
+      return d;
+    } catch (e) {
+      fail("snapshot", e);
+      if (rateEl) rateEl.textContent = "storage read failed — see log";
+      if (connEl && connEl.textContent === "checking…") {
+        connEl.textContent = "data stuck";
+      }
+      return lastSnapshot;
+    } finally {
+      loadPromise = null;
     }
-    throw e;
-  } finally {
-    loadBusy = false;
-  }
+  })();
+  return loadPromise;
 }
 
 /* --- 1l first run ------------------------------------------------------ */
@@ -3228,12 +3234,27 @@ function startHud() {
    human can see it. `document.hidden` never fired - a Win32 minimise of a
    frameless WebView2 does not background the document - so the Python host
    calls setAwake(false) on hide and setAwake(true) on show. */
+/* While asleep the backdrop layers (aurora sheets, wisps, star bitmaps) are
+   full-screen composited tiles the GPU keeps alive for no viewer. The
+   .asleep class already pauses their animations; display:none goes further
+   and drops them from the render tree entirely, releasing the tiles. They
+   come back untouched on wake — everything is baked, nothing re-renders. */
+let backdropHeld = false;
+function holdBackdropGpu(hold) {
+  if (hold === backdropHeld) return;
+  backdropHeld = hold;
+  const bd = document.querySelector(".backdrop");
+  if (!bd) return;
+  bd.style.display = hold ? "none" : "";
+}
+
 function setAwake(on) {
   // First paint wins. Sleep is a GPU optimisation for the tray life; it must
   // never prevent the dashboard from leaving its HTML placeholders.
   if (!on && !dataReady) return;
   const wasAsleep = document.documentElement.classList.contains("asleep");
   document.documentElement.classList.toggle("asleep", !on);
+  holdBackdropGpu(!on);
   const el = document.getElementById("hud-vis");
   if (el) el.textContent = on ? "visible" : "asleep";
   if (on && wasAsleep) {
