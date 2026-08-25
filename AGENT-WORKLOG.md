@@ -47,6 +47,14 @@ Machine: Alien-PC. Repo: `C:\Users\antho\Downloads\nebula`, branch `cursor/wip`.
   spec (test_chassis, Aug-01) says time counts kept+culled, bytes kept-only.
 - Full per-test sweep done: every tests/test_*.py now PASSES or completes.
 
+### 4. setQuiet() entry point (f47acbb) + hygiene
+- REAL BUG: host pushed `setAwake(); setQuiet()` but app.js never defined
+  setQuiet on EITHER machine → evaluate_js threw every transition, .quiet
+  play-mode CSS could never engage. Added window.setQuiet.
+- .gitignore: recovery-session scratch (sort checkpoint + gallery note).
+- Ruff clean; dead vars/_hero_preview_seq removed (5d7c64a).
+- Verified sleep_aux/windows.py wiring; README/V4-GUIDE already current.
+
 ## Test status at last commit
 ALL tests/test_*.py pass individually with PYTHONUTF8=1 (34 files).
 
