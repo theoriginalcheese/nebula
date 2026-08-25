@@ -55,6 +55,23 @@ Machine: Alien-PC. Repo: `C:\Users\antho\Downloads\nebula`, branch `cursor/wip`.
 - Ruff clean; dead vars/_hero_preview_seq removed (5d7c64a).
 - Verified sleep_aux/windows.py wiring; README/V4-GUIDE already current.
 
+### 5. Restart now completes the Save/Load loop (d8c9eea, 21d88f4)
+- updater.relaunch_source(): waiter in %TEMP% (never beside the repo - stray
+  files would dirty the tree and ship on next Save), waits for pid drop,
+  starts pythonw spike/app.py --show (Start Menu argv).
+- Api.restart_source_update() quits for real via host.quit() after 0.8s
+  (api.close() only hides to tray - old process would hold the mutex).
+- Footer button Restart now + blurb/README copy updated.
+- test_updater.py grew 7 relaunch checks (frozen refusal, non-checkout,
+  TEMP-not-repo waiter location, argv shape, --show parity). 33/33.
+- Verified: pushed-JS surface fully coherent (setAwake/setQuiet/openPalette/
+  toastReplace/toastForceVisible), api.* calls all bound (toast/overlay have
+  own Api classes), requirements.txt has no drift, gate selftest + run clean,
+  toast audit 48/48 across 4 scales x 4 work-area shapes.
+- WebView2 research: MemoryUsageTargetLevel API exists for script-must-run
+  inactive webviews, but MS advises NOT mixing it with TrySuspend - Nebula's
+  pure-TrySuspend design stays correct. No disable-gpu flags anywhere.
+
 ## Test status at last commit
 ALL tests/test_*.py pass individually with PYTHONUTF8=1 (34 files).
 
