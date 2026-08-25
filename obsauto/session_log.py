@@ -219,6 +219,10 @@ def today():
                         continue
                     culled_paths.add(path)
                 culled += 1
+                # A culled clip still records time: the Recorded tile answers
+                # "how long did OBS write today", not "how much survived".
+                # Bytes stay kept-only so storage figures never double-count.
+                recorded += float(row.get("duration") or 0)
                 continue
             if path:
                 kept_by_path[path] = row  # last wins — later stop often has duration
