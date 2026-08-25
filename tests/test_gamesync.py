@@ -228,6 +228,56 @@ check("multi status mentions NAS", "NAS" in multi.status_label())
 mf = multi.fetch()
 check("multi fetch has games", mf and "a.exe" in mf["games"])
 
+# --- MultiGameSync fan-in/out contract (fakes, no network) -------------------
+class FakeBackend:
+    label = "fake"
+
+    def __init__(self, enabled=True, remote=None, merge_extra=None):
+        self.enabled = enabled
+        self.remote = remote
+        self.merge_extra = merge_extra
+        self.pushed = []
+
+    def fetch(self):
+        return self.remote
+
+    def push(self, data):
+        # Merge-never-clobber like the real backends: union + ack the merged view.
+        self.pushed.append(data)
+        merged = {"games": dict(data.get("games") or {}),
+                  "non_games": dict(data.get("non_games") or {})}
+        if self.merge_extra:
+            merged["games"].update(self.merge_extra)
+            merged["non_games"] = merged.get("non_games", {})
+        return merged
+
+
+empty = {"games": {}, "non_games": {}}
+b1 = FakeBackend(remote={"games": {"a.exe": {"display_name": "A"}},
+                         "non_games": {}})
+b2 = FakeBackend(remote={"games": {"b.exe": {"display_name": "B"}},
+                         "non_games": {"tool.exe": {}}},
+                 merge_extra={"b.exe": {"display_name": "B"}})
+mg = MultiGameSync([b1, b2])
+got = mg.fetch()
+check("fan-in merges every backend",
+      got and "a.exe" in got["games"] and "b.exe" in got["games"]
+      and "tool.exe" in got["non_games"], got)
+
+out = mg.push({"games": {"local.exe": {"display_name": "L"}}, "non_games": {}})
+check("push chains: second backend saw first's merge",
+      b2.pushed and "local.exe" in b2.pushed[0]["games"], b2.pushed)
+check("push returns last merged ack",
+      out and "b.exe" in (out or {}).get("games", {}), out)
+
+off_b = FakeBackend(enabled=False,
+                    remote={"games": {"x.exe": {}}, "non_games": {}})
+mg2 = MultiGameSync([off_b])
+check("disabled backends skipped on fetch", mg2.fetch() is None)
+check("disabled backends skipped on push", mg2.push(empty) is None)
+check("all-off status is honest",
+      mg2.status_label() == "this machine only", mg2.status_label())
+
 # unreachable root
 gone = NasGameSync({"nas_offload_root": os.path.join(nas_root, "missing-dir"),
                     "games_sync_nas": True})
