@@ -95,6 +95,18 @@ Machine: Alien-PC. Repo: `C:\Users\antho\Downloads\nebula`, branch `cursor/wip`.
 - pythonw second-launch prints guarded (AttributeError on missing stdout).
 - Audited laptop's monitor.py elevated-OBS hardening: clean, tested.
 
+### 8. Research round: pywebview pitfalls
+- pywebview #1439 (evaluate_js + persistent threads hang at close): Nebula's
+  pushes are daemon-threaded + try/except + marshalled via _off_gui, so a
+  stuck push cannot hold the process at exit. Acceptable.
+- `window.run_js()` (fire-and-forget, no result marshalling) could further
+  shrink the deadlock surface for setAwake/setQuiet-style pushes - future
+  hardening option, not changed now (behavioural churn without a failing case).
+- pywebview #1699 (blocking event handlers): snapshot() runs per-call on
+  bridge worker threads by design; the >750ms slow-log covers regressions.
+- Machine audit: NebulaLaunchOBS task Ready; Start Menu shortcut argv exactly
+  matches shortcut_args(show=True, dev=False); installer idempotent.
+
 ## Test status at last commit
 ALL tests/test_*.py pass individually with PYTHONUTF8=1 (34 files).
 
