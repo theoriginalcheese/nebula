@@ -107,7 +107,18 @@ Machine: Alien-PC. Repo: `C:\Users\antho\Downloads\nebula`, branch `cursor/wip`.
 - Machine audit: NebulaLaunchOBS task Ready; Start Menu shortcut argv exactly
   matches shortcut_args(show=True, dev=False); installer idempotent.
 
+### 9. Coverage sweep complete (190acdd)
+- MultiGameSync fan-in/out spec-tested (was the only untested coordinator).
+- Reviewed laptop's monitor.py elevated-OBS hardening, teracopy.py,
+  gamesync dual-stack, host start_poll chain, renderHero connecting state,
+  applyPreviewStill degradation paths, toast event mapping - all sound.
+- Live data audit (read-only): config/index/sessions all healthy.
+- Machine audit passed: NebulaLaunchOBS Ready, shortcut argv canonical.
+- Handoff inbox empty; gate verdict green.
+
 ## Test status at last commit
+ALL tests pass (50 files incl. new classifier_peek + fsprobe specs),
+gate clean, ruff clean, token lint clean, toast audit 48/48.
 ALL tests/test_*.py pass individually with PYTHONUTF8=1 (34 files).
 
 ## Known notes for next iterations
