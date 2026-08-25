@@ -80,6 +80,7 @@ The first two run automatically when you stop.
 python -m ruff check .
 python tools/lint_tokens.py    # if you touched spike/web CSS or JS
 python tests/test_<relevant>.py # smallest relevant subset, not the full suite
+python tools/run_tests.py       # every test file, hard per-file timeout
 python tools/nebula_identity.py # which checkout am I
 ```
 
