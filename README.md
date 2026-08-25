@@ -184,7 +184,7 @@ falls back to `obs_path` only if the task is missing.
   by hand.
 - **Source clone (`python main.py` / `python spike/app.py`):** Settings → Updates
   → **Save this machine** before you leave a PC, **Load latest** when you sit
-  down at the other, then restart Nebula. Both talk to `origin/main`.
+  down at the other, then hit **Restart now**. Both talk to `origin/main`.
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts\save-to-github.ps1

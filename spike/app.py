@@ -1309,7 +1309,7 @@ class Api:
                      "install over this exe." % info["display"])
         else:
             blurb = ("Running Nebula %s. Save this machine before you leave; "
-                     "Load latest when you sit down, then restart."
+                     "Load latest when you sit down, then Restart now."
                      % info["display"])
         if last:
             blurb = last
