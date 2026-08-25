@@ -61,3 +61,8 @@ offload_state.json
 clip_index.json
 clip_cache/
 clip_posters/
+
+# One-off recovery-session scratch: sort tool checkpoint + recovered-gallery
+# handoff note from the 2026-08 toast gallery incident. Not project source.
+sort_recovered_state.json
+.cursor/TOAST-GALLERY-RECOVERED.md
