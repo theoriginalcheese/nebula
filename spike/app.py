@@ -3102,10 +3102,17 @@ def main():
     # that used to skip the mutex and left two Nebulas fighting over OBS/hotkeys.
     allow_multi = ("--dev" in sys.argv) or ("--allow-multi" in sys.argv)
     if not allow_multi and not host_mod.claim_single_instance():
-        log_to_file("[App] Another Nebula is already running — focusing it.")
+        log_to_file("[App] Another Nebula is already running - focusing it.")
         host_mod.focus_existing_instance()
-        print("Nebula is already running — brought that window forward.")
-        print("Use --allow-multi (or --dev) only when you intentionally want two.")
+        # pythonw has no stdout - these are dev-run conveniences only.
+        for _msg in ("Nebula is already running - brought that window forward.",
+                     "Use --allow-multi (or --dev) only when you intentionally "
+                     "want two."):
+
+            try:
+                print(_msg)
+            except (OSError, AttributeError):
+                pass
         return 0
 
     api = Api()
