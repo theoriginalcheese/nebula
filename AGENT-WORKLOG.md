@@ -86,6 +86,15 @@ Machine: Alien-PC. Repo: `C:\Users\antho\Downloads\nebula`, branch `cursor/wip`.
   _set_renderer_sleep; overlay has no JS push). No missing functions left.
 - node tests/test_v4_drag.js passes (25 checks).
 
+### 7. fsprobe negative memo + docs reality pass (8fe2ee0, 6c63b7e, 14b12bc)
+- fsprobe.isdir_within leaked one OS-stuck thread per call on dead drives;
+  polling callers would stack ~dozens. Negative verdicts now memoised 10s.
+- CLAUDE.md module map updated to v4/spike reality (was Tk-era): added
+  spike/app+host+windows+webview_power, updater Save/Load model,
+  clip_catalog prune invariant, run_tests watchdog note.
+- pythonw second-launch prints guarded (AttributeError on missing stdout).
+- Audited laptop's monitor.py elevated-OBS hardening: clean, tested.
+
 ## Test status at last commit
 ALL tests/test_*.py pass individually with PYTHONUTF8=1 (34 files).
 
