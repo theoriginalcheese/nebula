@@ -3263,6 +3263,15 @@ function setAwake(on) {
 }
 window.setAwake = setAwake;
 
+/* Quiet = play mode: window still on screen but a game owns focus. The host
+   pushes this alongside setAwake from _apply_page_gpu; .quiet pauses the
+   aurora/star animations and drops backdrop hit-testing without hiding any
+   chrome, so restoring focus never jumps the composition. */
+function setQuiet(on) {
+  document.documentElement.classList.toggle("quiet", !!on);
+}
+window.setQuiet = setQuiet;
+
 /* --- wiring ------------------------------------------------------------ */
 
 function ready() {
