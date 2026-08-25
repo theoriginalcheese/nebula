@@ -171,6 +171,69 @@ finally:
     shutil.rmtree(work, ignore_errors=True)
 
 
+# --- relaunch_source: waiter goes to TEMP, argv mirrors the shortcut ---------
+import tempfile
+import subprocess as _subprocess_mod
+
+
+class _FakePopen:
+    calls = []
+
+    def __init__(self, *a, **k):
+        _FakePopen.calls.append((a, k))
+
+
+# relaunch_source does its own ``import subprocess``, which yields the same
+# module object - patching the attribute here reaches it either way.
+_real_popen = _subprocess_mod.Popen
+_subprocess_mod.Popen = _FakePopen
+try:
+    _fake_root = tempfile.mkdtemp(prefix="nebula_relaunch_test_")
+
+    # Frozen builds must refuse (is_frozen probes sys.frozen).
+    _frozen_flag = getattr(sys, "frozen", None)
+    sys.frozen = True
+    try:
+        r = updater_mod.relaunch_source(root=_fake_root)
+    finally:
+        if _frozen_flag is None:
+            del sys.frozen
+        else:
+            sys.frozen = _frozen_flag
+    check("relaunch refuses frozen builds", not r.get("ok"), r)
+
+    r = updater_mod.relaunch_source(root=os.path.join(_fake_root, "nope"))
+    check("relaunch refuses non-checkout", not r.get("ok"), r)
+
+    # Happy path: entry exists, Popen gets waiter + shortcut argv.
+    os.makedirs(os.path.join(_fake_root, "spike"), exist_ok=True)
+    _entry = os.path.join(_fake_root, "spike", "app.py")
+    with open(_entry, "w", encoding="utf-8") as fh:
+        fh.write("# entry stub\n")
+    _FakePopen.calls.clear()
+    r = updater_mod.relaunch_source(root=_fake_root, pid=4321)
+    check("relaunch happy path ok", bool(r.get("ok")), r)
+    _argv = list(_FakePopen.calls[0][0][0]) if _FakePopen.calls else []
+    check("waiter spawned with pyw+waiter+pid+pyw+entry+root",
+          len(_argv) == 6 and _argv[1].endswith("_nebula_relaunch.py")
+          and _argv[2] == "4321" and _argv[4] == _entry
+          and _argv[5] == _fake_root, _argv)
+    _waiter = _argv[1] if len(_argv) > 1 else ""
+    check("waiter lives in TEMP, not the repo",
+          bool(_waiter) and
+          os.path.dirname(os.path.abspath(_waiter)) ==
+          os.path.abspath(tempfile.gettempdir()), _waiter)
+    if _waiter and os.path.isfile(_waiter):
+        with open(_waiter, encoding="utf-8") as fh:
+            _src = fh.read()
+        check("waiter waits on the given pid", "int(pid)" in _src, "")
+        check("waiter passes --show like the Start Menu shortcut",
+              '"--show"' in _src, "")
+        os.remove(_waiter)
+finally:
+    _subprocess_mod.Popen = _real_popen
+
+
 failed = 0
 for name, passed, detail in results:
     mark = "PASS" if passed else "FAIL"

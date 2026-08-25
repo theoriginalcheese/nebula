@@ -2836,6 +2836,9 @@ function renderSettings(d) {
     if (u.can_save) {
       actions.push(`<button class="pill primary no-drag" id="btn-save-update"${u.busy ? " disabled" : ""}>Save this machine</button>`);
     }
+    if (u.can_load || u.can_save) {
+      actions.push(`<button class="pill ghost no-drag" id="btn-restart-update"${u.busy ? " disabled" : ""}>Restart now</button>`);
+    }
     if (u.status === "update" || u.status === "no_asset") {
       actions.push(`<button class="pill ghost no-drag" id="btn-open-release">Open release</button>`);
     }
@@ -3731,6 +3734,17 @@ document.addEventListener("click", async (e) => {
     } finally {
       if (btn) btn.disabled = false;
     }
+    return;
+  }
+  if (e.target.closest("#btn-restart-update")) {
+    const btn = e.target.closest("#btn-restart-update");
+    if (btn) {
+      btn.disabled = true;
+      btn.textContent = "Restarting…";
+    }
+    try {
+      await window.pywebview.api.restart_source_update();
+    } catch (_) { /* bridge gone mid-quit is fine */ }
     return;
   }
   if (e.target.closest("#btn-open-release")) {

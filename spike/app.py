@@ -1632,6 +1632,28 @@ class Api:
         """Commit this working tree onto main and push it."""
         return self._run_source_snapshot("save")
 
+    def restart_source_update(self):
+        """Relaunch the checkout so Load-latest code actually runs.
+
+        Python never re-imports itself, so after a pull the footer's "then
+        restart" is a manual step. This detaches a waiter that starts
+        ``pythonw spike/app.py --show`` once this process is gone (same argv
+        as the Start Menu shortcut), then quits for real - hide-to-tray
+        would keep the old process and its single-instance mutex alive.
+        """
+        from obsauto import updater as updater_mod
+
+        if self._update_busy:
+            return {"ok": False, "error": "busy",
+                    "updates_footer": self._settings_updates_footer()}
+        result = updater_mod.relaunch_source()
+        if result.get("ok"):
+            host = self._host
+            threading.Timer(0.8, lambda: host.quit() if host else None).start()
+        return {"ok": bool(result.get("ok")),
+                "message": result.get("message") or "",
+                "updates_footer": self._settings_updates_footer()}
+
     def _run_source_snapshot(self, action):
         from obsauto import updater as updater_mod
 

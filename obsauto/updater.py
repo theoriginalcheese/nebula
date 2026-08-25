@@ -812,6 +812,88 @@ def sync_source_checkout(root=None, timeout=90, branch=None, do_push=True):
         }
 
 
+def relaunch_source(root=None, pid=None):
+    """Relaunch this source checkout after the current process exits.
+
+    Companion to ``load_source_snapshot`` for source installs: Settings can
+    pull new code, but a Python process never re-imports itself, so "Load
+    latest" needs a clean restart before the new code runs.
+
+    Writes a tiny waiter into %TEMP% - deliberately **not** beside the repo,
+    where a stray helper file would dirty the tree and ship on the next
+    Save this machine. The waiter waits for ``pid`` to drop (mutex and
+    WebView2 children released), then starts ``pythonw spike/app.py --show``
+    from the repo root - the same argv as the Start Menu shortcut.
+    """
+    import subprocess
+    import tempfile
+    import textwrap
+
+    if is_frozen():
+        return {"ok": False,
+                "message": "Packaged builds use Install & relaunch."}
+    root = root or source_checkout_root()
+    if not root:
+        return {"ok": False, "message": "Not a git checkout."}
+    entry = os.path.join(root, "spike", "app.py")
+    if not os.path.isfile(entry):
+        return {"ok": False, "message": "spike/app.py missing."}
+
+    pyw = sys.executable
+    if pyw.lower().endswith("python.exe"):
+        candidate = pyw[:-len("python.exe")] + "pythonw.exe"
+        if os.path.isfile(candidate):
+            pyw = candidate
+
+    pid = int(pid or os.getpid())
+    helper = os.path.join(tempfile.gettempdir(), "_nebula_relaunch.py")
+    script = textwrap.dedent("""\
+        import os, sys, time, subprocess
+        pid, pyw, entry, root = (sys.argv[1], sys.argv[2], sys.argv[3],
+                                 sys.argv[4])
+        for _ in range(120):
+            try:
+                import ctypes
+                SYNCHRONIZE = 0x00100000
+                h = ctypes.windll.kernel32.OpenProcess(SYNCHRONIZE, False,
+                                                       int(pid))
+                if h:
+                    ctypes.windll.kernel32.CloseHandle(h)
+                    time.sleep(0.5)
+                    continue
+            except Exception:
+                pass
+            break
+        flags = 0x00000008 | 0x00000200  # DETACHED | NEW_GROUP
+        subprocess.Popen([pyw, entry, "--show"], cwd=root,
+                         close_fds=True, creationflags=flags)
+        try:
+            os.remove(__file__)
+        except OSError:
+            pass
+        """)
+    with open(helper, "w", encoding="utf-8", newline="\n") as fh:
+        fh.write(script)
+
+    flags = 0
+    if hasattr(subprocess, "DETACHED_PROCESS"):
+        flags |= subprocess.DETACHED_PROCESS
+    if hasattr(subprocess, "CREATE_NEW_PROCESS_GROUP"):
+        flags |= subprocess.CREATE_NEW_PROCESS_GROUP
+    if hasattr(subprocess, "CREATE_NO_WINDOW"):
+        flags |= subprocess.CREATE_NO_WINDOW
+    subprocess.Popen(
+        [pyw, helper, str(pid), pyw, entry, root],
+        cwd=tempfile.gettempdir(),
+        close_fds=True,
+        creationflags=flags,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    return {"ok": True, "message": "Restarting with the latest source."}
+
+
 def install_and_relaunch(update_path, target_path=None, pid=None):
     """Replace the running packaged exe after this process exits, then relaunch.
 
