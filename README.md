@@ -161,6 +161,7 @@ Settings live in `config.json` next to the executable (created on first run):
 | `github_gamedata_path` | `games.json` | File path within that repo |
 | `nas_offload_root` | *(empty)* | Destination for finished clips, e.g. a mapped drive `Z:/OBS Recordings` or a UNC path. Blank = offload off. |
 | `nas_offload_mode` | `copy` | `copy` keeps both copies; `move` deletes the local original **after** the NAS copy is byte-verified |
+| `clip_cache_max_gb` | `50` | Cap for the on-demand clip cache (`clip_cache/`). Oldest cached copies go first; NAS originals and recordings are never touched. `0` = no cap. |
 
 ### Elevated OBS (Hoyoverse / fullscreen capture)
 

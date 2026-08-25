@@ -166,6 +166,11 @@ FIELDS = (
           minimum=0, maximum=10000,
           hint="Gigabytes free. Below this the hero card won't start a "
                "recording — better than one that dies mid-session."),
+    Field("clip_cache_max_gb", "Clip cache cap", "int", "storage",
+          minimum=0, maximum=2000,
+          hint="Gigabytes of C: the NAS clip cache may fill before the "
+               "oldest cached copies are removed (NAS originals are never "
+               "touched). 0 = no cap."),
 
     # ---- Hotkey ----
     Field("toggle_hotkey", "Toggle key", "text", "hotkey",
