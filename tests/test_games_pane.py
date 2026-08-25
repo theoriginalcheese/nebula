@@ -84,10 +84,12 @@ check("every ignored row carries a visible button",
 labels = {b.cget("text") for b in promote_buttons}
 check("the button says what it does", labels == {"Make a game"}, labels)
 
-# It must actually promote. _promote_non_game asks for confirmation, so stub
-# the dialog rather than the action - the action is the thing under test.
+# It must actually promote. _promote_non_game asks for confirmation, then a
+# display-name dialog, so stub both rather than the action - the action is
+# the thing under test.
 import tkinter.messagebox
 tkinter.messagebox.askyesno = lambda *a, **k: True
+app._ask_display_name = lambda *a, **k: "Discord"
 app._promote_non_game("discord.exe")
 app.root.update()
 check("promoting moves the app into games",

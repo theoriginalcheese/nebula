@@ -373,7 +373,10 @@ class Monitor:
     def note_manual_stop(self, basename=None, display_name=None):
         """UI clicked Stop. Suppress auto-restart until confirm / exit / clear."""
         if not basename:
-            hinted = self._find_new_game_target()
+            # Runs on the Tk thread (marshalled from the Stop button), so the
+            # lookup must be cache-only: peek() never triggers the lazy Steam
+            # scan whose synchronous Store request would freeze the UI.
+            hinted = self._find_new_game_target(peek_only=True)
             if hinted is not None:
                 basename, display_name = hinted[1], hinted[2]
         self._hold_off = True
@@ -580,17 +583,22 @@ class Monitor:
         result = gate()
         return True if result is None else result  # None == "can't tell", assume live
 
-    def _find_new_game_target(self):
+    def _find_new_game_target(self, peek_only=False):
         """Pick a game to lock onto: prefer the foreground window, falling
         back to scanning all visible windows if the foreground one isn't a
         classified game (e.g. a launcher briefly has focus while the game
         itself is still loading). A session-gated app (Moonlight) is only
         picked up once its session is actually live, so we don't start
-        recording its idle host-list menu."""
+        recording its idle host-list menu.
+
+        ``peek_only`` (UI thread): classify from cache only — no Steam scan,
+        no network, and no manual-review queueing.
+        """
+        classify = self.classifier.peek if peek_only else self.classifier.classify
         fg = get_foreground_window_info()
         if fg:
             pid, exe_path, proc_name, title, cls = fg
-            result, display_name = self.classifier.classify(exe_path, proc_name)
+            result, display_name = classify(exe_path, proc_name)
             if result == "game" and self._recording_gate_open(os.path.basename(exe_path).lower()):
                 return self._make_target(pid, exe_path, display_name)
             # Nothing to record here, but the idle hero says what it is looking
@@ -607,11 +615,13 @@ class Monitor:
                 self.on_state(foreground=(proc_name, result))
 
         for pid, exe_path, proc_name, title, cls in list_visible_windows():
-            result, display_name = self.classifier.classify(exe_path, proc_name)
+            result, display_name = classify(exe_path, proc_name)
             if result == "game":
                 if self._recording_gate_open(os.path.basename(exe_path).lower()):
                     return self._make_target(pid, exe_path, display_name)
             elif result == "unknown":
+                if peek_only:
+                    continue
                 basename = os.path.basename(exe_path).lower()
                 if self.classifier.queue_for_manual_review(basename):
                     self.log(f"[Monitor] Unrecognized app awaiting review: {basename}")

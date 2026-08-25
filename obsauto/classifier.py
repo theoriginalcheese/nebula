@@ -265,6 +265,30 @@ class Classifier:
         return rest.split("/", 1)[0] if rest else None
 
     # ---- classification ----
+    def peek(self, exe_path, proc_name):
+        """Cached-only classify: never scans Steam or touches the network.
+
+        For UI-thread callers that need an answer immediately (manual-stop
+        hold-off labelling) a lazy refresh_steam_index() here would block
+        the window on a synchronous Steam Store request. When only a fresh
+        scan could decide, this returns ("unknown", None) and leaves the
+        decision to the monitor loop, which classifies off-thread.
+        """
+        basename = os.path.basename(exe_path).lower() if exe_path else (proc_name or "").lower()
+        if not basename:
+            return "unknown", None
+        with self._lock:
+            if basename in self._data["games"]:
+                return "game", self._data["games"][basename]["display_name"]
+            if basename in self._data["non_games"]:
+                return "non_game", None
+        if not self._steam_index_loaded:
+            return "unknown", None
+        installdir = self._steam_installdir_for_path(exe_path)
+        if installdir and installdir in self._steam_index:
+            return "game", self._steam_index[installdir]
+        return "unknown", None
+
     def classify(self, exe_path, proc_name):
         """Return ("game", display_name) / ("non_game", None) / ("unknown", None)."""
         basename = os.path.basename(exe_path).lower() if exe_path else proc_name.lower()

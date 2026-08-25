@@ -114,6 +114,7 @@ app._refresh_games()
 settle(200)
 asked = {"n": 0}
 gui.tkinter.messagebox.askyesno = lambda *a, **k: (asked.__setitem__("n", asked["n"] + 1), True)[1]
+app._ask_display_name = lambda *a, **k: "Promoteme"
 row = next((r for r in app._nongames_list.winfo_children()
             if "promoteme.exe" in " ".join(texts(r) + [""])), None)
 if row is None:  # the row is the frame itself; match on its children
