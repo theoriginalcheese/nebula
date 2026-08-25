@@ -124,6 +124,33 @@ def run():
     check("stall message mentions progress",
           "no progress for 5 minutes" in js)
 
+    # --- cache auto-prune: oldest first, index-known only, keep just-fetched
+    cat._config["clip_cache_max_gb"] = 0  # disabled: nothing may be pruned
+    second = cat.cache_path("Game/second.mkv")
+    os.makedirs(os.path.dirname(second), exist_ok=True)
+    with open(second, "wb") as f:
+        f.write(b"second-clip-bytes")
+    cat.upsert(game="Game", name="second.mkv", size=17,
+               mtime=1.0, nas_path=os.path.join(nas, "Game", "second.mkv"))
+    old = cat.cache_path(rel)  # playme, fetched earlier => older mtime
+    os.utime(second, (1_000_000_000, 1_000_000_000))  # older than playme
+    before = os.path.getsize(second)
+    cat._prune_cache(keep_rel=rel)
+    check("cap 0 disables pruning", os.path.isfile(second)
+          and os.path.getsize(second) == before)
+
+    orphan = os.path.join(cat._cache_root, "Game", "orphan.bin")
+    with open(orphan, "wb") as f:
+        f.write(b"not-in-index")
+    # Tiny cap: everything over ~10 bytes must go, oldest (second) first,
+    # the just-fetched playme kept, the orphan never touched.
+    cat._config["clip_cache_max_gb"] = 10 / (1024 ** 3)
+    cat._prune_cache(keep_rel=rel)
+    check("prune evicts oldest index-known file",
+          not os.path.exists(second))
+    check("prune keeps the just-fetched clip", os.path.isfile(old))
+    check("prune never touches unknown files", os.path.isfile(orphan))
+
     passed = sum(1 for _, ok, _ in results if ok)
     failed = [(n, d) for n, ok, d in results if not ok]
     print("test_clips_ondemand: %d/%d" % (passed, len(results)))

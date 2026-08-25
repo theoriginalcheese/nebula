@@ -48,6 +48,7 @@ _INDEX_NAME = "clip_index.json"
 _CACHE_DIRNAME = "clip_cache"
 _FETCH_PROBE_TIMEOUT_S = 8.0
 _PAUSE_POLL_S = 0.12
+_CACHE_MAX_GB_DEFAULT = 50.0
 
 
 class FetchCancelled(Exception):
@@ -880,9 +881,69 @@ class ClipCatalog:
             self._clear_controls(rel)
             self._set_fetch(rel, state="ready", path=dest, bytes=total,
                             total=total, error="")
+            self._prune_cache(keep_rel=rel)
             return {"ok": True, "path": dest, "location": "cached", "rel": rel}
         finally:
             lock.release()
+
+    def _prune_cache(self, keep_rel: str = "") -> None:
+        """Keep the fetch cache under ``clip_cache_max_gb`` (default 50).
+
+        A week of Tailscale clip opens can otherwise quietly eat tens of GB
+        of C:. Oldest-mtime first, only files the index knows about (orphans
+        wait for evict_all), never an in-flight download, never the clip just
+        fetched. Cache-only by construction - evict() cannot touch the NAS
+        or recording_root.
+        """
+        raw = (self._config or {}).get("clip_cache_max_gb")
+        try:
+            cap_gb = _CACHE_MAX_GB_DEFAULT if raw is None else float(raw or 0)
+        except (TypeError, ValueError):
+            cap_gb = _CACHE_MAX_GB_DEFAULT
+        if cap_gb <= 0:
+            return
+        cap_bytes = int(cap_gb * 1024 ** 3)
+        root = self._cache_root
+        if not os.path.isdir(root):
+            return
+        stats = []
+        total = 0
+        for dirpath, _dirnames, filenames in os.walk(root):
+            for name in filenames:
+                p = os.path.join(dirpath, name)
+                try:
+                    st = os.stat(p)
+                except OSError:
+                    continue
+                total += st.st_size
+                stats.append((st.st_mtime, st.st_size, p))
+        over = total - cap_bytes
+        if over <= 0:
+            return
+        keep_path = self.cache_path(keep_rel) if keep_rel else None
+        freed = 0
+        stats.sort()  # oldest mtime first
+        for _mtime, size, p in stats:
+            if freed >= over:
+                break
+            if keep_path and os.path.abspath(p) == os.path.abspath(keep_path):
+                continue
+            rel = _safe_rel(
+                os.path.relpath(p, root).replace("\\", "/"))
+            if not rel:
+                continue
+            if (self._fetches.get(rel) or {}).get("state") == "downloading":
+                continue
+            with self._lock:
+                if rel not in self._entries:
+                    continue  # unknown/orphan file - evict_all sweeps those
+            if self.evict(rel):
+                freed += size
+                self._log("[Clips] Cache prune: removed %s (%.0f MB)" % (
+                    rel, size / (1024 * 1024)))
+        if freed:
+            self._log("[Clips] Cache pruned %.2f GB over the %g GB cap." % (
+                freed / 1024 ** 3, cap_gb))
 
     def _part_is_prefix(self, src: str, part: str, nbytes: int) -> bool:
         """True when ``part`` matches the first ``nbytes`` of ``src``."""
