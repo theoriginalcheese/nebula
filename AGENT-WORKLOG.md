@@ -72,6 +72,20 @@ Machine: Alien-PC. Repo: `C:\Users\antho\Downloads\nebula`, branch `cursor/wip`.
   inactive webviews, but MS advises NOT mixing it with TrySuspend - Nebula's
   pure-TrySuspend design stays correct. No disable-gpu flags anywhere.
 
+### 6. Clip cache auto-prune + Settings exposure (c4b773b, c65b3ef)
+- REAL GAP: clip_cache was evict-manual only; Tailscale clip opens could eat
+  tens of GB of C: silently. New `_prune_cache()` runs after each completed
+  download: oldest-mtime index-known files first, active downloads skipped,
+  just-fetched clip kept, orphans left for evict_all. Cap = config key
+  `clip_cache_max_gb` (default 50 GB, 0 disables), exposed in Settings >
+  Storage + README table.
+- Audited offload delete path for the sacred-footage rule: checksum verify →
+  atomic rename → index-before-delete → local remove only in move mode.
+  Correct as shipped; no changes needed.
+- Verified overlay/toast pushed-JS surfaces (setAsleep driven via
+  _set_renderer_sleep; overlay has no JS push). No missing functions left.
+- node tests/test_v4_drag.js passes (25 checks).
+
 ## Test status at last commit
 ALL tests/test_*.py pass individually with PYTHONUTF8=1 (34 files).
 
