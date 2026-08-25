@@ -12,6 +12,19 @@ from __future__ import annotations
 
 import os
 import threading
+import time
+
+# A dead redirector holds each probe's worker thread for the OS timeout long
+# after we stopped waiting. Polling callers (snapshot reachability) would
+# stack one stuck thread per tick - remember "not a dir" verdicts briefly so
+# a dead path costs at most one thread per TTL window instead of per call.
+_NEG_TTL_S = 10.0
+_neg_until: dict[str, float] = {}
+_neg_lock = threading.Lock()
+
+
+def _key(path):
+    return os.path.normcase(os.path.normpath(path))
 
 
 def isdir_within(path, timeout=2.0):
@@ -26,6 +39,13 @@ def isdir_within(path, timeout=2.0):
     if timeout <= 0:
         timeout = 2.0
 
+    key = _key(path)
+    now = time.monotonic()
+    with _neg_lock:
+        until = _neg_until.get(key)
+        if until is not None and now < until:
+            return False
+
     box = []
 
     def check():
@@ -38,5 +58,11 @@ def isdir_within(path, timeout=2.0):
     worker.start()
     worker.join(timeout)
     if worker.is_alive() or not box:
+        with _neg_lock:
+            _neg_until[key] = time.monotonic() + _NEG_TTL_S
         return False
-    return box[0]
+    ok = box[0]
+    if not ok:
+        with _neg_lock:
+            _neg_until[key] = time.monotonic() + _NEG_TTL_S
+    return ok
