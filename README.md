@@ -163,6 +163,12 @@ Settings live in `config.json` next to the executable (created on first run):
 | `nas_offload_mode` | `copy` | `copy` keeps both copies; `move` deletes the local original **after** the NAS copy is byte-verified |
 | `clip_cache_max_gb` | `50` | Cap for the on-demand clip cache (`clip_cache/`). Oldest cached copies go first; NAS originals and recordings are never touched. `0` = no cap. |
 
+The table above is the short list worth documenting in prose. The authoritative,
+complete set — replays, appearance, Moonlight remote, hotkeys, offload paths,
+cull thresholds — is [`obsauto/settings_spec.py`](obsauto/settings_spec.py)
+(`FIELDS`, with defaults from `obsauto/config.py`); the Settings pane renders
+it directly, so anything added there appears in the app without README edits.
+
 ### Elevated OBS (Hoyoverse / fullscreen capture)
 
 Some games need OBS running as Administrator. Nebula stays non-elevated and launches OBS
