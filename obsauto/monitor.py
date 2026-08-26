@@ -312,6 +312,10 @@ class Monitor:
         self._reopen_cooldown_basename = None
         self._reopen_cooldown_until = 0.0
         self._last_foreground = None   # so the hero's foreground line only fires on change
+        # Scene-name hint state (see _scene_display_hint).
+        self._scene_cache = None
+        self._scene_checked_at = 0.0
+        self._last_scene_hint = None   # (scene, proc) last logged, so one line per change
         # Serialises every OBS start/stop transition. The worker loop is not
         # the only caller: the toast "Record" button and the webview transport
         # bar both drive _apply_target from their own threads. Without this,
@@ -608,6 +612,38 @@ class Monitor:
         result = gate()
         return True if result is None else result  # None == "can't tell", assume live
 
+    # How often the scene-name hint may ask OBS for the program scene. Only
+    # consulted while the foreground classifies as unknown, so this bounds
+    # the extra websocket call to one per few seconds in that state.
+    SCENE_HINT_INTERVAL_S = 5.0
+
+    def _scene_display_hint(self):
+        """(display_name, known_basename) when the OBS scene names a game.
+
+        Anti-cheat titles can leave the exe unclassifiable; the scene the
+        user named after their game is then the only honest signal left.
+        Strictly exact case-insensitive match against already-classified
+        games via Classifier.display_lookup - generic scenes cannot fire
+        because nothing was ever classified under them, and no name is
+        ever invented here.
+        """
+        now = time.monotonic()
+        if now - self._scene_checked_at >= self.SCENE_HINT_INTERVAL_S:
+            self._scene_checked_at = now
+            try:
+                self._scene_cache = self.obs.get_current_program_scene()
+            except Exception:
+                # OBS busy/disconnected - cache as no-hint rather than
+                # retry-spamming a failing socket every tick.
+                self._scene_cache = None
+        scene = (self._scene_cache or "").strip()
+        if not scene:
+            return None
+        basename = self.classifier.display_lookup(scene)
+        if basename:
+            return scene, basename
+        return None
+
     def _find_new_game_target(self, peek_only=False):
         """Pick a game to lock onto: prefer the foreground window, falling
         back to scanning all visible windows if the foreground one isn't a
@@ -626,6 +662,19 @@ class Monitor:
             result, display_name = classify(exe_path, proc_name)
             if result == "game" and self._recording_gate_open(os.path.basename(exe_path).lower()):
                 return self._make_target(pid, exe_path, display_name)
+            if result == "unknown" and not peek_only:
+                hint = self._scene_display_hint()
+                if hint:
+                    scene, _known_basename = hint
+                    basename = os.path.basename(exe_path).lower()
+                    if self._recording_gate_open(basename):
+                        key = (scene, proc_name)
+                        if key != self._last_scene_hint:
+                            self._last_scene_hint = key
+                            self.log(f"[Monitor] Scene '{scene}' names a known "
+                                     f"game - recording {scene} "
+                                     f"({basename} unclassified).")
+                        return self._make_target(pid, exe_path, scene)
             # Nothing to record here, but the idle hero says what it is looking
             # at rather than a bare "no game detected" (6.6). Reported only when
             # it changes - this loop runs once a second.

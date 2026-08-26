@@ -265,6 +265,24 @@ class Classifier:
         return rest.split("/", 1)[0] if rest else None
 
     # ---- classification ----
+    def display_lookup(self, name):
+        """Basename whose display_name equals ``name`` (case-insensitive).
+
+        The reverse of the usual direction: given a human label (an OBS
+        scene name, say), find the game the user already classified under
+        it. Exact match only - a generic scene like "Game" or "Just
+        Chatting" can never match, because nothing was ever classified
+        under that name. None when there is no such game.
+        """
+        needle = (name or "").strip().lower()
+        if not needle:
+            return None
+        with self._lock:
+            for basename, info in self._data["games"].items():
+                if (info.get("display_name") or "").strip().lower() == needle:
+                    return basename
+        return None
+
     def peek(self, exe_path, proc_name):
         """Cached-only classify: never scans Steam or touches the network.
 
