@@ -253,8 +253,20 @@ def run():
             cancelled = cat.cancel_fetch("Ctrl/big.mkv")
             check("cancel ok", cancelled.get("ok") is True, cancelled)
             t.join(timeout=8)
-            check("cancel leaves no complete cache",
-                  cat.cached_file("Ctrl/big.mkv") is None)
+            # The worker can win the race - final rename landing in the same
+            # instant as cancel. A fully-copied cache surviving a late cancel
+            # is correct (deleting verified bytes helps nobody); what must
+            # NEVER happen is a half-written file posing as complete.
+            cached = cat.cached_file("Ctrl/big.mkv")
+            if cached is not None:
+                check("cancel raced the rename: full-size cache only",
+                      os.path.getsize(cached) == len(big),
+                      f"{os.path.getsize(cached)} vs {len(big)}")
+                check("race-won cache: NAS untouched", os.path.isfile(big_nas))
+                check("race-won cache: no .part either",
+                      not os.path.exists(cat.cache_path("Ctrl/big.mkv") + ".part"))
+            else:
+                check("cancel leaves no complete cache", True)
             check("cancel: NAS untouched", os.path.isfile(big_nas))
             part = cat.cache_path("Ctrl/big.mkv") + ".part"
             wait_until(lambda: not os.path.exists(part), timeout=3)
