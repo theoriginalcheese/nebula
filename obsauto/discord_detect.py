@@ -23,18 +23,41 @@ import ctypes
 import time
 from ctypes import wintypes
 
-try:
-    import comtypes
-    import comtypes.client
-    _COMTYPES = True
-except Exception:  # pragma: no cover
-    _COMTYPES = False
+# Deferred, not module-level: comtypes + psutil cost ~27 ms together and
+# Discord detection first runs from the monitor's poll loop - long after the
+# window exists (same pattern as steam_scanner/gamesync). Tri-state globals:
+# None = not probed yet, module = ok, False = tried and unavailable.
+comtypes = None
+_COMTYPES = None
+psutil = None
+_PSUTIL = None
 
-try:
-    import psutil
-    _PSUTIL = True
-except Exception:  # pragma: no cover
-    _PSUTIL = False
+
+def _comtypes_mod():
+    global comtypes, _COMTYPES
+    if _COMTYPES is None:
+        try:
+            import comtypes as _ct
+            import comtypes.client  # noqa: F401 - GetModule needs it wired
+            comtypes = _ct
+            _COMTYPES = True
+        except Exception:  # pragma: no cover - optional at runtime
+            comtypes = False
+            _COMTYPES = False
+    return comtypes or None
+
+
+def _psutil_mod():
+    global psutil, _PSUTIL
+    if _PSUTIL is None:
+        try:
+            import psutil as _p
+            psutil = _p
+            _PSUTIL = True
+        except Exception:  # pragma: no cover - optional at runtime
+            psutil = False
+            _PSUTIL = False
+    return psutil or None
 
 # Names Discord exposes in its a11y tree / titles only while a call is live.
 # Kept lowercase; matching is substring on the lowered name.
@@ -67,11 +90,12 @@ _MAX_HITS_SHORTCIRCUIT = 1
 
 
 def _discord_pids():
-    if not _PSUTIL:
+    psutil_mod = _psutil_mod()
+    if psutil_mod is None:
         return set()
     out = set()
     try:
-        for proc in psutil.process_iter(["name", "pid"]):
+        for proc in psutil_mod.process_iter(["name", "pid"]):
             name = (proc.info.get("name") or "").lower()
             if name == "discord.exe":
                 out.add(proc.info["pid"])
@@ -120,15 +144,16 @@ def _name_says_call(name):
 
 def _uia_discord_in_call(hwnds):
     """Walk Discord HWND a11y trees for voice-call chrome. False on any failure."""
-    if not _COMTYPES or not hwnds:
+    ct = _comtypes_mod()
+    if ct is None or not hwnds:
         return False
     try:
-        comtypes.CoInitialize()
+        ct.CoInitialize()
     except Exception:
         pass
     try:
-        uia_mod = comtypes.client.GetModule("UIAutomationCore.dll")
-        uia = comtypes.client.CreateObject(
+        uia_mod = ct.client.GetModule("UIAutomationCore.dll")
+        uia = ct.client.CreateObject(
             "{ff48dba4-60ef-4201-aa87-54103eef594e}",
             interface=uia_mod.IUIAutomation,
         )
