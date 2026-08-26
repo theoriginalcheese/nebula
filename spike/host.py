@@ -174,6 +174,23 @@ class HotkeyManager:
         self._handles = {}
         self._pending = {}
         self._log = on_log
+        # (kind, value) -> action name, for same-key collision warnings.
+        self._by_key = {}
+
+    @staticmethod
+    def _effective_key(binding, scancode):
+        """Identity of the physical trigger we can honestly compare.
+
+        A scancode pins an exact physical key. A name is only comparable to
+        another name - resolving names to scancodes is layout-dependent
+        (the "`"-vs-apostrophe trap hotkey.py documents), so a scancode vs
+        a name is reported as no conflict even when they'd collide.
+        """
+        if scancode is not None:
+            return ("scan", int(scancode))
+        if binding:
+            return ("name", str(binding).strip().lower())
+        return None
 
     def bind(self, name, binding, callback, scancode=None, suppress=True):
         self.unbind(name)
@@ -182,6 +199,13 @@ class HotkeyManager:
         if handle:
             self._handles[name] = handle
             self._pending.pop(name, None)
+            key = self._effective_key(binding, scancode)
+            if key is not None:
+                other = self._by_key.get(key)
+                if other and other != name:
+                    self._log("[Hotkey] '%s' and '%s' share %s - both will "
+                              "fire on that key." % (other, name, key[1]))
+                self._by_key[key] = name
         return bool(handle)
 
     def defer(self, name, binding, waiting_for):
@@ -193,11 +217,15 @@ class HotkeyManager:
 
     def unbind(self, name):
         handle = self._handles.pop(name, None)
+        # Drop this action's claim so rebinding elsewhere doesn't warn about
+        # a key nobody holds anymore.
+        self._by_key = {k: v for k, v in self._by_key.items() if v != name}
         return hotkey_mod.unregister(handle, on_log=self._log)
 
     def unbind_all(self):
         for name in list(self._handles):
             self.unbind(name)
+        self._by_key.clear()
 
     def bound(self):
         return sorted(self._handles)
