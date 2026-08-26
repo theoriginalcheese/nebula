@@ -54,6 +54,19 @@ _SSH_HASH_TIMEOUT = 600   # large clips hashed on-NAS; generous wall clock
 _PATH_PROBE_TTL = 30.0    # how long a LAN/remote choice sticks
 
 
+def _month_for(path):
+    """``YYYY-MM`` from the source file's mtime, or "" when unknown.
+
+    The source's own month, never "now": a backlog scan of June clips must
+    file them under June even when it runs in August, and the same clip must
+    compute the same destination every day or dedup would re-queue it.
+    """
+    try:
+        return time.strftime("%Y-%m", time.localtime(os.path.getmtime(path)))
+    except OSError:
+        return ""
+
+
 def _sanitize(name):
     """Match ``monitor.sanitize_folder_name`` so NAS folders mirror local ones."""
     from .monitor import sanitize_folder_name
@@ -483,12 +496,26 @@ class Offloader:
             for name in names:
                 yield os.path.join(folder, name), game
 
+    def _dest_dir_for(self, path, game):
+        """(NAS destination directory, game folder label) for a source clip.
+
+        Single source of truth for the NAS layout - _dest_present must agree
+        with what _process creates, or the scan would re-queue synced clips.
+        With ``nas_offload_date_folders`` on, a YYYY-MM tier (from the
+        source's mtime) sits between the game folder and the file.
+        """
+        game_folder = _game_folder_for(path, game, self.recording_root)
+        parts = [self.root, game_folder]
+        if self._config.get("nas_offload_date_folders"):
+            month = _month_for(path)
+            if month:
+                parts.append(month)
+        return os.path.join(*parts), game_folder
+
     def _dest_present(self, path, game):
         """True when a same-sized file already sits at the NAS destination."""
-        dest = os.path.join(
-            self.root,
-            _game_folder_for(path, game, self.recording_root),
-            os.path.basename(path))
+        dest_dir, _ = self._dest_dir_for(path, game)
+        dest = os.path.join(dest_dir, os.path.basename(path))
         try:
             if not os.path.isfile(dest):
                 return False
@@ -687,17 +714,13 @@ class Offloader:
             # NAS not mounted/reachable right now - keep the file, retry later.
             self._log_unreachable(code)
             return False
-        dest_dir = os.path.join(
-            root, _game_folder_for(src, item.get("game"), self.recording_root))
+        dest_dir, game_folder = self._dest_dir_for(src, item.get("game"))
         dest = os.path.join(dest_dir, os.path.basename(src))
         try:
             os.makedirs(dest_dir, exist_ok=True)
         except OSError as exc:
             self._log(f"[Offload] Can't create {dest_dir}: {exc}")
             return False
-
-        game_folder = _game_folder_for(
-            src, item.get("game"), self.recording_root)
 
         # Already safely there from a previous run? Verify, then finish.
         if os.path.exists(dest) and self._same_file(src, dest):

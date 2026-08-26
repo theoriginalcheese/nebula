@@ -210,6 +210,10 @@ FIELDS = (
           choices=("copy", "move"),
           hint="copy keeps both copies. move frees local space, but only ever "
                "deletes the original after the NAS copy is SHA-256 verified."),
+    Field("nas_offload_date_folders", "Month folders on NAS", "bool", "offload",
+          hint="On: clips land in <Game>/YYYY-MM/ (the clip's own month), "
+               "e.g. Elden Ring/2026-08/. Off: straight into <Game>/. Only "
+               "affects new copies - nothing already on the NAS moves."),
     Field("nas_offload_interval_hours", "Auto sync every", "int", "offload",
           minimum=0, maximum=168,
           hint="Hours between backlog scans when the NAS is reachable. "

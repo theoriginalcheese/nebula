@@ -86,6 +86,10 @@ DEFAULTS = {
     # path); set it per-machine. "copy" keeps both copies, "move" frees local.
     "nas_offload_root": "",
     "nas_offload_mode": "copy",
+    # YYYY-MM tier under each game folder on the NAS (from the clip's own
+    # mtime, so a backlog files into its month). Off by default: existing
+    # layouts don't move until asked.
+    "nas_offload_date_folders": False,
     # Hours between automatic backlog scans when the NAS path is reachable
     # (Tailscale online / mapped drive up). 0 = manual Sync now only; the
     # per-clip queue from finished recordings still drains either way.
