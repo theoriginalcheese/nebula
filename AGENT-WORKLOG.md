@@ -183,3 +183,30 @@ ote_manual_stop() bumps _stop_epoch; an auto-apply already past its
 8. **run_tests.py diagnostics**: failures now surface FAIL/error lines AND
    stderr tail - a hard crash prints nothing to stdout, and the old 3-line
    tail hid everything.
+
+## 2026-08-26 session 2 (Ox Alpha Free, continued)
+
+1. **Prior-art research** (Smart-Replay-Mover, ClipStudio, obs-twitch-mcp,
+   SAN fork) -> vault ARTIFACTS/OBS-PRIOR-ART.md, 10 ranked targets.
+   Trophy clips (T1) researched and REJECTED: realtime Steam unlock
+   detection needs Steamworks injection / Web-API keys / fragile cache
+   parsing - none fit. Replay re-arm (T2) audited: immune to SRM #22 by
+   design; refused-disarm honesty fix shipped instead + test.
+2. **NAS month folders**: 
+as_offload_date_folders puts new copies under
+   <Game>/YYYY-MM/ from the clip's own mtime; dedup and worker share one
+   destination computation so the scan can't re-queue synced clips
+   (tests/test_offload_dates.py).
+3. **Scene-name hint**: an unclassifiable (anti-cheat) foreground exe whose
+   OBS program scene exactly names a classified game now records under that
+   game. Cached RPC, generic scenes can never fire, UI thread never asks
+   OBS (tests/test_scene_hint.py). Classifier gains display_lookup().
+4. **UDP replay trigger**: eplay_udp_port (0=off) binds loopback only;
+   any datagram saves the buffer with a flood gap. For Stream Deck /
+   home automation / the future macropad (spike/udp_trigger.py +
+   tests/test_udp_trigger.py). Drift detector immediately caught the
+   missing CLAUDE.md map row - added.
+5. **CI timing hardening**: pause/resume-on-ready made idempotent in
+   clip_catalog (finish-before-pause races on loaded runners);
+   test_offload_backoff now runs the real backoff at 2s so the rate-limit
+   assertion spans an actual second attempt.
