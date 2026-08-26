@@ -38,7 +38,12 @@ from obsauto import palette as palette_mod
 from obsauto import profiles as profiles_mod
 from obsauto import session_log
 from obsauto import settings_spec
-from obsauto.app_log import LOG_FILE, log_to_file, setup_logging
+from obsauto.app_log import (
+    LOG_FILE,
+    install_excepthooks,
+    log_to_file,
+    setup_logging,
+)
 from obsauto.classifier import Classifier
 from obsauto.obs_client import OBSClient
 from obsauto.config import CONFIG_FILE, load_config, save_config
@@ -3082,6 +3087,10 @@ def main():
     # and v4 inherits v3's real deployment - pythonw, no console, so a
     # traceback that does not reach the file reaches nobody.
     setup_logging()
+    # No Tk root in v4, so gui.py's report_callback_exception safety net does
+    # not exist here - catch main-thread and worker/bridge-thread crashes at
+    # the process level instead.
+    install_excepthooks()
 
     # Keep Windows Search / Start Menu pointed at this checkout's spike UI —
     # idempotent, fails soft if the shell won't cooperate.
