@@ -2287,7 +2287,6 @@ html, body {
   gap: 16px; padding: 4px 0;
 }
 .toggle-copy { flex: 1; min-width: 0; }
-.toggle-title { font-size: var(--t-body-size); color: var(--text); }
 .toggle-hint { font-size: 10px; color: var(--text-eyebrow); margin-top: 2px; }
 .switch {
   position: relative; width: 40px; height: 22px; flex: 0 0 auto;
