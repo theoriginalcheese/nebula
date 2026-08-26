@@ -312,6 +312,15 @@ class Monitor:
         self._reopen_cooldown_basename = None
         self._reopen_cooldown_until = 0.0
         self._last_foreground = None   # so the hero's foreground line only fires on change
+        # Serialises every OBS start/stop transition. The worker loop is not
+        # the only caller: the toast "Record" button and the webview transport
+        # bar both drive _apply_target from their own threads. Without this,
+        # an Accept racing a poll tick could double-start OBS and leave
+        # _recording_target=None while OBS is actually recording.
+        self._obs_lock = threading.RLock()
+        # Bumped by note_manual_stop so an auto-apply that is already past its
+        # decision point can notice the user said stop mid-flight.
+        self._stop_epoch = 0
         self._audio_keep_alive = AudioKeepAlive(
             config.get("keep_alive_audio_processes", ["discord.exe"]), on_log=self.log,
         )
@@ -329,15 +338,16 @@ class Monitor:
 
     def stop(self):
         self._running = False
-        if self.obs.connected:
-            prev_name = self._recording_target[2] if self._recording_target else "unknown"
-            self._stop_current_recording(prev_name)
-        self._recording_target = None
-        self._pending_target = _UNSET
-        self._pending_count = 0
-        self._auto_paused = False
-        self.clear_hold_off()
-        self.clear_reopen_cooldown()
+        with self._obs_lock:
+            if self.obs.connected:
+                prev_name = self._recording_target[2] if self._recording_target else "unknown"
+                self._stop_current_recording(prev_name)
+            self._recording_target = None
+            self._pending_target = _UNSET
+            self._pending_count = 0
+            self._auto_paused = False
+            self.clear_hold_off()
+            self.clear_reopen_cooldown()
         self.log("[Monitor] Stopped.")
 
     def clear_reopen_cooldown(self):
@@ -372,6 +382,11 @@ class Monitor:
 
     def note_manual_stop(self, basename=None, display_name=None):
         """UI clicked Stop. Suppress auto-restart until confirm / exit / clear."""
+        # Invalidate any auto-apply already in flight on the worker thread:
+        # it may have passed its debounce and be seconds into a stop-then-start
+        # when this runs. The epoch check in _apply_target turns that apply
+        # into an honest abort instead of overriding the user's Stop.
+        self._stop_epoch += 1
         if not basename:
             # Runs on the Tk thread (marshalled from the Stop button), so the
             # lookup must be cache-only: peek() never triggers the lazy Steam
@@ -404,15 +419,25 @@ class Monitor:
     def accept_record_prompt(self):
         """User tapped Record on the hold-off toast — start the pending game."""
         target = self._hold_off_pending
-        self.clear_hold_off()
-        self.clear_reopen_cooldown()
         if target is None:
             return False
-        self._pending_target = _UNSET
-        self._pending_count = 0
-        if target == self._recording_target:
-            self._recording_target = None
-        self._apply_target(target)
+        # The toast callback can fire while the worker holds _obs_lock for a
+        # long transition. This runs on the UI/callback thread, so never block
+        # on that: report busy honestly and leave the prompt pending.
+        if not self._obs_lock.acquire(timeout=0.35):
+            self.log("[Monitor] Record prompt ignored: an OBS transition is "
+                     "already in progress.")
+            return False
+        try:
+            self.clear_hold_off()
+            self.clear_reopen_cooldown()
+            self._pending_target = _UNSET
+            self._pending_count = 0
+            if target == self._recording_target:
+                self._recording_target = None
+            self._apply_target(target)
+        finally:
+            self._obs_lock.release()
         return True
 
     def dismiss_record_prompt(self, basename=None):
@@ -726,6 +751,13 @@ class Monitor:
             return False
 
     def _apply_target(self, target, *, hold_recording=False):
+        # Capture before waiting on the lock: a Stop that lands while we queue
+        # behind another transition must invalidate this apply too.
+        epoch = self._stop_epoch
+        with self._obs_lock:
+            self._apply_target_locked(target, epoch, hold_recording=hold_recording)
+
+    def _apply_target_locked(self, target, epoch, *, hold_recording=False):
         if target == self._recording_target:
             return
 
@@ -746,6 +778,16 @@ class Monitor:
         if (prev_basename and not hold_recording
                 and not self._basename_running(prev_basename)):
             self._arm_reopen_cooldown(prev_basename)
+
+        # Point of no return: everything above stopped the old recording, but
+        # nothing user-visible has started yet. If the user hit Stop while the
+        # slow stop/reconnect work above ran, starting now would override them.
+        # Aborting leaves everything stopped and hold-off armed - exactly what
+        # Stop means.
+        if epoch != self._stop_epoch:
+            self.log("[Monitor] Auto-apply aborted: manual stop landed "
+                     "mid-transition.")
+            return
 
         if target is not None:
             _, _, display_name, folder = target
