@@ -38,13 +38,16 @@ def run_one(path, timeout):
                                env=env, timeout=timeout)
             if p.returncode != 0:
                 # A 3-line tail once hid *which* checks failed on a machine
-                # where the file passed everywhere else - CI needs the whole
-                # picture, not a teaser. Capped so a runaway print loop
-                # cannot flood the log.
+                # where the file passed everywhere else. App logs bury the
+                # FAIL lines hundreds of lines up, so surface them directly
+                # instead of dumping raw output.
                 out = (p.stdout or "").strip().splitlines()
-                tail = out[-400:]
+                bad = [ln for ln in out
+                       if ("FAIL" in ln or "Traceback" in ln or "Error" in ln
+                           or "HANG" in ln)]
+                tail = bad[-40:] + ["--- last lines ---"] + out[-6:]
                 result["state"] = "FAIL"
-                result["detail"] = " | ".join(tail)[:8000]
+                result["detail"] = " | ".join(tail)[:12000]
         except subprocess.TimeoutExpired:
             result["state"] = "TIMEOUT"
             result["detail"] = "%ds" % timeout
