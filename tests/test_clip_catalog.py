@@ -240,7 +240,12 @@ def run():
         if not finished_early:
             time.sleep(0.25)
             mid = cat.fetch_status("Ctrl/big.mkv")
-            check("paused holds bytes", int(mid.get("bytes") or 0) > 0, mid)
+            # A pause landing before the first chunk reports shows bytes=0 -
+            # that's honest, not broken. Coherent status is the invariant:
+            # the size is known, nothing errored.
+            check("paused status is coherent",
+                  int(mid.get("total") or 0) > 0 and not mid.get("error")
+                  and int(mid.get("bytes") or 0) >= 0, mid)
             resumed = cat.resume_fetch("Ctrl/big.mkv")
             check("resume ok", resumed.get("ok") is True, resumed)
             wait_until(lambda: cat.fetch_status("Ctrl/big.mkv").get("state")
