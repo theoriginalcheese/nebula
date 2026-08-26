@@ -1,4 +1,4 @@
-﻿"""Clean OBS exit via norihiro's shutdown-plugin (CallVendorRequest).
+"""Clean OBS exit via norihiro's shutdown-plugin (CallVendorRequest).
 
 The request shape is the contract: vendor name, request type and a
 requestData with reason + support_url required. force must NOT be set and
