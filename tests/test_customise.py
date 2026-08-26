@@ -215,7 +215,13 @@ app._set_block_span("activity", 8)
 settle(120)
 check("several edits land while editing", app._grid_layout != entry, app._grid_layout)
 app._cancel_customise()
-settle(220)
+# The revert reflows asynchronously; on a loaded runner a fixed 220ms can
+# expire mid-revert (stuck grips, stale grid). Wait for the state itself.
+_deadline = time.perf_counter() + 5.0
+while time.perf_counter() < _deadline and (
+        app._customising or app._grid_layout != entry):
+    app.root.update()
+    time.sleep(0.01)
 check("Esc reverts the whole session, not just the last edit",
       app._grid_layout == entry, app._grid_layout)
 check("Esc leaves edit mode", app._customising is False)
