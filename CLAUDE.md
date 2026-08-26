@@ -16,7 +16,10 @@ Starts minimized to the tray and auto-connects/monitors on launch (`AppWindow.au
 pyinstaller nebula.spec   # -> dist/Nebula.exe (single-file, windowed, UPX-compressed, icon nebula_icon.ico)
 ```
 One onefile exe — no separate install of Python/dependencies needed to run it. Targets
-`main.py` (the real entry point; the legacy `obs_auto_game_folder.py`/`.spec` are gone).
+`main.py` (the real entry point). The pre-v4 standalone script `obs_auto_game_folder.py`
+is still on disk but dead — nothing imports it; don't revive it.
+Gate the map: `python tools/module_map_check.py` fails when a module, path or key
+symbol below drifts from reality.
 
 ⚠️ **Gotcha:** don't reintroduce `os.path.dirname(__file__)` for user data paths
 (`config.json`, `games.json`, `steam_appid_cache.json`, `logs/`). Under a frozen onefile
@@ -37,21 +40,33 @@ and `RESOURCE_DIR` (`sys._MEIPASS` when frozen) only for bundled read-only asset
 | `spike/app.py` | `Api` | WebView backend: snapshot(), settings, clips, updates, palette; fault-isolated per-section payloads |
 | `spike/host.py` | `NebulaHost` | Window lifecycle, OBS connect/poll, transports, page GPU sleep (asleep/quiet), wake event, preview stills |
 | `spike/windows.py` | `NebulaWindows`, toast/overlay controllers | Toast + mini-overlay windows (own JS APIs), orphan reclaim, sleep_aux |
+| `spike/taskbar_icon.py` | `start`, `_apply_icon` | Hover-only orbit animation for the taskbar button; static mark at rest |
+| `spike/gen_tokens.py` | - | Dev tool: regenerates `spike/web/tokens.css` from `design_v3.py` — run after changing tokens, commit the output |
 | `spike/webview_power.py` | `gpu_page_state`, `apply_webview_power` | TrySuspend + GPU-adapter preference from real window state |
 | `obsauto/updater.py` | `check_for_update`, `save_source_snapshot`, `load_source_snapshot`, `relaunch_source`, `sync_source_checkout` (back-compat) | Updates: packaged = Releases; source = Save this machine / Load latest / Restart now on `main`. No wip shuttle |
 | `obsauto/monitor.py` | `Monitor` | Core loop: foreground/idle detection, ensure/launch OBS, start/stop + retarget recording, manual-stop hold-off (`Classifier.peek()` on UI paths - never network there) |
+| `obsauto/hotkey.py` | `register`, `unregister` | Global hotkey toggle via low-level keyboard hook; callers must pair register/unregister or stale hooks pile up |
+| `obsauto/fsprobe.py` | `isdir_within` | Bounded filesystem probes: `os.path.isdir` on a dead mapped/SMB drive blocks 20–60s, so probe with a worker + timeout; negative verdicts memoised ~10s |
 | `obsauto/obs_client.py` | `OBSClient`, `OBSError` | Minimal obs-websocket **v5** client |
-| `obsauto/classifier.py` | `Classifier` | Game vs non-game classification (Steam-aware hybrid); `peek()` = cache-only variant |
+| `obsauto/classifier.py` | `Classifier`, `merge_classifications()` | Game vs non-game classification (Steam-aware hybrid); `peek()` = cache-only variant |
 | `obsauto/steam_scanner.py` | `build_steam_game_index()` | Scan Steam libraries, parse VDF, classify AppIDs |
-| `obsauto/clip_catalog.py` | `ClipCatalog`, `ensure_local()` | On-demand NAS clip index + re-evictable cache; `_prune_cache()` caps it (`clip_cache_max_gb`, default 50 GB) |
+| `obsauto/clip_catalog.py` | `ClipCatalog`, `ClipCatalog.ensure_local()` | On-demand NAS clip index + re-evictable cache; `_prune_cache()` caps it (`clip_cache_max_gb`, default 50 GB) |
 | `obsauto/gamesync.py` | `GameSync`, `NasGameSync`, `MultiGameSync` | Game-list sync - GitHub contents API and/or NAS hub; pull on start, push on change, merge-never-clobber, fails soft |
 | `obsauto/offload.py` | `Offloader` | NAS recording offload - copy → SHA-256 verify → (move mode) delete local; persisted queue, retries |
+| `obsauto/tailscale.py` | `available()`, `status()`, `peer_online()` | Soft Tailscale probe - explains NAS offload waits, wakes the offloader when the tailnet returns; never a delete authority |
+| `obsauto/teracopy.py` | `find_exe()`, `copy_into()` | TeraCopy CLI helper for bulk NAS transfer (soft optional); Nebula still SHA-256 verifies both ends afterwards |
 | `obsauto/audio_detect.py` | `AudioKeepAlive` | Detect whether a watched app (e.g. Discord) is producing audio |
+| `obsauto/discord_detect.py` | `discord_voice_active()` | Detect an *active* Discord voice/video call (not merely Discord.exe open) - holds a recording across game switches |
+| `obsauto/moonlight.py` | `start_stream()`, `wait_until_streaming()`, `end_session()` | Launch/control Moonlight via its CLI (soft optional): stream windows, chrome guard, hide/reveal, end session |
 | `obsauto/session_detect.py` | `moonlight_session_active()` | Detect a live Moonlight streaming session |
 | `obsauto/config.py` | `load_config()`, `save_config()` | Config persistence |
 | `obsauto/paths.py` | `APP_DIR`, `RESOURCE_DIR` | Dev vs. frozen-onefile path resolution |
+| `obsauto/silent_proc.py` | `run_kwargs()`, `resolve_git()` | subprocess helpers so CLI probes never flash a console under `pythonw` |
 | `obsauto/app_log.py` | `setup_logging()`, `log_to_file()` | File logging (works under silent `pythonw`) |
+| `obsauto/version.py` | `__version__`, `display_version()`, `version_info()`, `is_frozen()` | One release number + an honest source label (`+N`, `+N*`) for the titlebar badge and Updates pane |
 | `obsauto/design_v3.py` | `COLORS`, `CARD_LAYERS`, `CONFIG_MAP`, `over()` | UI **v3** design contract as code - see below |
+| `obsauto/settings_spec.py` | `Field`, `fields_in()`, `parse_all()`, `restart_required()` | Settings fields declared once with bounds + restart reasons; the Settings pane walks this list so they can't drift |
+| `obsauto/gui.py` | `AppWindow`, `ScaledCanvas` | Legacy Aurora Tk shell - superseded by the v4 WebView UI but still tested; see the section below |
 | `obsauto/session_log.py` | `append()`, `spans()`, `today()` | Append-only `sessions.jsonl`: rec_start/rec_stop/idle_in/idle_out/mark. The stat tiles, ribbon and forecast all read it. Recorded tile counts kept **and** culled time; bytes are kept-only |
 | `obsauto/replay.py` | `ReplayBuffer` | Instant replay (7a) - arms OBS's RAM buffer, files what it saves. Never holds video itself |
 | `obsauto/thumbs.py` | `ThumbWorker`, `duration_of()` | Clip thumbnails + Length (7f). ffmpeg is an **optional** soft-dep |
@@ -59,6 +74,7 @@ and `RESOURCE_DIR` (`sys._MEIPASS` when frozen) only for bundled read-only asset
 | `obsauto/palette.py` | `search()`, `subsequence()` | Command-palette matching + ranking (7e), no UI |
 | `obsauto/profiles.py` | `sanitise()`, `plan()`, `apply()` | Per-game encoder profiles (7d), with the scope guard on read *and* write |
 | `obsauto/tray_app.py`, `theme_art.py`, `icon_art.py` | - | Tray icon + generated icon/theme art |
+| `obsauto/app_icons.py` | `data_url()`, `extract()`, `monogram()` | Games-pane icons: the real one where we can get it, an honest generated monogram where we can't |
 
 Most-connected hubs (start here when orienting): `AppWindow`, `OBSClient`, `Monitor`, `Classifier`.
 
