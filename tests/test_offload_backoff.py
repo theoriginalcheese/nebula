@@ -94,8 +94,10 @@ def run():
               f"{sum('unreachable' in m.lower() for m in logs)}")
 
         # ---- 2. recovery lands inside one backoff window ----
-        # The worker polls isdir_within every ~1s while backing off; after
-        # the flip it retries within that tick plus one copy+hash pass.
+        # The worker's backoff wait polls _root_is_up() - a real os.path.isdir
+        # on the root, which os.makedirs below satisfies - about once a
+        # second. The UP[0] flag gates _process itself; recovery needs both
+        # the real dir and the flag, which is exactly what production does.
         UP[0] = True
         os.makedirs(nas)
         dest = os.path.join(nas, "Elden Ring", "boss.mkv")
