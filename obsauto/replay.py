@@ -186,13 +186,18 @@ class ReplayBuffer:
         with self._lock:
             if not self.armed:
                 return
-            self.armed = False
             try:
                 self.obs.stop_replay_buffer()
+                self.armed = False
             except OBSError as exc:
+                # OBS refused, so the buffer is still rolling. Claiming
+                # disarmed here would desync the badge from reality; the
+                # ReplayBufferStateChanged event (or a later retry) corrects
+                # it if OBS's answer changes.
                 self.log(f"[Replay] Couldn't stop the buffer: {exc}")
-        self.on_state(False)
-        self.log("[Replay] Buffer disarmed.")
+        self.on_state(self.armed)
+        if not self.armed:
+            self.log("[Replay] Buffer disarmed.")
 
     def refresh_from_obs(self):
         """"GetReplayBufferStatus: poll on connect to set the badge"."""

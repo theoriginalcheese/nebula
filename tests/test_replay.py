@@ -143,6 +143,16 @@ rb.disarm()
 check("disarming stops the buffer", "stop" in obs.calls, obs.calls)
 check("it reports disarmed", rb.armed is False and states[-1] is False)
 
+# A refused stop must leave the badge honest: OBS is still rolling, so
+# claiming disarmed would desync the UI from reality (same rule as arm's).
+obs.fail = "StopReplayBuffer failed"
+rb.armed = True
+states.clear()
+rb.disarm()
+check("a refused disarm stays armed", rb.armed is True and states[-1] is True,
+      f"armed={rb.armed} states={states}")
+rb.armed = False  # restore for the sections below
+
 # A refused arm must leave the state honest rather than claiming success.
 obs.fail = "StartReplayBuffer failed"
 rb.arm("Helldivers 2")
