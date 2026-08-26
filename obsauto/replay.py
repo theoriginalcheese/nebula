@@ -14,6 +14,7 @@ definition" - so the auto-cull that discards a six-second accident can't touch
 one you asked for.
 """
 
+import collections
 import os
 import shutil
 import threading
@@ -69,7 +70,10 @@ class ReplayBuffer:
         self.on_saved = on_saved or (lambda path, game: None)
         self.on_state = on_state or (lambda armed: None)
         self.armed = False
-        self.saved_this_session = []     # [(path, when)] newest last
+        # [(path, when)] newest last. Bounded: only the newest couple are read
+        # (gui reads the last two), and an unbounded append-per-event is the
+        # exact shape that once exhausted GDI handles elsewhere in this app.
+        self.saved_this_session = collections.deque(maxlen=50)
         self._game = None
         self._lock = threading.Lock()
         self._last_error = None
