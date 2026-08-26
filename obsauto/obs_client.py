@@ -191,6 +191,25 @@ class OBSClient:
     def start_record(self):
         self.call("StartRecord")
 
+    def request_clean_exit(self, reason, support_url, timeout=5):
+        """Ask the shutdown-plugin (norihiro) to quit OBS cleanly.
+
+        CallVendorRequest -> vendor "shutdown-plugin", type "shutdown".
+        force stays False on purpose: this must stop at confirmation
+        dialogs rather than kill an active recording to get its way, and
+        no exit_timeout is sent so the unsafe-terminate fallback can
+        never fire. Raises OBSError when the plugin isn't installed or
+        refuses - callers surface that, not swallow it.
+        """
+        return self.call("CallVendorRequest", {
+            "vendorName": "shutdown-plugin",
+            "requestType": "shutdown",
+            "requestData": {
+                "reason": reason,
+                "support_url": support_url,
+            },
+        }, timeout=timeout)
+
     def stop_record(self):
         return self.call("StopRecord")  # responseData includes 'outputPath'
 
