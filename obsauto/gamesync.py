@@ -28,10 +28,25 @@ import os
 
 from .classifier import merge_classifications
 
-try:
-    import requests
-except Exception:  # pragma: no cover - requests is a declared dependency
-    requests = None
+# Deferred, not module-level: requests (with urllib3 et al) costs ~50 ms to
+# import, and sync only needs it once it actually talks to GitHub - which in
+# spike/app.py happens in _boot(), after the window exists (same pattern as
+# steam_scanner). Machines with GitHub sync unconfigured never pay for it.
+# The cache deliberately lives in this module-global name so tests can keep
+# injecting fakes via gamesync.requests = fake.
+requests = None
+
+
+def _req():
+    """Import requests on first use; None if unavailable."""
+    global requests
+    if requests is None:
+        try:
+            import requests as _r
+            requests = _r
+        except Exception:  # pragma: no cover - declared dependency
+            requests = False
+    return requests or None
 
 API_ROOT = "https://api.github.com"
 _TIMEOUT = 15
@@ -66,7 +81,7 @@ class GameSync:
 
     @property
     def enabled(self):
-        return bool(requests and self.repo and self.token)
+        return bool(_req() and self.repo and self.token)
 
     def status_label(self):
         """One line for the Games pane footer. Never invents a sync."""
@@ -95,7 +110,7 @@ class GameSync:
         if not self.enabled:
             return None
         try:
-            resp = requests.get(self._url(), headers=self._headers(), timeout=_TIMEOUT)
+            resp = _req().get(self._url(), headers=self._headers(), timeout=_TIMEOUT)
             if resp.status_code == 404:
                 self._sha = None
                 return {"games": {}, "non_games": {}}
@@ -156,8 +171,8 @@ class GameSync:
             if self._sha:
                 params["sha"] = self._sha
             try:
-                resp = requests.put(self._url(), headers=self._headers(),
-                                    json=params, timeout=_TIMEOUT)
+                resp = _req().put(self._url(), headers=self._headers(),
+                                  json=params, timeout=_TIMEOUT)
                 if resp.status_code == 409:
                     continue  # stale sha; loop to re-fetch + re-merge
                 resp.raise_for_status()

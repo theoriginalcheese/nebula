@@ -9,11 +9,25 @@ that normally owns it doesn't also react - note this only suppresses the
 vendor behavior alongside ours.
 """
 
-try:
-    import keyboard
-    _AVAILABLE = True
-except Exception:  # pragma: no cover - keyboard package missing/broken
-    _AVAILABLE = False
+# Deferred, not module-level: `keyboard` costs ~25 ms to import and isn't
+# needed until hotkeys bind in _boot(), which runs after the window exists
+# (same pattern as steam_scanner's deferred `requests`). Tests inject fakes
+# by assigning `hotkey.keyboard` + `hotkey._AVAILABLE = True` directly, so
+# the probe must respect a manually-pinned _AVAILABLE and always read the
+# module global at call time.
+keyboard = None          # set by _probe(), or injected by tests
+_AVAILABLE = None        # None = not probed yet; True/False once probed
+
+
+def _probe():
+    global _AVAILABLE
+    if _AVAILABLE is None:
+        try:
+            import keyboard as _kb
+            globals()["keyboard"] = _kb
+            _AVAILABLE = True
+        except Exception:  # pragma: no cover - keyboard missing/broken
+            _AVAILABLE = False
 
 
 def register(binding, callback, suppress=True, on_log=lambda msg: None, scancode=None):
@@ -32,7 +46,8 @@ def register(binding, callback, suppress=True, on_log=lambda msg: None, scancode
     apostrophes system-wide. Pinning the scancode avoids that entirely."""
     if not binding and scancode is None:
         return False
-    if not _AVAILABLE:
+    _probe()
+    if not _AVAILABLE or keyboard is None:
         on_log("[Hotkey] keyboard package unavailable - hotkey disabled.")
         return False
     target = scancode if scancode is not None else binding
@@ -53,7 +68,8 @@ def unregister(handle, on_log=lambda msg: None):
     This matters for `suppress=True` hooks: leaving the old one in place while
     binding a new key would keep swallowing the old keystroke system-wide,
     which is exactly the failure mode the scancode note above describes."""
-    if not handle or not _AVAILABLE:
+    _probe()
+    if not handle or not _AVAILABLE or keyboard is None:
         return False
     try:
         keyboard.remove_hotkey(handle)
