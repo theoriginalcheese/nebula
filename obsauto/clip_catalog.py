@@ -668,6 +668,11 @@ class ClipCatalog:
         if not rel:
             return {"ok": False, "error": "invalid clip id"}
         st = self.fetch_status(rel)
+        # A download that finished while paused (small file, fast disk) has
+        # nothing to resume - which is success, not an error. The UI would
+        # otherwise show a failure toast for pressing Resume one second late.
+        if st.get("state") == "ready":
+            return {"ok": True, "status": st}
         if st.get("state") not in ("paused", "downloading"):
             return {"ok": False, "error": "Nothing paused to resume.",
                     "status": st}
