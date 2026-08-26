@@ -48,8 +48,32 @@ def test_today_dedupes_duplicate_rec_stop():
     check("anonymous stops still count separately", stats["clips"] == 4, stats)
 
 
+def test_read_skips_corrupt_lines():
+    """The reader's documented contract: an append interrupted mid-write
+    (power cut) leaves a partial last line, and junk must never take the
+    reader down - losing one event beats losing every stat tile."""
+    work = tempfile.mkdtemp(prefix="nebula-slog-corrupt-")
+    path = os.path.join(work, "sessions.jsonl")
+    session_log.log_path = lambda: path
+    now = time.time()
+    good = {"ts": now - 10, "type": "rec_start", "game": "Game"}
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(json.dumps(good) + "\n")
+        f.write('{"ts": broken\n')            # invalid JSON
+        f.write('["not", "a", "dict"]\n')     # valid JSON, wrong shape
+        f.write('{"type": "rec_stop"}\n')     # dict without ts
+        f.write("\n")                         # blank
+        f.write(json.dumps({"ts": now - 5,
+                            "type": "rec_stop"}) + "\n")
+    rows = session_log.read()
+    check("corrupt lines skipped, goods kept",
+          [r["type"] for r in rows] == ["rec_start", "rec_stop"], rows)
+    check("reader survived everything", isinstance(rows, list) and len(rows) == 2)
+
+
 if __name__ == "__main__":
     test_today_dedupes_duplicate_rec_stop()
+    test_read_skips_corrupt_lines()
     print("\n%d passed, %d failed" % (len(PASS), len(FAIL)))
     if FAIL:
         print("FAILED:", ", ".join(FAIL))
