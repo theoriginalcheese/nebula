@@ -210,3 +210,19 @@ as_offload_date_folders puts new copies under
    clip_catalog (finish-before-pause races on loaded runners);
    test_offload_backoff now runs the real backoff at 2s so the rate-limit
    assertion spans an actual second attempt.
+
+## 2026-08-26 session 2 addendum
+
+- **SSH verify path pinned** (tests/test_offload_ssh.py, 17 checks): injection
+  guards, output parsing, BatchMode/quoting contract, dead-ssh falls back to
+  SMB hashing (logged, never skipped), wrong-digest refuses the move.
+- **Replay paused-save single-flight**: hotkey + UDP trigger double-fire can
+  no longer race resume/pause; a request arriving mid-cycle is an ordinary
+  save on the resumed encoder. test_replay.py now 56 checks.
+- **Review-queue audit**: lifecycle is closed in both GUIs (every pop path
+  reaches finish_review); unanswered items persist visibly by design.
+- **Cleanup**: Classifier.pop_pending_item(key) replaces spike/app.py's
+  direct reach into _lock/_pending_manual.
+- **Measurements**: poll drift <=16 ms under 12-core load; CI suite ~140 s,
+  slowest file 14 s; tokens.css regen byte-identical. Vault ARTIFACTS/
+  MEASUREMENTS.md + DECISIONS.md hold the details.

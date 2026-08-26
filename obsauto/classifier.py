@@ -418,6 +418,17 @@ class Classifier:
             self._in_review.update(pending.keys())
             return [(key, basenames, name) for key, (basenames, name) in pending.items()]
 
+    def pop_pending_item(self, key):
+        """Remove one pending review and return (basenames, suggested_name).
+
+        Public shape of the private reach-in spike/app.py's classify_pending
+        was doing (`_classifier._lock` / `_pending_manual` directly). Returns
+        None when nothing is pending under that key.
+        """
+        key = (key or "").strip()
+        with self._lock:
+            return self._pending_manual.pop(key, None)
+
     def finish_review(self, key):
         with self._lock:
             self._in_review.discard(key)

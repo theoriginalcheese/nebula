@@ -2345,8 +2345,7 @@ class Api:
 
     def classify_pending(self, key, is_game, display_name=None):
         key = (key or "").strip()
-        with self._classifier._lock:
-            item = self._classifier._pending_manual.pop(key, None)
+        item = self._classifier.pop_pending_item(key)
         if not item:
             return {"ok": False, "error": "nothing pending under that key"}
         basenames, suggested = item
