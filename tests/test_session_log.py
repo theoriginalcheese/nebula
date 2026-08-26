@@ -71,9 +71,40 @@ def test_read_skips_corrupt_lines():
     check("reader survived everything", isinstance(rows, list) and len(rows) == 2)
 
 
+def test_today_spans_midnight():
+    """A session that started yesterday and is still running counts toward
+    today: the tile answers "how long has the recording been going", and a
+    3-hour stream that crosses midnight must not reset to zero at 00:00.
+    Yesterday's FINISHED clips stay out."""
+    work = tempfile.mkdtemp(prefix="nebula-slog-midnight-")
+    path = os.path.join(work, "sessions.jsonl")
+    session_log.log_path = lambda: path
+    now = time.time()
+    day_start = session_log.day_start(now)
+    # Yesterday 23:40: a finished clip (stays out of today's tiles).
+    yest_start = day_start - 20 * 60
+    rows = [
+        {"ts": yest_start, "type": "rec_start", "game": "Yesterday"},
+        {"ts": yest_start + 600, "type": "rec_stop", "game": "Yesterday",
+         "path": os.path.join(work, "y.mkv"), "duration": 600, "size": 1},
+        # Today 00:05: a session still running now.
+        {"ts": day_start + 5 * 60, "type": "rec_start", "game": "Overnight"},
+    ]
+    with open(path, "w", encoding="utf-8") as f:
+        for row in rows:
+            f.write(json.dumps(row) + "\n")
+    stats = session_log.today()
+    check("overnight session counts from its start",
+          abs(stats["recorded_seconds"] - (now - (day_start + 300))) < 2.0,
+          stats)
+    check("yesterday's finished clip stays out",
+          stats["clips"] == 0 and stats["bytes"] == 0, stats)
+
+
 if __name__ == "__main__":
     test_today_dedupes_duplicate_rec_stop()
     test_read_skips_corrupt_lines()
+    test_today_spans_midnight()
     print("\n%d passed, %d failed" % (len(PASS), len(FAIL)))
     if FAIL:
         print("FAILED:", ", ".join(FAIL))
