@@ -76,6 +76,12 @@ class ReplayBuffer:
         # Set by handle_event when OBS announces a finished file. save() waits
         # on it before restoring a lifted recording pause - see _save_around_pause.
         self._saved_event = threading.Event()
+        # Single-flight for the resume/save/re-pause cycle: the hotkey and the
+        # UDP trigger can land together, and without this one request sees
+        # "paused" and starts the cycle while the other - seeing the recording
+        # already resumed - fires a second bare save into the same window.
+        self._pause_save_lock = threading.Lock()
+        self._pause_save_inflight = False
 
     # ---- configuration -----------------------------------------------------
     @property
@@ -240,8 +246,25 @@ class ReplayBuffer:
         # auto-pause leaves `Monitor._auto_paused` set, and if the recording
         # came back unpaused behind its back, _ensure_paused() would see the
         # flag already true and never pause again for the rest of the session.
-        if self._recording_paused():
-            threading.Thread(target=self._save_around_pause, daemon=True).start()
+        # The whole decision - pause-state check plus the single-flight flag -
+        # must be atomic. Split across threads, request B sees the recording
+        # already resumed by A's cycle and fires a second bare save.
+        with self._pause_save_lock:
+            if self._recording_paused():
+                if self._pause_save_inflight:
+                    # A cycle is already driving resume/save/re-pause; racing
+                    # it would interleave pause_record(). Its clip covers
+                    # this request too.
+                    self.log("[Replay] Save already in progress - one clip "
+                             "covers both requests.")
+                    return True
+                self._pause_save_inflight = True
+                paused = True
+            else:
+                paused = False
+        if paused:
+            threading.Thread(target=self._save_around_pause,
+                             daemon=True).start()
             return True
         return self._request_save()
 
@@ -267,25 +290,30 @@ class ReplayBuffer:
 
         On a worker thread rather than inline: the callers are the hotkey, the
         tray and the mini overlay, all on the Tk thread, and this deliberately
-        blocks for as long as OBS takes to write the clip.
+        blocks for as long as OBS takes to write the clip. save() guarantees
+        only one of these runs at a time (_pause_save_inflight).
         """
-        self._saved_event.clear()
         try:
-            self.obs.resume_record()
-        except OBSError as exc:
-            error = str(exc)
-            self.log(f"[Replay] Couldn't lift the recording pause to save: {error}")
-            return
-        self.log("[Replay] Recording was paused - resumed to write the buffer.")
-        saved = self._request_save()
-        if saved:
-            self._saved_event.wait(self.SAVE_FLUSH_S)
-        try:
-            self.obs.pause_record()
-            self.log("[Replay] Recording paused again.")
-        except OBSError as exc:
-            error = str(exc)
-            self.log(f"[Replay] Saved, but couldn't restore the recording pause: {error}")
+            self._saved_event.clear()
+            try:
+                self.obs.resume_record()
+            except OBSError as exc:
+                error = str(exc)
+                self.log(f"[Replay] Couldn't lift the recording pause to save: {error}")
+                return
+            self.log("[Replay] Recording was paused - resumed to write the buffer.")
+            saved = self._request_save()
+            if saved:
+                self._saved_event.wait(self.SAVE_FLUSH_S)
+            try:
+                self.obs.pause_record()
+                self.log("[Replay] Recording paused again.")
+            except OBSError as exc:
+                error = str(exc)
+                self.log(f"[Replay] Saved, but couldn't restore the recording pause: {error}")
+        finally:
+            with self._pause_save_lock:
+                self._pause_save_inflight = False
 
     def handle_event(self, event_type, data):
         """OBS event hook. Only ReplayBufferSaved is interesting."""

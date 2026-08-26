@@ -231,6 +231,42 @@ check("the pause is restored afterwards", obs.calls == ["resume", "save", "pause
       obs.calls)
 check("and OBS is paused again at the end", obs.rec_paused is True)
 
+# Two requests landing together (hotkey + UDP trigger) must produce ONE
+# resume/save/re-pause cycle - racing cycles would interleave pause_record().
+obs.calls.clear()
+import threading as _th
+
+done = []
+
+def _save_worker():
+    rb.save()
+    done.append(1)
+
+t1 = _th.Thread(target=_save_worker)
+t2 = _th.Thread(target=_save_worker)
+obs.rec_active, obs.rec_paused = True, True
+rb.armed = True
+t1.start(); t2.start(); t1.join(10); t2.join(10)
+for _ in range(200):
+    if len(done) == 2:
+        break
+    time.sleep(0.01)
+for _ in range(700):   # the cycle holds SAVE_FLUSH_S before re-pausing
+    if "pause" in obs.calls:
+        break
+    time.sleep(0.01)
+# Safety contract of a doubled request: exactly ONE resume/pause cycle may
+# ever run (two interleaved pause_record()s is the corruption), the recording
+# ends paused, and every request produced its save. A second request arriving
+# inside the resumed window is an ordinary save - user asked twice, two clips.
+check("double request: one cycle - single resume & pause",
+      obs.calls.count("resume") == 1 and obs.calls.count("pause") == 1,
+      obs.calls)
+check("double request: every request saved", obs.calls.count("save") >= 2,
+      obs.calls)
+check("double request: ends paused", obs.rec_paused is True)
+obs.rec_active, obs.rec_paused = False, False
+
 # An unpaused recording must not be touched - no resume, no pause, just the save.
 obs.rec_paused = False
 obs.calls.clear()
