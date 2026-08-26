@@ -11,6 +11,7 @@ down) and fails if any does:
   - bridge_contract_check.py JS pywebview.api calls vs Api methods
   - palette_contract_check.py palette rows vs dispatch branches
   - docs_drift_check.py      README config table vs DEFAULTS
+  - import_cycles.py         intra-package dependency cycles
 
 Exit 1 if any checker reports problems.
 """
@@ -25,6 +26,7 @@ CHECKERS = (
     "bridge_contract_check.py",
     "palette_contract_check.py",
     "docs_drift_check.py",
+    "import_cycles.py",
 )
 
 
