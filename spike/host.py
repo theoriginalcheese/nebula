@@ -499,6 +499,12 @@ class NebulaHost:
         self._stop_poll()
         self._log("[App] Quitting.")
         self.hotkeys.unbind_all()
+        trigger = getattr(self, "_udp_trigger", None)
+        if trigger is not None:
+            try:
+                trigger.stop()
+            except Exception:
+                pass
         if self.monitor:
             try:
                 self.monitor.stop()
@@ -1421,4 +1427,10 @@ class NebulaHost:
                                "replay is disabled in config")
         self.hotkeys.bind("palette", cfg.get("palette_hotkey"),
                           self.open_palette)
+        # Local UDP trigger shares the hotkey's save path. Off unless a port
+        # is configured; started here so its lifetime matches the hotkeys'.
+        if cfg.get("replay_udp_port"):
+            from .udp_trigger import UdpTrigger
+            self._udp_trigger = UdpTrigger(self._save_replay, on_log=self._log)
+            self._udp_trigger.start(cfg.get("replay_udp_port"))
         return self.hotkeys

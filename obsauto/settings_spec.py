@@ -140,6 +140,11 @@ FIELDS = (
     Field("replay_arm_with_monitoring", "Arm with monitoring", "bool", "replay",
           hint="Arm the buffer whenever monitoring is on, rather than waiting "
                "for a game to be detected."),
+    Field("replay_udp_port", "UDP trigger port", "int", "replay",
+          minimum=0, maximum=65535,
+          hint="Optional. Any packet to 127.0.0.1:<port> saves the buffer - "
+               "for Stream Deck buttons, home automation or a macro pad. "
+               "Loopback only; 0 turns it off."),
     Field("replay_only_for_games", "Games only", "bool", "replay",
           hint="Keep the buffer disarmed while the foreground app isn't a "
                "game, so it isn't holding your desktop in RAM."),
