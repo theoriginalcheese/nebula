@@ -20,6 +20,9 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+  schedule:
+    # Nightly stress run (03:40 UTC), manual dispatch anytime.
+    - cron: "40 3 * * *"
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -56,3 +59,27 @@ jobs:
         env:
           PYTHONUTF8: "1"
         run: python tools/run_tests.py --timeout 150
+
+  # The stress harness (tests/stress_test.py) is not test_*-prefixed, so
+  # run_tests never picks it up - deliberate: it takes minutes, uses random
+  # seeds, and drives real Tk windows. It still deserves a regular run, so:
+  # nightly + manual only, never on push.
+  stress:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install --disable-pip-version-check -r requirements.txt
+
+      - name: Stress harness
+        env:
+          PYTHONUTF8: "1"
+        run: python tests/stress_test.py
