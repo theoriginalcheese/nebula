@@ -1,10 +1,10 @@
-# Agent improvement loop — worklog
+﻿# Agent improvement loop â€” worklog
 
 Autonomous improvement session started 2026-08-25 (Anthony away, endless loop requested).
 Machine: Alien-PC. Repo: `C:\Users\antho\Downloads\nebula`, branch `main`.
 
 ## TL;DR for Anthony
-1. **Merged your Strix-laptop save with the desktop WIP** — both feature sets
+1. **Merged your Strix-laptop save with the desktop WIP** â€” both feature sets
    survive (Save/Load updates + webview_power from laptop; preview stills,
    wake-focus, NAS seed, quiet auto-sync from desktop). Pushed to main.
 2. **Fixed 4 real bugs**: UI froze on manual Stop (Steam API call on UI thread);
@@ -12,11 +12,11 @@ Machine: Alien-PC. Repo: `C:\Users\antho\Downloads\nebula`, branch `main`.
    clips' time vanished from the Recorded tile; pythonw crash path on second launch.
 3. **Made the two aspirational GPU checks real**: asleep now drops backdrop
    tiles outright; snapshot fetch is promise-single-flight.
-4. **New: "Restart now" button** — completes Save/Load between PCs without a
+4. **New: "Restart now" button** â€” completes Save/Load between PCs without a
    manual restart dance.
 5. **New: clip cache auto-prune** (50 GB default, Settings > Storage) so
    Tailscale clip opens can't silently fill C:. NAS originals never touched.
-6. **New tool: `python tools/run_tests.py`** — whole suite under per-file
+6. **New tool: `python tools/run_tests.py`** â€” whole suite under per-file
    watchdogs (three tests used to hang forever, hiding real regressions).
 7. **Docs reality pass**: CLAUDE.md module map updated to v4/spike era.
 8. Everything green: 50/50 test files, gate clean, ruff clean, toast audit
@@ -32,7 +32,7 @@ Machine: Alien-PC. Repo: `C:\Users\antho\Downloads\nebula`, branch `main`.
 
 ### 0. Merge laptop save into desktop WIP (29ea2bb)
 - Fetched origin via `gh` credential helper (nebula SSH key is actually the
-  claude-memory deploy key — auth fails for nebula; use HTTPS+gh instead).
+  claude-memory deploy key â€” auth fails for nebula; use HTTPS+gh instead).
 - Merged `bcf23e1` (laptop) into `0955df2` (desktop WIP), resolved 29 hunks:
   - Took laptop's Save/Load update architecture (updater rewrite), webview_power,
     fault-isolated snapshot(), connecting-aware polling, focused window watch.
@@ -43,12 +43,12 @@ Machine: Alien-PC. Repo: `C:\Users\antho\Downloads\nebula`, branch `main`.
 - Toast files were already converged between machines; trivial comment diffs.
 
 ### 1. GPU + load hardening (63e0066)
-- `holdBackdropGpu(hold)` — display:none on `.backdrop` while asleep releases the
+- `holdBackdropGpu(hold)` â€” display:none on `.backdrop` while asleep releases the
   composited aurora/wisp/star tiles; `.asleep` CSS only paused animations. This
   makes test_v4_gpu's aspirational "asleep drops backdrop GPU tiles" check real.
-- `load()` promise-single-flight (`let loadPromise = null;`) — concurrent callers
+- `load()` promise-single-flight (`let loadPromise = null;`) â€” concurrent callers
   share one snapshot fetch; per-section fail() isolation retained.
-- Reworded gui.py comments carrying U+2248/U+2264 → test_fidelity ALL PASS.
+- Reworded gui.py comments carrying U+2248/U+2264 â†’ test_fidelity ALL PASS.
 - test_v4_gpu.py: 32/32. test_fidelity 32/32. test_toast 59/59.
 
 ### 2. Pushed merged state to GitHub main
@@ -57,9 +57,9 @@ Machine: Alien-PC. Repo: `C:\Users\antho\Downloads\nebula`, branch `main`.
 ### 3. Fixed the three hanging tests + two real bugs (cd4fe17)
 - test_games_pane / test_step7 hung on `_ask_display_name` modal (wait_window):
   promote flow grew a display-name dialog; tests only stubbed messagebox.
-  Stubbed `app._ask_display_name` in both tests → PASS.
+  Stubbed `app._ask_display_name` in both tests â†’ PASS.
 - REAL BUG via faulthandler stack: note_manual_stop ran on the Tk thread and
-  could lazily trigger refresh_steam_index → synchronous Steam Store request
+  could lazily trigger refresh_steam_index â†’ synchronous Steam Store request
   on the UI thread (froze Nebula on Stop). Added Classifier.peek() (cache-only)
   + _find_new_game_target(peek_only=True) for UI-thread callers.
 - REAL BUG 2: session_log.today() excluded culled clip durations from Recorded;
@@ -68,7 +68,7 @@ Machine: Alien-PC. Repo: `C:\Users\antho\Downloads\nebula`, branch `main`.
 
 ### 4. setQuiet() entry point (f47acbb) + hygiene
 - REAL BUG: host pushed `setAwake(); setQuiet()` but app.js never defined
-  setQuiet on EITHER machine → evaluate_js threw every transition, .quiet
+  setQuiet on EITHER machine â†’ evaluate_js threw every transition, .quiet
   play-mode CSS could never engage. Added window.setQuiet.
 - .gitignore: recovery-session scratch (sort checkpoint + gallery note).
 - Ruff clean; dead vars/_hero_preview_seq removed (5d7c64a).
@@ -98,8 +98,8 @@ Machine: Alien-PC. Repo: `C:\Users\antho\Downloads\nebula`, branch `main`.
   just-fetched clip kept, orphans left for evict_all. Cap = config key
   `clip_cache_max_gb` (default 50 GB, 0 disables), exposed in Settings >
   Storage + README table.
-- Audited offload delete path for the sacred-footage rule: checksum verify →
-  atomic rename → index-before-delete → local remove only in move mode.
+- Audited offload delete path for the sacred-footage rule: checksum verify â†’
+  atomic rename â†’ index-before-delete â†’ local remove only in move mode.
   Correct as shipped; no changes needed.
 - Verified overlay/toast pushed-JS surfaces (setAsleep driven via
   _set_renderer_sleep; overlay has no JS push). No missing functions left.
@@ -141,9 +141,45 @@ gate clean, ruff clean, token lint clean, toast audit 48/48.
 ALL tests/test_*.py pass individually with PYTHONUTF8=1 (34 files).
 
 ## Known notes for next iterations
-- Full-suite run times out >15 min sequentially — some test hangs; find which and
+- Full-suite run times out >15 min sequentially â€” some test hangs; find which and
   fix or mark slow (candidates: anything touching network/OBS/webview).
 - `.cursor/TOAST-GALLERY-RECOVERED.md` + `sort_recovered_state.json` left untracked.
 - Push to GitHub main still pending (needs gh credential helper one-liner, not SSH).
 - host.py watch loop has dead vars `started`/`seen_on_screen` from old grace logic.
 - `_hero_preview_seq` in spike/app.py is now unused (host.preview_still_seq read inline).
+
+## 2026-08-26 session (Ox Alpha Free, continuation)
+
+1. **CI is live and green** - windows-latest, Python 3.12, ruff pinned 0.16.4,
+   ffmpeg via choco, 	ools/run_tests.py --timeout 150. First fully passing
+   run: 32958487145 (53/53 files).
+2. **Remote switched SSH -> HTTPS + gh credential helper**: the
+   github_nebula ed25519 key is rejected by GitHub (offered, refused) and
+   the current token lacks admin:public_key to re-add it. Remote URL changed;
+   key investigation queued for Anthony.
+3. **Monitor races fixed (deep-read item)**:
+   - All OBS transitions now serialise on _obs_lock (RLock). The toast
+     "Record" button, the transport bar and a poll tick could previously enter
+     start/stop concurrently -> double-start, then _recording_target=None
+     while OBS records.
+   - 
+ote_manual_stop() bumps _stop_epoch; an auto-apply already past its
+     debounce aborts honestly at its point of no return instead of overriding
+     the user's Stop.
+   - ccept_record_prompt never blocks the UI thread (0.35s acquire timeout,
+     busy = honest refusal, prompt stays pending).
+   - Tests: tests/test_manual_stop_race.py (11 checks).
+4. **Startup import time 490ms -> 282ms (-42%)**: equests (urllib3 chain)
+   deferred into steam_scanner.classify_appid; only call site that needs it.
+5. **Offload retry loop covered**: tests/test_offload_backoff.py drives the
+   real worker through NAS-down -> backoff -> recovery -> source-gone
+   (10 checks), patching isdir_within/diagnose because fsprobe's negative
+   memo would lie about timing with real dirs.
+6. **clip_catalog**: resume on an already-finished download returns ok=True
+   (was an error toast for pressing Resume one second late; also a CI flake).
+7. **config**: DEFAULTS entry for clip_cache_max_gb (Settings rendered blank
+   on fresh installs) + permanent spec test: every Field key must be backed
+   by DEFAULTS or INTERNAL_KEYS.
+8. **run_tests.py diagnostics**: failures now surface FAIL/error lines AND
+   stderr tail - a hard crash prints nothing to stdout, and the old 3-line
+   tail hid everything.
