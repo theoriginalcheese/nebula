@@ -53,6 +53,11 @@ machines, and a game you classify on one is known on the other within seconds. S
 - **Drives OBS for you.** Connects over obs-websocket v5, launches OBS if it isn't running,
   starts/stops recording, and retargets the Game Capture source at the game you're playing.
 - **Sorts recordings per game.** Each title gets its own folder under your recording root.
+  An anti-cheat title whose exe can't be classified is still recognised when your OBS scene
+  is named after the game.
+- **Instant replay.** Arms OBS's replay buffer and saves the last N seconds to
+  `<Game>/Replays/` on a global hotkey — or on any UDP packet to a local port, so a Stream
+  Deck button, home-automation scene or macro pad can trigger it (`replay_udp_port`).
 - **Pauses when you're idle.** Configurable idle timeout, with a Discord-audio keep-alive so
   it doesn't pause mid-conversation just because you stopped moving the mouse.
 - **Stays out of the way.** Runs from the tray with an animated icon, silent slide-in
