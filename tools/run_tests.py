@@ -37,9 +37,14 @@ def run_one(path, timeout):
                                text=True, encoding="utf-8", errors="replace",
                                env=env, timeout=timeout)
             if p.returncode != 0:
-                tail = (p.stdout or "").strip().splitlines()[-3:]
+                # A 3-line tail once hid *which* checks failed on a machine
+                # where the file passed everywhere else - CI needs the whole
+                # picture, not a teaser. Capped so a runaway print loop
+                # cannot flood the log.
+                out = (p.stdout or "").strip().splitlines()
+                tail = out[-400:]
                 result["state"] = "FAIL"
-                result["detail"] = " | ".join(tail)[:200]
+                result["detail"] = " | ".join(tail)[:8000]
         except subprocess.TimeoutExpired:
             result["state"] = "TIMEOUT"
             result["detail"] = "%ds" % timeout
