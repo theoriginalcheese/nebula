@@ -66,3 +66,21 @@ def isdir_within(path, timeout=2.0):
         with _neg_lock:
             _neg_until[key] = time.monotonic() + _NEG_TTL_S
     return ok
+
+
+def forget(path):
+    """Drop any memoised negative verdict for *path*.
+
+    The memo trades freshness for bounded threads: while it lives, callers
+    cannot discover that a dead path came back. Anything that learns the
+    truth another way - a bare ``os.path.isdir`` success, a Tailscale peer
+    returning - should call this so the next probe is real instead of a
+    stale 'still dead'. Without it, an outage shorter than _NEG_TTL_S leaves
+    callers blind for the remainder of the TTL (the offloader's retry loop
+    sat out most of every brief SMB blip because of exactly this).
+    """
+    key = _key((path or "").strip())
+    if not key:
+        return
+    with _neg_lock:
+        _neg_until.pop(key, None)

@@ -41,6 +41,7 @@ import time
 
 from . import tailscale as ts
 from . import teracopy as tc
+from .fsprobe import forget as _fsprobe_forget
 from .fsprobe import isdir_within
 from .silent_proc import run_kwargs
 
@@ -602,6 +603,20 @@ class Offloader:
             self._unreachable_logged = False
         return prev is False and up is True
 
+    def _root_is_up(self):
+        """Ground-truth root check for the worker loop, on the worker thread
+        where a slow redirector is allowed to hold us.
+
+        A bare isdir here is also the memo-buster: fsprobe's negative TTL
+        exists to bound stuck threads elsewhere (UI snapshot), but once we
+        KNOW the path is back, that 'still dead' verdict must not keep the
+        retry loop blind - an outage shorter than the TTL otherwise leaves
+        us unable to see recovery at all."""
+        up = os.path.isdir(self.root) if self.root else False
+        if up:
+            _fsprobe_forget(self.root)
+        return up
+
     def _auto_scan_due(self):
         hours = self.interval_hours
         if hours <= 0:
@@ -644,7 +659,7 @@ class Offloader:
                 # so Settings can flip from unreachable -> up without an enqueue,
                 # and run the daily backlog scan when Tailscale/NAS is online.
                 if self.enabled:
-                    up = os.path.isdir(self.root)
+                    up = self._root_is_up()
                     code = ts.diagnose(self.root) if self.root else "off"
                     recovered = self._note_root_state(up)
                     if self._set_reachability(code) or recovered:
@@ -677,8 +692,11 @@ class Offloader:
                     if self._wake.wait(timeout=1.0):
                         self._wake.clear()
                         break
-                    if self.enabled and isdir_within(self.root):
-                        # Path returned - retry now rather than finishing backoff.
+                    if self.enabled and self._root_is_up():
+                        # Path returned - retry now rather than finishing
+                        # backoff. _root_is_up also drops fsprobe's negative
+                        # memo, so a blip shorter than the TTL can't leave us
+                        # blind to the recovery.
                         code = ts.diagnose(self.root)
                         self._set_reachability(code)
                         recovered = self._note_root_state(True)

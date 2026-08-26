@@ -40,6 +40,7 @@ def check(name, passed, detail=""):
 # Phase 1 - Offload: the sacred invariant under a flapping, lossy NAS
 # ======================================================================
 def phase_offload():
+    import obsauto.offload as offload_module
     from obsauto import paths as paths_module
     from obsauto.offload import Offloader
 
@@ -50,6 +51,13 @@ def phase_offload():
     for d in (app_dir, local):
         os.makedirs(d)
     paths_module.APP_DIR = app_dir
+
+    # Impatient-operator retry pacing. The shipped 10 s backoff is right for
+    # a real NAS outage but makes 40 clips x ~50% flap uptime mathematically
+    # unable to fit the 90 s deadline - this phase kept failing on drain
+    # throughput while the sacred invariant (nothing lost) held. Backoff
+    # mechanics themselves are unit-covered in test_offload_backoff.py.
+    offload_module._RETRY_BACKOFF = 2
 
     N = 40
     originals = {}   # dest-relative path -> bytes
@@ -64,7 +72,14 @@ def phase_offload():
         originals[(game, f"clip{i}.mkv")] = data
         clips.append((p, game))
 
-    cfg = {"nas_offload_root": nas, "nas_offload_mode": "move"}
+    # Force the built-in streamer: this phase tests the sacred invariant
+    # under flapping I/O, not the TeraCopy integration. With TeraCopy
+    # installed (auto-discovered) each handoff spawns a background process
+    # whose lifecycle dwarfs the flap windows - drain collapsed to 7/40 on
+    # machines with it, while the same run passes in fractions of a second
+    # on the direct copier.
+    cfg = {"nas_offload_root": nas, "nas_offload_mode": "move",
+           "nas_offload_use_teracopy": False}
     off = Offloader(cfg, on_log=lambda m: None)
 
     # Corrupt the destination hash for ~25% of clips on their FIRST attempt only,

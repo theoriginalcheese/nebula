@@ -79,6 +79,21 @@ check("timeout honoured", r is False and dt < 2.0, "%.2fs" % dt)
 check("timeout result memoised",
       fsprobe.isdir_within(os.path.join(work, "slow"), timeout=0.3) is False)
 
+# forget(): ground truth elsewhere must be able to invalidate the memo -
+# without this, an outage shorter than _NEG_TTL_S leaves callers blind to
+# recovery for the rest of the TTL (the offloader's exact bug).
+gone = os.path.join(work, "recovering")
+fsprobe.isdir_within(gone)                       # memoise False
+os.makedirs(gone)                                # path comes back
+check("memo hides recovery within TTL",
+      fsprobe.isdir_within(gone) is False)
+fsprobe.forget(gone)
+check("forget clears the memo - next probe is real",
+      fsprobe.isdir_within(gone) is True)
+fsprobe.forget("")                                # empty/no-op safe
+fsprobe.forget(None)                              # None-ish safe
+check("forget tolerates empty/None paths", True)
+
 failed = [r for r in results if not r[1]]
 for name, ok, detail in results:
     print("%-4s %-38s %s" % ("PASS" if ok else "FAIL", name, detail))

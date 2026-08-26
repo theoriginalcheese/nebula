@@ -1784,7 +1784,9 @@ class AppWindow:
                 tint=dv.GROUND, radius=dv.CARD_LAYERS["panel"][0],
                 tint_alpha=int(round((1 - dv.EDIT_CONTENT_OPACITY) * 255)),
                 border_alpha=0)
-            self.bg.tag_bind(scrim, "<Button-1>", lambda _e: "break")
+            # Optional event: a binding Tk calls without substitutions
+            # reaches the handler bare (see CLAUDE.md's resource/rebind list).
+            self.bg.tag_bind(scrim, "<Button-1>", lambda _e=None: "break")
             self.bg.addtag_withtag(f"blk_{name}", scrim)
             self._grips.setdefault(name, {})["scrim"] = scrim
         # Embedded widgets sit above the canvas, so the scrim can't cover them.
