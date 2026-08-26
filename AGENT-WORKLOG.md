@@ -226,3 +226,11 @@ as_offload_date_folders puts new copies under
 - **Measurements**: poll drift <=16 ms under 12-core load; CI suite ~140 s,
   slowest file 14 s; tokens.css regen byte-identical. Vault ARTIFACTS/
   MEASUREMENTS.md + DECISIONS.md hold the details.
+
+### Session 2 final batch
+- test_customise: Esc-revert now waits on state (loaded CI expired mid-revert).
+- test_clip_catalog: cancel-vs-rename race accepted when the winner is a
+  full-size cache; half-written files still fail hard.
+- test_offload_backoff comment updated for Strix's _root_is_up recovery.
+- Local full suite: 63/64 (test_teracopy transient - passes standalone and in
+  every CI run; suspected TeraCopy background-process interference).
