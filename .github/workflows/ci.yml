@@ -1,0 +1,51 @@
+# CI for Nebula.
+#
+# Why windows-latest: the app is Windows-native end to end - pywin32, pycaw,
+# comtypes, keyboard, OBS WebSocket against a live-ish stub - so Linux CI
+# would tell us nothing about the thing users actually run.
+#
+# Why tools/run_tests.py instead of pytest: the suite is deliberately a
+# hand-rolled per-file harness (see that file's docstring). Three test files
+# once hung their Tk mainloop silently for weeks; the watchdog turns a hang
+# into a visible HANG line and keeps going. CI inherits exactly the gate the
+# machines run locally, so green here means the same thing it means there.
+#
+# Ruff is pinned to the version the repos' ruff.toml was tuned against;
+# unpinned minor bumps kept inventing new findings nobody signed up for.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          pip install --disable-pip-version-check -r requirements.txt
+          pip install --disable-pip-version-check ruff==0.16.4
+
+      - name: Lint (ruff)
+        run: ruff check .
+
+      - name: Tests (per-file watchdog suite)
+        env:
+          PYTHONUTF8: "1"
+        run: python tools/run_tests.py --timeout 150
