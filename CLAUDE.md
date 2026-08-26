@@ -43,6 +43,7 @@ and `RESOURCE_DIR` (`sys._MEIPASS` when frozen) only for bundled read-only asset
 | `spike/taskbar_icon.py` | `start`, `_apply_icon` | Hover-only orbit animation for the taskbar button; static mark at rest |
 | `spike/gen_tokens.py` | - | Dev tool: regenerates `spike/web/tokens.css` from `design_v3.py` — run after changing tokens, commit the output |
 | `spike/webview_power.py` | `gpu_page_state`, `apply_webview_power` | TrySuspend + GPU-adapter preference from real window state |
+| `spike/udp_trigger.py` | `UdpTrigger` | Loopback UDP listener that saves the replay buffer on any datagram (`replay_udp_port`, off by default) - Stream Deck / automation / macropad entry point |
 | `obsauto/updater.py` | `check_for_update`, `save_source_snapshot`, `load_source_snapshot`, `relaunch_source`, `sync_source_checkout` (back-compat) | Updates: packaged = Releases; source = Save this machine / Load latest / Restart now on `main`. No wip shuttle |
 | `obsauto/monitor.py` | `Monitor` | Core loop: foreground/idle detection, ensure/launch OBS, start/stop + retarget recording, manual-stop hold-off (`Classifier.peek()` on UI paths - never network there) |
 | `obsauto/hotkey.py` | `register`, `unregister` | Global hotkey toggle via low-level keyboard hook; callers must pair register/unregister or stale hooks pile up |
