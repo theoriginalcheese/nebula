@@ -194,6 +194,14 @@ check("no internal key sneaks into the UI",
       not (settings_spec.INTERNAL_KEYS & seen),
       sorted(settings_spec.INTERNAL_KEYS & seen))
 
+# ---- every Field key is backed by a DEFAULTS entry ----
+# The reverse of the two maps above: a Field whose key has no DEFAULTS entry
+# renders from nothing on a fresh install until first save - exactly how
+# clip_cache_max_gb shipped with an empty box despite its documented default.
+unbacked = [f.key for f in settings_spec.FIELDS
+            if f.key not in DEFAULTS and f.key not in settings_spec.INTERNAL_KEYS]
+check("every Field key is backed by DEFAULTS", not unbacked, unbacked)
+
 check("no callback exceptions", not callback_errors,
       callback_errors[0].strip().splitlines()[-1] if callback_errors else "clean")
 

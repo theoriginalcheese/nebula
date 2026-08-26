@@ -31,6 +31,10 @@ DEFAULTS = {
     # 7f's one-time "ffmpeg isn't installed" row in Settings. Not a Field -
     # it's a dismissal record, not something to edit.
     "ffmpeg_notice_dismissed": False,
+    # Remote-clip fetch cache cap (GB). Oldest-mtime-first pruning under this
+    # ceiling; 0 disables. Reader falls back to the same default if absent,
+    # but Settings renders from DEFAULTS, so it belongs here too.
+    "clip_cache_max_gb": 50,
     # ---- storage forecast + cull (spec 7c) ----
     # The forecast states a date rather than a percentage. Culling moves files
     # to the Recycle Bin, never unlinks, always excludes replays and marked
