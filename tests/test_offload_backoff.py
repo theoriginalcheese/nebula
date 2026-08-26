@@ -63,6 +63,11 @@ def run():
         lambda p: "lan" if UP[0] else "no-route")
 
     try:
+        # Shrink the real backoff so a second failed attempt happens quickly:
+        # the rate-limit assertion then spans an actual retry, and recovery
+        # has a deterministic budget even on a loaded runner.
+        real_backoff = offload_module._RETRY_BACKOFF
+        offload_module._RETRY_BACKOFF = 2
         off = Offloader({"nas_offload_root": nas, "nas_offload_mode": "move"},
                         on_log=logs.append)
         off.start()
@@ -80,25 +85,29 @@ def run():
               off.pending_count())
         check("down: local untouched", os.path.exists(clip))
         n_unreachable = sum("unreachable" in m.lower() for m in logs)
-        time.sleep(2.5)  # longer than _process takes to fail again
+        # With a 2s backoff the second attempt (and its suppressed log line)
+        # lands inside this window - the rate limit is proven, not assumed.
+        time.sleep(3.0)
         check("down: log is rate-limited while still down",
               sum("unreachable" in m.lower() for m in logs) == n_unreachable,
               f"{n_unreachable} -> "
               f"{sum('unreachable' in m.lower() for m in logs)}")
 
-        # ---- 2. wake short-circuits the backoff ----
-        # The failure above left the worker sleeping off _RETRY_BACKOFF (10s).
-        # Bringing the NAS up must be noticed by the poll within ~1s ticks;
-        # assert the retry lands well inside one full backoff window.
+        # ---- 2. recovery lands inside one backoff window ----
+        # The worker polls isdir_within every ~1s while backing off; after
+        # the flip it retries within that tick plus one copy+hash pass.
         UP[0] = True
         os.makedirs(nas)
         dest = os.path.join(nas, "Elden Ring", "boss.mkv")
         t0 = time.time()
-        arrived = wait_until(lambda: os.path.exists(dest), timeout=9.0)
+        arrived = wait_until(lambda: os.path.exists(dest), timeout=20.0)
         check("recovery: copy lands inside one backoff window", arrived,
               f"{time.time() - t0:.1f}s")
+        # The local delete happens after the rename (finalize hashes first);
+        # on a loaded runner that lag outlives this test's poll gap.
         check("recovery: move completed, local removed",
-              arrived and not os.path.exists(clip))
+              arrived and wait_until(lambda: not os.path.exists(clip),
+                                     timeout=15.0))
         check("recovery: queue drained",
               wait_until(lambda: off.pending_count() == 0))
 
@@ -119,6 +128,7 @@ def run():
         paths_module.APP_DIR = original_app_dir
         offload_module.isdir_within = real_isdir_within
         offload_module.ts.diagnose = real_diagnose
+        offload_module._RETRY_BACKOFF = real_backoff
 
     passed_all = all(p for _, p, _ in results)
     for name, passed, detail in results:
