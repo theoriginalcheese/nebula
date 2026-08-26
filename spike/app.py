@@ -2365,13 +2365,6 @@ class Api:
         self._classifier.mark_game(basename, display, source="manual")
         return {"ok": True, "games": self._games()}
 
-    def demote_game(self, basename):
-        basename = (basename or "").strip().lower()
-        if not basename:
-            return {"ok": False, "error": "empty"}
-        self._classifier.mark_non_game(basename)
-        return {"ok": True, "games": self._games()}
-
     def rescan_steam(self):
         """Kick a Steam rescan on a worker. Returns immediately."""
         def work():

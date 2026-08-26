@@ -715,10 +715,6 @@ class ToastApi:
     def on_expired(self):
         self._ctl._on_expired()
 
-    def start_dismiss(self):
-        """JS life ended — fade the HWND, then hide (no CSS opacity punch-through)."""
-        self._ctl._start_dismiss()
-
     def action(self, index):
         self._ctl._on_action(index)
 
