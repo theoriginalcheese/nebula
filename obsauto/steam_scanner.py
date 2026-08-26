@@ -15,8 +15,6 @@ import os
 import re
 import time
 
-import requests
-
 from .paths import APP_DIR
 
 try:
@@ -162,6 +160,11 @@ def classify_appid(appid, cache=None, log=lambda msg: None):
     Uses store.steampowered.com/api/appdetails, which is free and needs no
     API key. Result is cached to disk so we only hit the network once per app.
     """
+    # Deferred, not module-level: requests (with urllib3 et al) costs ~90 ms
+    # of every startup's import time, and only this one call site needs it.
+    # Manifest scanning and cache hits never pay for it.
+    import requests
+
     if appid in KNOWN_NON_GAME_APPIDS:
         return False, None
 
