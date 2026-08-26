@@ -42,6 +42,13 @@ jobs:
           pip install --disable-pip-version-check -r requirements.txt
           pip install --disable-pip-version-check ruff==0.16.4
 
+      # Nebula's real environment has ffmpeg (clip thumbnails, duration
+      # probes); test_thumbs asserts it is found. Freshness avoids choco's
+      # occasional stale-package 404s.
+      - name: Install ffmpeg
+        shell: pwsh
+        run: choco install ffmpeg -y --no-progress
+
       - name: Lint (ruff)
         run: ruff check .
 

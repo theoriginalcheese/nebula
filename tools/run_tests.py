@@ -39,13 +39,21 @@ def run_one(path, timeout):
             if p.returncode != 0:
                 # A 3-line tail once hid *which* checks failed on a machine
                 # where the file passed everywhere else. App logs bury the
-                # FAIL lines hundreds of lines up, so surface them directly
-                # instead of dumping raw output.
+                # FAIL lines hundreds of lines up, so surface them directly;
+                # and a hard crash (Tk teardown, segfault-style exit) prints
+                # nothing to stdout at all - stderr is the only witness.
                 out = (p.stdout or "").strip().splitlines()
+                err = (p.stderr or "").strip().splitlines()
                 bad = [ln for ln in out
                        if ("FAIL" in ln or "Traceback" in ln or "Error" in ln
                            or "HANG" in ln)]
-                tail = bad[-40:] + ["--- last lines ---"] + out[-6:]
+                tail = bad[-40:]
+                if err:
+                    tail += ["--- stderr ---"] + err[-25:]
+                if out:
+                    tail += ["--- last lines ---"] + out[-6:]
+                if not tail:
+                    tail = ["(no output captured)"]
                 result["state"] = "FAIL"
                 result["detail"] = " | ".join(tail)[:12000]
         except subprocess.TimeoutExpired:
