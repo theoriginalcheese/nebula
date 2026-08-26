@@ -2,6 +2,7 @@ import json
 import os
 
 from . import design_v3
+from .app_log import log_to_file
 from .paths import APP_DIR
 
 CONFIG_FILE = os.path.join(APP_DIR, "config.json")
@@ -154,13 +155,26 @@ def load_config():
         try:
             with open(CONFIG_FILE, "r", encoding="utf-8") as f:
                 config.update(json.load(f))
-        except (OSError, json.JSONDecodeError):
-            pass
+        except (OSError, json.JSONDecodeError) as exc:
+            # Corrupt or unreadable: defaults win, but never silently. A
+            # bare `pass` here meant every setting could vanish without a
+            # trace. Quarantine the broken file so the next save starts
+            # clean instead of re-failing every load.
+            log_to_file("[Config] %s unreadable (%s) - using defaults."
+                        % (CONFIG_FILE, exc))
+            try:
+                os.replace(CONFIG_FILE, CONFIG_FILE + ".corrupt")
+            except OSError:
+                pass
     else:
         save_config(config)
     return config
 
 
 def save_config(config):
-    with open(CONFIG_FILE, "w", encoding="utf-8") as f:
+    # Write-then-replace: a crash mid-save must not truncate config.json
+    # (which load_config would then treat as corrupt -> all settings reset).
+    tmp = CONFIG_FILE + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
         json.dump(config, f, indent=2, sort_keys=True)
+    os.replace(tmp, CONFIG_FILE)
