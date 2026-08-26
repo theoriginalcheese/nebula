@@ -12,6 +12,8 @@ down) and fails if any does:
   - palette_contract_check.py palette rows vs dispatch branches
   - docs_drift_check.py      README config table vs DEFAULTS
   - import_cycles.py         intra-package dependency cycles
+  - requirements_check.py    third-party imports vs requirements.txt
+  - test_inventory_check.py  docstrings + no ghost doc paths
 
 Exit 1 if any checker reports problems.
 """
@@ -27,6 +29,8 @@ CHECKERS = (
     "palette_contract_check.py",
     "docs_drift_check.py",
     "import_cycles.py",
+    "requirements_check.py",
+    "test_inventory_check.py",
 )
 
 

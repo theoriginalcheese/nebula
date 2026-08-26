@@ -37,11 +37,12 @@ try:
 except json.JSONDecodeError:
     payload = {}
 check("real repo gate exits clean", proc.returncode == 0, proc.stdout[-300:])
-check("rollup lists all five checkers",
+check("rollup lists all seven checkers",
       {r["checker"] for r in payload.get("results", [])} == {
           "module_map_check.py", "bridge_contract_check.py",
           "palette_contract_check.py", "docs_drift_check.py",
-          "import_cycles.py"},
+          "import_cycles.py", "requirements_check.py",
+          "test_inventory_check.py"},
       payload.get("results"))
 check("every checker individually ok",
       all(r["ok"] for r in payload.get("results", [])), payload)
