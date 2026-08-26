@@ -120,6 +120,52 @@ def run():
         back = off3._dest_dir_for(clip_june, "Elden Ring")[0]
         check("toggle off: back to flat for new copies",
               back == os.path.join(nas, "Elden Ring"), back)
+
+        # ---- dates x auto LAN/remote root switch ----
+        # The month tier hangs off whichever root currently serves, so both
+        # sites get identical layouts. Drive the real picker: home LAN vs
+        # away (peer address not looking like LAN).
+        nas_remote = os.path.join(work, "nas-remote")
+        os.makedirs(nas_remote, exist_ok=True)
+        os.makedirs(nas, exist_ok=True)
+        real_pref = offload_module.ts.home_lan_preferred
+        real_cur = offload_module.ts.peer_cur_addr
+        real_isdir = offload_module.isdir_within
+        cfg_auto = {
+            "nas_offload_mode": "copy",
+            "nas_offload_date_folders": True,
+            "nas_offload_auto_lan": True,
+            "nas_offload_root_lan": nas,
+            "nas_offload_root_remote": nas_remote,
+        }
+        try:
+            offload_module.isdir_within = lambda p, timeout=2.0: True
+            june_month = time.strftime("%Y-%m", time.localtime(june))
+
+            offload_module.ts.home_lan_preferred = lambda p: True
+            offload_module.ts.peer_cur_addr = lambda h: "192.168.68.59"
+            at_home = Offloader(dict(cfg_auto))
+            d_home, _ = at_home._dest_dir_for(clip_june, "Elden Ring")
+            check("auto at home: tier under LAN root",
+                  d_home == os.path.join(nas, "Elden Ring", june_month), d_home)
+
+            offload_module.ts.home_lan_preferred = lambda p: False
+            offload_module.ts.peer_cur_addr = lambda h: "100.100.100.100"
+            away = Offloader(dict(cfg_auto))
+            d_away, _ = away._dest_dir_for(clip_june, "Elden Ring")
+            check("auto away: tier under remote root",
+                  d_away == os.path.join(nas_remote, "Elden Ring", june_month),
+                  d_away)
+
+            # Dedup stays coherent per site: the June clip copied at home
+            # must NOT satisfy the remote site's scan.
+            check("auto sites dedup independently",
+                  at_home._dest_present(clip_june, "Elden Ring") is True
+                  and away._dest_present(clip_june, "Elden Ring") is False)
+        finally:
+            offload_module.ts.home_lan_preferred = real_pref
+            offload_module.ts.peer_cur_addr = real_cur
+            offload_module.isdir_within = real_isdir
     finally:
         paths_module.APP_DIR = original_app_dir
         offload_module.ts.diagnose = real_diagnose
