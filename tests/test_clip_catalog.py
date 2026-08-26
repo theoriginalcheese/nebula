@@ -227,26 +227,39 @@ def run():
     st = cat.fetch_status("Ctrl/big.mkv")
     if st.get("state") == "downloading":
         paused = cat.pause_fetch("Ctrl/big.mkv")
+        # The 3MB file can finish between the state check above and the
+        # pause landing - on a loaded runner that window is real. pause on
+        # 'ready' is ok=True (idempotent), and the rest of this branch
+        # degrades to the finished-download path below.
+        finished_early = paused["status"].get("state") == "ready"
         check("pause ok", paused.get("ok") is True, paused)
         check("pause state",
+              finished_early or
               cat.fetch_status("Ctrl/big.mkv").get("state") == "paused",
               cat.fetch_status("Ctrl/big.mkv"))
-        time.sleep(0.25)
-        mid = cat.fetch_status("Ctrl/big.mkv")
-        check("paused holds bytes", int(mid.get("bytes") or 0) > 0, mid)
-        resumed = cat.resume_fetch("Ctrl/big.mkv")
-        check("resume ok", resumed.get("ok") is True, resumed)
-        wait_until(lambda: cat.fetch_status("Ctrl/big.mkv").get("state")
-                   in ("downloading", "ready"), timeout=5)
-        cancelled = cat.cancel_fetch("Ctrl/big.mkv")
-        check("cancel ok", cancelled.get("ok") is True, cancelled)
-        t.join(timeout=8)
-        check("cancel leaves no complete cache",
-              cat.cached_file("Ctrl/big.mkv") is None)
-        check("cancel: NAS untouched", os.path.isfile(big_nas))
-        part = cat.cache_path("Ctrl/big.mkv") + ".part"
-        wait_until(lambda: not os.path.exists(part), timeout=3)
-        check("cancel cleans .part", not os.path.exists(part))
+        if not finished_early:
+            time.sleep(0.25)
+            mid = cat.fetch_status("Ctrl/big.mkv")
+            check("paused holds bytes", int(mid.get("bytes") or 0) > 0, mid)
+            resumed = cat.resume_fetch("Ctrl/big.mkv")
+            check("resume ok", resumed.get("ok") is True, resumed)
+            wait_until(lambda: cat.fetch_status("Ctrl/big.mkv").get("state")
+                       in ("downloading", "ready"), timeout=5)
+            cancelled = cat.cancel_fetch("Ctrl/big.mkv")
+            check("cancel ok", cancelled.get("ok") is True, cancelled)
+            t.join(timeout=8)
+            check("cancel leaves no complete cache",
+                  cat.cached_file("Ctrl/big.mkv") is None)
+            check("cancel: NAS untouched", os.path.isfile(big_nas))
+            part = cat.cache_path("Ctrl/big.mkv") + ".part"
+            wait_until(lambda: not os.path.exists(part), timeout=3)
+            check("cancel cleans .part", not os.path.exists(part))
+        else:
+            t.join(timeout=8)
+            check("finished before pause landed", True)
+            check("finished download is cached, NAS untouched",
+                  os.path.isfile(big_nas) and
+                  cat.cached_file("Ctrl/big.mkv") is not None)
     else:
         t.join(timeout=8)
         check("pause path skipped (download too fast)", True)
