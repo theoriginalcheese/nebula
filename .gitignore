@@ -48,6 +48,14 @@ tools/_toast_demo/
 tools/_toast_demo_local_cmp/
 tools/_toast_demo_spike_capsule/
 
+# Expo / React Native mobile companion (mobile/)
+mobile/node_modules/
+mobile/.expo/
+mobile/dist/
+mobile/.expo-web-test/
+mobile/.expo-web-test-56/
+mobile/.expo-sdk54-test/
+
 # Parallel-agent worktrees — isolated checkouts, not project source.
 .claude/worktrees/
 
