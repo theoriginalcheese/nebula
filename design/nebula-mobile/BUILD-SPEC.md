@@ -57,6 +57,13 @@ the `.dc.html` itself as the newer/authoritative source when the two disagree.
 - **Appearance** (settings) has **no shown entry point** in the mockup — none
   of the 4 tabs highlight when on it. Flag this to Anthony/design rather than
   inventing a settings icon; don't guess a gear-icon placement.
+  - **Consequence handled in code (2026-08-28):** Appearance holds the Motion
+    slider, which BUILD-SPEC designates the reduce-motion accessibility
+    control — so an unreachable Appearance means an unreachable accessibility
+    control. Rather than invent nav, `StudioProvider` now reads the **OS**
+    Reduce Motion setting (`AccessibilityInfo`) and forces `motionScale` to 0
+    while it is on. The in-app slider still governs everything below that.
+    If design later gives Appearance an entry point, this stays correct.
 - **Notifications is not an in-app screen.** It's a mockup of the iOS **Lock
   Screen**, showing what the Live Activity / notifications look like from
   outside the app. There is nothing to route to — it documents OS-level
@@ -96,6 +103,14 @@ Use the table below for anything inside an `IOSDevice` frame; use Nocturne's
 Six accent presets total (violet/indigo/cyan/teal/amber/magenta), carried
 over verbatim from the desktop app. `EMBER` (the desktop's disconnected/error
 red) is deliberately **not** reused for "recording" — one token, one meaning.
+
+### Motion, as wired
+
+`motionScale` (0–1) is the single ambient-motion multiplier, consumed by
+`AmbientBackdrop`, `DustParticles`, `OrbitDust`, `RecordingArcMark`,
+`MoonlightOrb`, `StopHalo`, `SavedToast` and `RiseIn`. At 0 every ambient
+animation stops. OS Reduce Motion pins it to 0; the Appearance slider sets it
+otherwise.
 
 ### Type
 
@@ -176,10 +191,17 @@ scale, but the phone screens use larger absolute values throughout).
 
 ### 3. Clips (`f-clips`)
 - Large title "Clips", search field ("Search clips").
+- **Day ribbon card** (soft card, above the chips): section head "Today" +
+  mono meta (`6h 12m · 11 clips`), then one bar per clip in that day — the
+  in-progress recording is the gold bar and labels itself — and a time axis
+  underneath (`13:00` … `19:41 live`). No legend; the live bar is
+  direct-labelled.
 - Horizontal filter chip row: All + one chip per recent game (toggleable,
   active/inactive visual states).
-- Day-grouped list ("Today" section header) of clip cards: thumbnail, title,
-  meta line.
+- Day-grouped list ("Today" section header) of clip **rows**: mono duration
+  badge, title, `{size} · {state}` meta line, and a trailing state glyph —
+  amber dot while recording, tick for "on NAS", download arrow for
+  "offloading".
 
 ### 4. Remote (`f-remote`)
 - Large title "Remote".
@@ -196,13 +218,29 @@ scale, but the phone screens use larger absolute values throughout).
 - NAS offload card: eyebrow "NAS offload", progress bar (masked-fade ends,
   scanning highlight sweep), "`X of Y · size`" counter, current-file line
   with throughput.
-- Per-game Wake toggle list further down the screen (one toggle row per
-  recent game — configures which titles trigger Wake-on-LAN).
+
+> **Correction (2026-08-28, verified against `#f-remote` in the .dc.html):**
+> an earlier revision of this spec listed a "per-game Wake toggle list" on
+> Remote. There is no such list in the frame — Remote ends at the NAS offload
+> card. The per-game toggle list lives on **Games**, and it toggles *whether
+> Nebula records that title*, not Wake-on-LAN (the frame's own segmented
+> counter reads "Recording · N").
 
 ### 5. Games (`f-games`)
-- Large title "Games", "Seen while you were away" section.
-- List of recently-detected executables as cards (title + placeholder art).
-- Tapping an item that needs a verdict → Classify.
+- Large title "Games", then a two-cell segmented counter directly beneath it:
+  **Recording · {n}** (active cell, violet) | **Not games · {n}** (inactive).
+  36px tall, radius 11, 3px padding, inner cells radius 8.
+- **Queue banner** — amber-bordered card (radius 20) linking to Classify:
+  warning icon in a 34px amber tile, "**{n} waiting to classify**" over
+  "Seen while you were away", trailing chevron. This is the only route into
+  Classify.
+- **Detected-executable rows** (radius 17, `rgba(245,243,255,.03)` on
+  `rgba(245,243,255,.07)`): 42px hashed-tint icon tile, title (14px/600) over
+  exe name (10px mono), and a **48×29 toggle** on the right controlling
+  whether Nebula records that title.
+- Footnote: "Icons come from the executable. The tint behind each is hashed
+  from the name, so a game keeps its colour."
+- Tapping the queue banner → Classify.
 
 ### 6. Classify (`f-classify`) — reached from Games
 - Header: "Classify · tap a verdict".
@@ -211,10 +249,23 @@ scale, but the phone screens use larger absolute values throughout).
   window-chrome) each with a coloured status dot + icon + text bound to
   live signals — this is the game/not-game heuristic surfaced to the user,
   not decided silently.
-- Summary line ("`{{ verdict }}`, so Nebula is asking instead of guessing")
-  with a warning icon when signals conflict.
+- Signals card head: eyebrow "What Nebula saw" + mono
+  "`{n} of 5 signals say game`".
+- Summary line ("`{{ verdict }}`, so Nebula is asking instead of guessing.")
+  with an amber warning icon when signals conflict.
 - Actions: **"It is a game"** / **"Not a game"** (two large pill buttons),
-  plus tertiary **"Skip for now"**.
+  plus tertiary **"Skip for now"**. The two verdicts must record *different*
+  answers — a shared handler is a bug.
+- Footer card: eyebrow "Decided today" + "`{n}` settled. Every answer trains
+  the local classifier, so an executable is never asked about twice."
+- Exact fixture copy (from the `QUEUE` constant in the .dc.html — use these
+  strings verbatim, they are the QA cases):
+
+  | Item | Publisher | Verdict phrase | Signals (fullscreen / input / GPU / library / chrome) |
+  |---|---|---|---|
+  | Sifu | Sloclap | `Looks like a game` | Exclusive fullscreen, 2h 14m · Gamepad, 11.4k events · GPU 94% sustained · In your Steam library · No window chrome — all 5 lean game |
+  | Blender | Blender Foundation | `Trips every heuristic` | Fullscreen, 41m *(game)* · Keyboard and mouse only *(not)* · GPU 88% sustained, bursty *(game)* · Not in any store library *(not)* · Menu bar and toolbars *(not)* |
+  | Yakuza 0 | Ryu Ga Gotoku | `Hides from the heuristics` | Borderless window, 1600x900 *(not)* · Keyboard only *(not)* · GPU 41% sustained *(not)* · In your Steam library *(game)* · Borderless, chrome hidden *(game)* |
 - The mockup's built-in test queue is intentionally adversarial — useful as
   real QA fixtures, not just demo data:
   - *Sifu* — obvious game, all 5 signals agree (`high` confidence).
@@ -266,6 +317,18 @@ notes — plan for these, they are not optional:**
 - Live notification preview card ("Recording started") styled with whatever
   accent is currently selected — lets the user see the Live Activity look
   before it happens for real.
+
+## Reference material caveats
+
+- `screenshots/states.png` is **not** a mobile frame — it is a capture of the
+  desktop capsule-toast states (Recording / Paused idle), carried over from
+  the `ui-v3` work. Do not use it as phone reference. There is currently no
+  screenshot of the eight iOS frames in this folder; the `.dc.html` is the
+  only visual authority.
+- The Claude Design MCP (`/design-login`) needs an interactive terminal, so an
+  automated drift refresh is not possible from a non-interactive session. The
+  corrections in this file were made by reading the on-disk `.dc.html`
+  directly, which is authority order #1 either way.
 
 ## Behaviour contracts
 

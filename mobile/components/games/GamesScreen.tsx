@@ -5,7 +5,9 @@ import { useRouter } from 'expo-router';
 import Svg, { Circle, Path } from 'react-native-svg';
 
 import { ScreenHeader } from '@/components/ScreenHeader';
+import { GameRow } from '@/components/games/GameRow';
 import { AmbientBackdrop } from '@/components/ui/AmbientBackdrop';
+import { RiseIn } from '@/components/ui/RiseIn';
 import { colors, fonts } from '@/constants/theme';
 import { useStudio } from '@/state/StudioContext';
 
@@ -14,9 +16,10 @@ const TAB_CLEAR = 110;
 export function GamesScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
-  const { state } = useStudio();
+  const { state, toggleGameRecording } = useStudio();
   const waiting = state.classifyQueue.length;
   const nextId = state.classifyQueue[0]?.id;
+  const recordingCount = state.detectedGames.filter((g) => g.recording).length;
 
   return (
     <View style={styles.screen}>
@@ -25,10 +28,12 @@ export function GamesScreen() {
         <ScreenHeader variant="large-title" title="Games">
           <View style={styles.segment}>
             <View style={[styles.segItem, styles.segOn]}>
-              <Text style={styles.segOnText}>Recording · —</Text>
+              <Text style={styles.segOnText}>
+                Recording · {state.detectedGames.length > 0 ? recordingCount : '—'}
+              </Text>
             </View>
             <View style={styles.segItem}>
-              <Text style={styles.segOffText}>Not games · —</Text>
+              <Text style={styles.segOffText}>Not games · {state.notGamesCount ?? '—'}</Text>
             </View>
           </View>
         </ScreenHeader>
@@ -37,11 +42,13 @@ export function GamesScreen() {
       <ScrollView
         contentContainerStyle={[styles.body, { paddingBottom: TAB_CLEAR + insets.bottom }]}
         showsVerticalScrollIndicator={false}>
+        {waiting > 0 ? (
         <Pressable
+          accessibilityRole="button"
           onPress={() => {
             if (nextId) router.push(`/games/classify/${nextId}`);
           }}
-          style={({ pressed }) => [pressed && waiting > 0 && { transform: [{ scale: 0.985 }] }]}>
+          style={({ pressed }) => [pressed && { transform: [{ scale: 0.985 }] }]}>
           <LinearGradient
             colors={['rgba(245,166,35,0.07)', 'rgba(245,243,255,0.015)']}
             start={{ x: 0.15, y: 0 }}
@@ -73,13 +80,25 @@ export function GamesScreen() {
             </Svg>
           </LinearGradient>
         </Pressable>
+        ) : null}
 
-        <View style={styles.empty}>
-          <Text style={styles.emptyTitle}>No games detected</Text>
-          <Text style={styles.emptyBody}>
-            Recently seen executables land here with Wake toggles once the studio agent reports them.
-          </Text>
-        </View>
+        {state.detectedGames.length === 0 ? (
+          <View style={styles.empty}>
+            <Text style={styles.emptyTitle}>No games detected</Text>
+            <Text style={styles.emptyBody}>
+              Recently seen executables land here, each with a switch for whether Nebula records
+              it, once the studio agent reports them.
+            </Text>
+          </View>
+        ) : (
+          <View style={{ gap: 8 }}>
+            {state.detectedGames.map((game, i) => (
+              <RiseIn key={game.id} delay={i * 55}>
+                <GameRow game={game} onToggle={() => toggleGameRecording(game.id)} />
+              </RiseIn>
+            ))}
+          </View>
+        )}
 
         <Text style={styles.footnote}>
           Icons come from the executable. The tint behind each is hashed from the name, so a game

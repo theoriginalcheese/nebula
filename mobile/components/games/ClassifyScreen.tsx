@@ -7,7 +7,7 @@ import { AmbientBackdrop } from '@/components/ui/AmbientBackdrop';
 import { Eyebrow } from '@/components/ui/Eyebrow';
 import { colors, fonts } from '@/constants/theme';
 import { useStudio } from '@/state/StudioContext';
-import type { ClassifyIcon, ClassifyItem } from '@/state/studio';
+import type { ClassifyIcon, ClassifyItem, ClassifyVerdict } from '@/state/studio';
 
 const TAB_CLEAR = 110;
 
@@ -90,9 +90,9 @@ export function ClassifyScreen({ id }: { id: string }) {
   const total = state.classifyQueue.length;
   const position = item ? Math.max(1, (index >= 0 ? index : 0) + 1) : 0;
 
-  const decide = () => {
+  const decide = (verdict: ClassifyVerdict) => {
     if (!item) return;
-    decideClassify(item.id);
+    decideClassify(item.id, verdict);
     router.back();
   };
 
@@ -156,7 +156,7 @@ export function ClassifyScreen({ id }: { id: string }) {
               <View style={styles.signalsHead}>
                 <Eyebrow>What Nebula saw</Eyebrow>
                 <Text style={styles.votes}>
-                  {item.signals.filter((s) => s.lean === 'game').length} of 5 lean game
+                  {item.signals.filter((s) => s.lean === 'game').length} of 5 signals say game
                 </Text>
               </View>
 
@@ -199,7 +199,8 @@ export function ClassifyScreen({ id }: { id: string }) {
 
           <View style={styles.actions}>
             <Pressable
-              onPress={decide}
+              accessibilityRole="button"
+              onPress={() => decide('game')}
               style={({ pressed }) => [styles.actionPrimary, pressed && { transform: [{ scale: 0.97 }] }]}>
               <Svg width={17} height={17} viewBox="0 0 24 24" fill="none" stroke={colors.textPrimary} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
                 <Rect x="2.6" y="7.4" width="18.8" height="9.2" rx="4.6" />
@@ -208,7 +209,8 @@ export function ClassifyScreen({ id }: { id: string }) {
               <Text style={styles.actionPrimaryLabel}>It is a game</Text>
             </Pressable>
             <Pressable
-              onPress={decide}
+              accessibilityRole="button"
+              onPress={() => decide('not')}
               style={({ pressed }) => [styles.actionSecondary, pressed && { transform: [{ scale: 0.97 }] }]}>
               <Svg width={17} height={17} viewBox="0 0 24 24" fill="none" stroke={colors.textAccentSoft} strokeWidth={1.8} strokeLinecap="round">
                 <Path d="M6 6l12 12M6 18 18 6" />

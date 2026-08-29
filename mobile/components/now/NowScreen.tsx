@@ -14,11 +14,13 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Svg, { Circle, Path, Rect } from 'react-native-svg';
 
 import { ScreenHeader } from '@/components/ScreenHeader';
+import { SavedToast } from '@/components/now/SavedToast';
 import { AmbientBackdrop } from '@/components/ui/AmbientBackdrop';
 import { DeadMark } from '@/components/ui/DeadMark';
 import { DustParticles } from '@/components/ui/DustParticles';
 import { Eyebrow } from '@/components/ui/Eyebrow';
 import { RecordingArcMark } from '@/components/ui/RecordingArcMark';
+import { RiseIn } from '@/components/ui/RiseIn';
 import { colors, fonts, radii } from '@/constants/theme';
 import { useStudio } from '@/state/StudioContext';
 
@@ -154,12 +156,9 @@ export function NowScreen() {
   const isStopped = rec.status === 'stopped';
   const isActive = isRec || isPaused;
   const chip = chipFor(rec.status);
-
-  useEffect(() => {
-    if (!state.savedToast) return;
-    const t = setTimeout(dismissToast, 3200);
-    return () => clearTimeout(t);
-  }, [state.savedToast, dismissToast]);
+  // Nothing can drive OBS without a live link, so the Record control reads as
+  // unavailable rather than looking live and doing nothing when pressed.
+  const canRecord = state.connection === 'online';
 
   const confirmStop = () => {
     Alert.alert('Stop recording?', 'This ends the current session on the studio PC.', [
@@ -269,10 +268,14 @@ export function NowScreen() {
         contentContainerStyle={[styles.body, { paddingBottom: TAB_CLEAR + insets.bottom }]}
         showsVerticalScrollIndicator={false}>
         <LinearGradient
-          colors={['rgba(245,166,35,0.07)', 'rgba(245,243,255,0.02)']}
+          colors={
+            isActive
+              ? ['rgba(245,166,35,0.07)', 'rgba(245,243,255,0.02)']
+              : ['rgba(245,243,255,0.025)', 'rgba(245,243,255,0.012)']
+          }
           start={{ x: 0.15, y: 0 }}
           end={{ x: 1, y: 1 }}
-          style={styles.recOuter}>
+          style={[styles.recOuter, !isActive && styles.recOuterIdle]}>
           <View style={styles.recInner}>
             <View style={styles.statusRow}>
               <View style={styles.statusLeft}>
@@ -346,7 +349,11 @@ export function NowScreen() {
                 [
                   ['File', rec.fileSizeLabel, colors.textPrimary],
                   ['Bitrate', rec.bitrateLabel, colors.textPrimary],
-                  ['Disk', rec.diskLeftLabel, colors.accentAmber],
+                  [
+                    'Disk',
+                    rec.diskLeftLabel,
+                    rec.diskWarning ? colors.accentAmber : colors.textPrimary,
+                  ],
                 ] as const
               ).map(([label, value, colour]) => (
                 <View key={label} style={styles.statCell}>
@@ -399,47 +406,39 @@ export function NowScreen() {
             </View>
           </View>
         ) : (
-          <View style={styles.recordAgainWrap}>
-            <View style={styles.stopWrap}>
+          <RiseIn style={styles.recordAgainWrap}>
+            <View style={[styles.stopWrap, !canRecord && styles.transportOff]}>
               <View style={styles.recordHalo} />
               <Pressable
+                accessibilityRole="button"
+                accessibilityState={{ disabled: !canRecord }}
+                disabled={!canRecord}
                 onPress={recordAgain}
                 style={({ pressed }) => [
                   styles.recordAgainBtn,
-                  pressed && { transform: [{ scale: 0.94 }] },
+                  pressed && canRecord && { transform: [{ scale: 0.94 }] },
                 ]}>
                 <Svg width={26} height={26} viewBox="0 0 24 24">
                   <Circle cx="12" cy="12" r="6.6" fill={colors.goldText} />
                 </Svg>
               </Pressable>
             </View>
-            <Text style={styles.recordAgainLabel}>
-              {isStopped ? 'Record again' : 'Record'}
+            <Text style={[styles.recordAgainLabel, !canRecord && styles.recordLabelOff]}>
+              {canRecord ? (isStopped ? 'Record again' : 'Record') : 'No studio link'}
             </Text>
-          </View>
+          </RiseIn>
         )}
 
         <ActivitySection items={state.activity} />
       </ScrollView>
 
       {state.savedToast ? (
-        <View style={[styles.toast, { bottom: TAB_CLEAR + insets.bottom - 16 }]}>
-          <View style={styles.toastIcon}>
-            <Svg width={14} height={14} viewBox="0 0 24 24" fill="none">
-              <Path
-                d="M20 6 9 17l-5-5"
-                stroke="#C9BFFF"
-                strokeWidth={1.8}
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
-            </Svg>
-          </View>
-          <View style={{ flex: 1, gap: 2 }}>
-            <Text style={styles.toastTitle}>Recording saved</Text>
-            <Text style={styles.toastMeta}>{state.savedToast.fileSizeLabel ?? '—'}</Text>
-          </View>
-        </View>
+        <SavedToast
+          fileSizeLabel={state.savedToast.fileSizeLabel}
+          bottom={TAB_CLEAR + insets.bottom - 16}
+          motionScale={motionScale}
+          onDone={dismissToast}
+        />
       ) : null}
     </View>
   );
@@ -457,11 +456,11 @@ function ActivitySection({
         <Text style={styles.activityEmpty}>No activity yet</Text>
       ) : (
         <View style={{ gap: 11 }}>
-          {items.map((item) => {
+          {items.map((item, i) => {
             const offline = item.kind === 'offline';
             const recording = item.kind === 'recording';
             return (
-              <View key={item.id} style={styles.activityRow}>
+              <RiseIn key={item.id} delay={i * 55} style={styles.activityRow}>
                 <View
                   style={[
                     styles.activityIcon,
@@ -502,7 +501,7 @@ function ActivitySection({
                   {item.label}
                 </Text>
                 <Text style={styles.activityTime}>{formatActivityTime(item.at)}</Text>
-              </View>
+              </RiseIn>
             );
           })}
         </View>
@@ -520,6 +519,8 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(245,166,35,.2)',
     padding: 5,
   },
+  // Amber chrome means "recording" — drop it to neutral when nothing is.
+  recOuterIdle: { borderColor: 'rgba(245,243,255,.07)' },
   recInner: {
     backgroundColor: colors.bgCard,
     borderRadius: 21,
@@ -657,6 +658,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  transportOff: { opacity: 0.4 },
+  recordLabelOff: { color: colors.textLabel },
   recordAgainLabel: {
     fontSize: 11,
     fontFamily: fonts.uiSemi,
@@ -762,41 +765,5 @@ const styles = StyleSheet.create({
     fontFamily: fonts.mono,
     fontSize: 10,
     color: colors.textLabel,
-  },
-  toast: {
-    position: 'absolute',
-    left: 20,
-    right: 20,
-    zIndex: 5,
-    borderRadius: 18,
-    backgroundColor: 'rgba(10,8,18,.92)',
-    borderWidth: 1,
-    borderColor: 'rgba(139,124,246,.34)',
-    paddingVertical: 13,
-    paddingHorizontal: 16,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-  },
-  toastIcon: {
-    width: 30,
-    height: 30,
-    borderRadius: 999,
-    backgroundColor: 'rgba(139,124,246,.18)',
-    borderWidth: 1,
-    borderColor: 'rgba(139,124,246,.4)',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  toastTitle: {
-    fontSize: 13,
-    fontFamily: fonts.uiSemi,
-    letterSpacing: -0.13,
-    color: colors.textPrimary,
-  },
-  toastMeta: {
-    fontSize: 11.5,
-    fontFamily: fonts.ui,
-    color: colors.textSecondary,
   },
 });

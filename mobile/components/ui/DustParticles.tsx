@@ -3,6 +3,9 @@ import { Animated, Easing, StyleSheet, View } from 'react-native';
 
 type Particle = { dx: number; dy: number; a: number; size: number; delayMs: number };
 
+/** nm-dust-burst / nm-dust-sink / nm-dust-scatter from the mockup keyframes. */
+type Mode = 'burst' | 'sink' | 'scatter';
+
 const BURST: Particle[] = [
   { dx: -13, dy: -8, a: 0.45, size: 3, delayMs: 0 },
   { dx: 11, dy: -11, a: 0.32, size: 2.5, delayMs: -400 },
@@ -19,8 +22,17 @@ const SINK: Particle[] = [
   { dx: 12, dy: 41, a: 0.16, size: 2, delayMs: -2200 },
 ];
 
+/** Scatter drifts wide and slow behind the accent picker (#f-appearance). */
+const SCATTER: Particle[] = [
+  { dx: -14, dy: -9, a: 0.34, size: 3, delayMs: 0 },
+  { dx: 16, dy: -12, a: 0.26, size: 2.5, delayMs: -350 },
+  { dx: -11, dy: 14, a: 0.22, size: 2, delayMs: -700 },
+  { dx: 13, dy: 10, a: 0.3, size: 2.5, delayMs: -1050 },
+  { dx: -9, dy: -15, a: 0.18, size: 2, delayMs: -1400 },
+];
+
 type Props = {
-  mode: 'burst' | 'sink';
+  mode: Mode;
   colour: string;
   motionScale: number;
   size?: number;
@@ -35,13 +47,13 @@ function DustDot({
 }: {
   p: Particle;
   colour: string;
-  mode: 'burst' | 'sink';
+  mode: Mode;
   motionScale: number;
   box: number;
 }) {
   const t = useRef(new Animated.Value(0)).current;
-  const duration = mode === 'burst' ? 2400 : 2800;
-  const travel = mode === 'burst' ? 1.35 : 0.4;
+  const duration = mode === 'burst' ? 2400 : mode === 'scatter' ? 1800 : 2800;
+  const travel = mode === 'burst' ? 1.35 : mode === 'scatter' ? 0.9 : 0.4;
   const sinkY = mode === 'sink' ? 4 : 0;
 
   useEffect(() => {
@@ -67,21 +79,27 @@ function DustDot({
     return () => loop.stop();
   }, [motionScale, mode, duration, p.delayMs, t]);
 
-  const tx = t.interpolate({
-    inputRange: [0, 0.5, 1],
-    outputRange: [0, p.dx * travel, 0],
-  });
-  const ty = t.interpolate({
-    inputRange: [0, 0.5, 1],
-    outputRange: [0, p.dy * travel + sinkY, 0],
-  });
+  const tx =
+    mode === 'scatter'
+      ? t.interpolate({
+          inputRange: [0, 0.25, 0.75, 1],
+          outputRange: [0, p.dx * 0.9, p.dx * 0.2, 0],
+        })
+      : t.interpolate({ inputRange: [0, 0.5, 1], outputRange: [0, p.dx * travel, 0] });
+  const ty =
+    mode === 'scatter'
+      ? t.interpolate({
+          inputRange: [0, 0.25, 0.75, 1],
+          outputRange: [0, p.dy * 0.2, p.dy * 0.9, 0],
+        })
+      : t.interpolate({ inputRange: [0, 0.5, 1], outputRange: [0, p.dy * travel + sinkY, 0] });
   const scale = t.interpolate({
     inputRange: [0, 0.5, 1],
     outputRange: mode === 'burst' ? [1, 1.15, 1] : [1, 1, 1],
   });
   const opacity = t.interpolate({
     inputRange: [0, 0.5, 1],
-    outputRange: [p.a, p.a * (mode === 'burst' ? 0.55 : 0.7), p.a],
+    outputRange: [p.a, p.a * (mode === 'burst' ? 0.55 : mode === 'scatter' ? 0.5 : 0.7), p.a],
   });
 
   return (
@@ -105,7 +123,7 @@ function DustDot({
 }
 
 export function DustParticles({ mode, colour, motionScale, size = 28 }: Props) {
-  const particles = mode === 'burst' ? BURST : SINK;
+  const particles = mode === 'burst' ? BURST : mode === 'scatter' ? SCATTER : SINK;
   return (
     <View pointerEvents="none" style={[StyleSheet.absoluteFill, { width: size, height: size }]}>
       {particles.map((p, i) => (

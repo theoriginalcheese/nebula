@@ -46,11 +46,35 @@ export const colors = {
   toastIconBg: 'rgba(139,124,246,0.18)',
   toastIconBorder: 'rgba(139,124,246,0.38)',
   violetGlow: 'rgba(139,124,246,0.34)',
+  softCardInset: 'rgba(245,243,255,0.06)',
+  rowFill: 'rgba(245,243,255,0.03)',
+  rowBorder: 'rgba(245,243,255,0.07)',
+  toggleOnTrack: 'rgba(139,124,246,0.5)',
+  toggleOnBorder: 'rgba(139,124,246,0.7)',
+  toggleOffTrack: 'rgba(245,243,255,0.07)',
+  toggleOffBorder: 'rgba(245,243,255,0.12)',
+  peerPing: '#8FE0D5',
   amberGlow: 'rgba(245,166,35,0.13)',
 } as const;
 
 /** Legacy alias */
 export const colours = colors;
+
+/**
+ * The six accent presets, carried over verbatim from the desktop app.
+ * EMBER (the desktop's disconnected red) is deliberately absent — one token,
+ * one meaning, so a real disconnection still reads as one.
+ */
+export const accentPresets = [
+  { id: 'violet', hex: '#8B7CF6', soft: '#B9AEF9', rgb: '139,124,246' },
+  { id: 'indigo', hex: '#6E8BF7', soft: '#A6BAFB', rgb: '110,139,247' },
+  { id: 'cyan', hex: '#5AB6E8', soft: '#9AD3F2', rgb: '90,182,232' },
+  { id: 'teal', hex: '#4FC7B8', soft: '#8FE0D5', rgb: '79,199,184' },
+  { id: 'amber', hex: '#E9B872', soft: '#F2D2A4', rgb: '233,184,114' },
+  { id: 'magenta', hex: '#D471E0', soft: '#E7A9EE', rgb: '212,113,224' },
+] as const;
+
+export type AccentId = (typeof accentPresets)[number]['id'];
 
 export const fontAssets = {
   PlusJakartaSans_500Medium,
@@ -74,7 +98,9 @@ export const fontFamilies = fonts;
 export const ease = 'cubic-bezier(0.32, 0.72, 0, 1)';
 
 export const typescale = {
-  largeTitle: { fontSize: 32, fontWeight: '700' as const, lineHeight: 38, letterSpacing: -0.4 },
+  largeTitle: { fontSize: 32, fontWeight: '700' as const, lineHeight: 34, letterSpacing: -1.024 },
+  /** Classify header — 27px/700, dc.html #f-classify */
+  classifyTitle: { fontSize: 27, fontWeight: '700' as const, lineHeight: 30, letterSpacing: -0.81 },
   navTitle: { fontSize: 17, fontWeight: '600' as const, letterSpacing: -0.015 * 17 },
   heading: { fontSize: 23, fontWeight: '600' as const, lineHeight: 26, letterSpacing: -0.5 },
   body: { fontSize: 12, fontWeight: '400' as const, lineHeight: 18 },

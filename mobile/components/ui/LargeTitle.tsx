@@ -1,6 +1,7 @@
 import React from 'react';
 import { Text, TextProps } from 'react-native';
-import { colors, fontFamilies, typescale } from '@/constants/theme';
+
+import { colors, fonts, typescale } from '@/constants/theme';
 
 interface LargeTitleProps extends TextProps {
   children: React.ReactNode;
@@ -9,7 +10,8 @@ interface LargeTitleProps extends TextProps {
 
 /**
  * Large title for Clips, Remote, Games, Appearance screens.
- * Default: 32px/700. Classify variant: 27px/700.
+ * Default: 32px/700 (dc.html large-title frames).
+ * Classify variant: 27px/700 (dc.html #f-classify header).
  */
 export const LargeTitle: React.FC<LargeTitleProps> = ({
   children,
@@ -24,16 +26,14 @@ export const LargeTitle: React.FC<LargeTitleProps> = ({
       style={[
         {
           fontSize: scale.fontSize,
-          fontWeight: scale.fontWeight as any,
-          lineHeight: scale.fontSize * scale.lineHeight,
-          letterSpacing: scale.letterSpacing * 0.01, // Normalize for RN
+          lineHeight: scale.lineHeight,
+          letterSpacing: scale.letterSpacing,
           color: colors.textPrimary,
-          fontFamily: fontFamilies.ui,
+          fontFamily: fonts.uiBold,
         },
         style,
       ]}
-      {...rest}
-    >
+      {...rest}>
       {children}
     </Text>
   );

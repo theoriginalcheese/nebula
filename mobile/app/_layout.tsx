@@ -7,6 +7,7 @@ import {
   PlusJakartaSans_600SemiBold,
   PlusJakartaSans_700Bold,
 } from '@expo-google-fonts/plus-jakarta-sans';
+import { DarkTheme, ThemeProvider } from '@react-navigation/native';
 import { useFonts } from 'expo-font';
 import { Stack } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
@@ -14,10 +15,26 @@ import { useEffect } from 'react';
 import 'react-native-reanimated';
 import { StatusBar } from 'expo-status-bar';
 
-import { colours } from '@/constants/theme';
+import { colors } from '@/constants/theme';
 import { StudioProvider } from '@/state/StudioContext';
 
 export { ErrorBoundary } from 'expo-router';
+
+/**
+ * React Navigation paints its own container behind every screen and defaults to
+ * a light one. Without this the ground flashes #F2F2F2 on push/pop.
+ */
+const navTheme = {
+  ...DarkTheme,
+  colors: {
+    ...DarkTheme.colors,
+    background: colors.bgScreen,
+    card: colors.bgScreen,
+    border: colors.tabBarBorder,
+    text: colors.textPrimary,
+    primary: colors.accentDefault,
+  },
+};
 
 export const unstable_settings = {
   initialRouteName: '(tabs)',
@@ -46,30 +63,25 @@ export default function RootLayout() {
 
   return (
     <StudioProvider>
-      <StatusBar style="light" />
-      <Stack
-        screenOptions={{
-          contentStyle: { backgroundColor: colours.bgScreen },
-          headerStyle: { backgroundColor: colours.bgScreen },
-          headerTintColor: colours.textPrimary,
-        }}>
-        <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-        <Stack.Screen
-          name="games/classify/[id]"
-          options={{
-            headerShown: true,
-            title: 'Classify',
-          }}
-        />
-        <Stack.Screen
-          name="appearance"
-          options={{
-            headerShown: true,
-            title: 'Appearance',
-            // Stub route only — no in-app entry point in the design.
-          }}
-        />
-      </Stack>
+      <ThemeProvider value={navTheme}>
+        <StatusBar style="light" />
+        <Stack
+          screenOptions={{
+            headerShown: false,
+            contentStyle: { backgroundColor: colors.bgScreen },
+          }}>
+          <Stack.Screen name="(tabs)" />
+          {/*
+            Appearance has no entry point anywhere in the eight mockup frames,
+            so it stays a reachable-but-unlinked route rather than getting an
+            invented gear icon. It also sits outside (tabs), so it renders
+            without the tab bar — the mockup shows the bar with nothing
+            highlighted, which a 4-tab bar cannot express. Both need a product
+            decision.
+          */}
+          <Stack.Screen name="appearance" options={{ presentation: 'modal' }} />
+        </Stack>
+      </ThemeProvider>
     </StudioProvider>
   );
 }

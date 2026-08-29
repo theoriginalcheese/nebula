@@ -19,8 +19,8 @@ export default function Root({ children }: { children: ReactNode }) {
         */}
         <ScrollViewStyleReset />
 
-        {/* Using raw CSS styles as an escape-hatch to ensure the background color never flickers in dark-mode. */}
-        <style dangerouslySetInnerHTML={{ __html: responsiveBackground }} />
+        {/* Escape-hatch so the page ground never flashes light before RN mounts. */}
+        <style dangerouslySetInnerHTML={{ __html: rootBackground }} />
         {/* Add any additional <head> elements that you want globally available on web... */}
       </head>
       <body>{children}</body>
@@ -28,12 +28,9 @@ export default function Root({ children }: { children: ReactNode }) {
   );
 }
 
-const responsiveBackground = `
+// Nebula is a dark-only app (app.json userInterfaceStyle: "dark"), so the
+// ground is --bg-page in both colour schemes — never the template's white.
+const rootBackground = `
 body {
-  background-color: #fff;
-}
-@media (prefers-color-scheme: dark) {
-  body {
-    background-color: #000;
-  }
+  background-color: #0A0812;
 }`;

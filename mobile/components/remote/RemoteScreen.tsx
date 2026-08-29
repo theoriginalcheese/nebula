@@ -3,24 +3,32 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import Svg, { Circle, Path, Rect } from 'react-native-svg';
 
+import { MoonlightOrb } from '@/components/remote/MoonlightOrb';
 import { ScreenHeader } from '@/components/ScreenHeader';
 import { AmbientBackdrop } from '@/components/ui/AmbientBackdrop';
 import { Eyebrow } from '@/components/ui/Eyebrow';
-import { OrbitDust } from '@/components/ui/OrbitDust';
+import { FadeRule } from '@/components/ui/FadeRule';
+import { RiseIn } from '@/components/ui/RiseIn';
+import { SoftCard } from '@/components/ui/SoftCard';
 import { colors, fonts } from '@/constants/theme';
+
 import { useStudio } from '@/state/StudioContext';
 
 const TAB_CLEAR = 110;
 
-/** Moonlight states scaffolded — default Ready with honest unpaired copy. */
-type MoonState = 'ready' | 'busy' | 'live';
-
 export function RemoteScreen() {
   const insets = useSafeAreaInsets();
-  const { state, motionScale } = useStudio();
-  const moon: MoonState = 'ready';
+  const { state, motionScale, moonlightNotice, launchMoonlight } = useStudio();
+  const moon = state.moonlight;
   const studioOnline = state.connection === 'online';
 
+  /*
+    Ready-state copy depends on what the agent has actually told us. The mockup
+    reads "Moonlight 6.1 · GeForce host paired. Stream will open at 1080p60 over
+    Tailscale." — that is a live binding, so it only appears once pairing is
+    genuinely reported. Live-state metrics (ping, bitrate) arrive by push and
+    have no source yet, so the live copy stays metric-free.
+  */
   const title =
     moon === 'live'
       ? 'Streaming'
@@ -32,15 +40,21 @@ export function RemoteScreen() {
 
   const body =
     moon === 'live'
-      ? 'Stream metrics appear once Moonlight reports a live session.'
+      ? 'Nebula keeps recording locally at full quality. Stream metrics appear once Moonlight reports them.'
       : moon === 'busy'
         ? 'Negotiating the encoder over the tailnet. This is usually under two seconds.'
         : studioOnline
-          ? 'Moonlight pairing isn’t confirmed yet. Launch opens the Moonlight app when installed.'
+          ? state.moonlightPaired
+            ? 'GeForce host paired. Launch opens the Moonlight app to start the stream.'
+            : 'Pairing has not been reported yet. Launch opens the Moonlight app when it is installed.'
           : 'Waiting for the studio Tailscale link. Orb and peers stay empty until the agent reports them.';
 
-  const cta =
-    moon === 'live' ? 'Stop streaming' : moon === 'busy' ? 'Connecting…' : 'Launch Moonlight';
+  const cta = moon === 'live' ? 'Stop streaming' : moon === 'busy' ? 'Connecting…' : 'Launch Moonlight';
+
+  const onlinePeers = state.peers.filter((p) => p.online).length;
+  const offload = state.offload;
+  const progress =
+    offload && offload.total > 0 ? Math.min(1, offload.done / offload.total) : 0;
 
   return (
     <View style={styles.screen}>
@@ -53,24 +67,16 @@ export function RemoteScreen() {
         contentContainerStyle={[styles.body, { paddingBottom: TAB_CLEAR + insets.bottom }]}
         showsVerticalScrollIndicator={false}>
         <LinearGradient
-          colors={['rgba(139,124,246,0.08)', 'rgba(245,243,255,0.02)']}
+          colors={
+            moon === 'live'
+              ? ['rgba(245,166,35,0.08)', 'rgba(245,243,255,0.02)']
+              : ['rgba(139,124,246,0.08)', 'rgba(245,243,255,0.02)']
+          }
           start={{ x: 0.15, y: 0 }}
           end={{ x: 1, y: 1 }}
-          style={styles.moonOuter}>
+          style={[styles.moonOuter, moon === 'live' && styles.moonOuterLive]}>
           <View style={styles.moonInner}>
-            <View style={styles.orbWrap}>
-              <View style={styles.orbGlow} />
-              <View style={styles.orbRing1} />
-              <View style={styles.orbRing2} />
-              <OrbitDust colour="#C9BFFF" motionScale={motionScale} size={118} />
-              <View
-                style={[
-                  styles.orbCore,
-                  moon === 'live' && { backgroundColor: 'rgba(245,166,35,.55)' },
-                  moon === 'busy' && { backgroundColor: 'rgba(139,124,246,.7)' },
-                ]}
-              />
-            </View>
+            <MoonlightOrb state={moon} motionScale={motionScale} />
 
             <View style={{ gap: 7, alignItems: 'center' }}>
               <Text style={styles.moonTitle}>{title}</Text>
@@ -78,9 +84,12 @@ export function RemoteScreen() {
             </View>
 
             <Pressable
+              accessibilityRole="button"
               disabled={moon === 'busy'}
+              onPress={launchMoonlight}
               style={({ pressed }) => [
                 styles.cta,
+                moon === 'live' && styles.ctaLive,
                 pressed && moon !== 'busy' && { transform: [{ scale: 0.97 }] },
                 moon === 'busy' && { opacity: 0.7 },
               ]}>
@@ -88,7 +97,14 @@ export function RemoteScreen() {
               <View style={styles.ctaIcon}>
                 {moon === 'live' ? (
                   <Svg width={17} height={17} viewBox="0 0 24 24">
-                    <Rect x="6.2" y="6.2" width="11.6" height="11.6" rx="2.6" fill={colors.goldText} />
+                    <Rect
+                      x="6.2"
+                      y="6.2"
+                      width="11.6"
+                      height="11.6"
+                      rx="2.6"
+                      fill={colors.goldText}
+                    />
                   </Svg>
                 ) : moon === 'busy' ? (
                   <Svg width={18} height={18} viewBox="0 0 24 24" fill="none">
@@ -114,38 +130,70 @@ export function RemoteScreen() {
                 )}
               </View>
             </Pressable>
+
+            {moonlightNotice ? <Text style={styles.notice}>{moonlightNotice}</Text> : null}
           </View>
         </LinearGradient>
 
-        <View style={styles.cardOuter}>
-          <View style={styles.cardInner}>
-            <View style={styles.cardHead}>
-              <View style={styles.tealDot} />
-              <Eyebrow>Tailscale</Eyebrow>
-              <Text style={styles.cardCount}>— peers</Text>
-            </View>
-            <LinearGradient
-              colors={['transparent', 'rgba(245,243,255,0.11)', 'rgba(245,243,255,0.11)', 'transparent']}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 0 }}
-              style={styles.rule}
+        <SoftCard>
+          <View style={styles.cardHead}>
+            <View
+              style={[
+                styles.headDot,
+                { backgroundColor: onlinePeers > 0 ? colors.accentTeal : colors.textLabel },
+              ]}
             />
+            <Eyebrow>Tailscale</Eyebrow>
+            <Text style={styles.cardCount}>
+              {state.peers.length > 0 ? `${state.peers.length} peers` : '— peers'}
+            </Text>
+          </View>
+          <FadeRule />
+          {state.peers.length === 0 ? (
             <Text style={styles.emptyLine}>No peers reported yet</Text>
-          </View>
-        </View>
+          ) : (
+            <View style={{ gap: 10 }}>
+              {state.peers.map((peer, i) => (
+                <RiseIn key={peer.id} delay={i * 55} style={styles.peerRow}>
+                  <View
+                    style={[
+                      styles.peerDot,
+                      { backgroundColor: peer.online ? colors.accentTeal : colors.textLabel },
+                    ]}
+                  />
+                  <Text style={[styles.peerName, !peer.online && styles.peerNameOff]}>
+                    {peer.name}
+                  </Text>
+                  <Text style={[styles.peerPing, !peer.online && styles.peerPingOff]}>
+                    {peer.online ? (peer.pingMs != null ? `${peer.pingMs} ms` : '—') : 'offline'}
+                  </Text>
+                </RiseIn>
+              ))}
+            </View>
+          )}
+        </SoftCard>
 
-        <View style={styles.cardOuter}>
-          <View style={styles.cardInner}>
-            <View style={styles.offloadHead}>
-              <Eyebrow>NAS offload</Eyebrow>
-              <Text style={styles.offloadCount}>idle</Text>
-            </View>
-            <View style={styles.progressTrack}>
-              <View style={[styles.progressFill, { width: '0%' }]} />
-            </View>
-            <Text style={styles.emptyLine}>Nothing queued</Text>
+        <SoftCard>
+          <View style={styles.offloadHead}>
+            <Eyebrow>NAS offload</Eyebrow>
+            <Text style={styles.offloadCount}>
+              {offload
+                ? `${offload.done} of ${offload.total}${offload.sizeLabel ? ` · ${offload.sizeLabel}` : ''}`
+                : 'idle'}
+            </Text>
           </View>
-        </View>
+          <View style={styles.progressTrack}>
+            <View style={[styles.progressFill, { width: `${progress * 100}%` }]} />
+          </View>
+          {offload?.currentFile ? (
+            <Text style={styles.offloadFile}>
+              {offload.currentFile}
+              {offload.throughputLabel ? ` · ${offload.throughputLabel}` : ''}
+            </Text>
+          ) : (
+            <Text style={styles.emptyLine}>Nothing queued</Text>
+          )}
+        </SoftCard>
       </ScrollView>
     </View>
   );
@@ -160,53 +208,16 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(139,124,246,.24)',
     padding: 5,
   },
+  moonOuterLive: { borderColor: 'rgba(245,166,35,.26)' },
   moonInner: {
     backgroundColor: colors.bgCard,
     borderRadius: 21,
     borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: 'rgba(245,243,255,.08)',
+    borderTopColor: colors.cardInset,
     paddingVertical: 16,
     paddingHorizontal: 20,
     alignItems: 'center',
     gap: 18,
-  },
-  orbWrap: {
-    width: 118,
-    height: 118,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  orbGlow: {
-    ...StyleSheet.absoluteFillObject,
-    borderRadius: 999,
-    backgroundColor: 'rgba(139,124,246,.34)',
-    opacity: 0.55,
-  },
-  orbRing1: {
-    position: 'absolute',
-    top: 14,
-    left: 14,
-    right: 14,
-    bottom: 14,
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: 'rgba(139,124,246,.34)',
-  },
-  orbRing2: {
-    position: 'absolute',
-    top: 30,
-    left: 30,
-    right: 30,
-    bottom: 30,
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: 'rgba(139,124,246,.22)',
-  },
-  orbCore: {
-    width: 56,
-    height: 56,
-    borderRadius: 999,
-    backgroundColor: 'rgba(139,124,246,.55)',
   },
   moonTitle: {
     fontSize: 21,
@@ -236,6 +247,7 @@ const styles = StyleSheet.create({
     paddingLeft: 24,
     paddingRight: 8,
   },
+  ctaLive: { backgroundColor: 'rgba(245,166,35,.34)' },
   ctaLabel: {
     fontSize: 15.5,
     fontFamily: fonts.uiSemi,
@@ -250,41 +262,41 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  cardOuter: {
-    borderRadius: 22,
-    borderWidth: 1,
-    borderColor: 'rgba(245,243,255,.07)',
-    backgroundColor: 'rgba(245,243,255,.025)',
-    padding: 4,
-  },
-  cardInner: {
-    backgroundColor: colors.bgCard,
-    borderRadius: 18,
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: 'rgba(245,243,255,.06)',
-    paddingVertical: 13,
-    paddingHorizontal: 16,
-    gap: 12,
+  notice: {
+    fontSize: 12,
+    lineHeight: 18,
+    fontFamily: fonts.ui,
+    color: colors.dangerOffline,
+    textAlign: 'center',
   },
   cardHead: { flexDirection: 'row', alignItems: 'center', gap: 9 },
-  tealDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 999,
-    backgroundColor: colors.accentTeal,
-  },
+  headDot: { width: 6, height: 6, borderRadius: 999 },
   cardCount: {
     marginLeft: 'auto',
     fontFamily: fonts.mono,
     fontSize: 10,
     color: colors.textMuted,
   },
-  rule: { height: 1, width: '100%' },
   emptyLine: {
     fontSize: 13,
     fontFamily: fonts.ui,
     color: colors.textMuted,
   },
+  peerRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  peerDot: { width: 5, height: 5, borderRadius: 999 },
+  peerName: {
+    flex: 1,
+    fontSize: 13,
+    fontFamily: fonts.ui,
+    color: colors.textPrimary,
+  },
+  peerNameOff: { color: colors.textMuted },
+  peerPing: {
+    fontFamily: fonts.mono,
+    fontSize: 10.5,
+    color: colors.peerPing,
+  },
+  peerPingOff: { color: colors.textLabel },
   offloadHead: {
     flexDirection: 'row',
     alignItems: 'baseline',
@@ -294,6 +306,11 @@ const styles = StyleSheet.create({
     fontFamily: fonts.mono,
     fontSize: 10.5,
     color: colors.textAccentSoft,
+  },
+  offloadFile: {
+    fontFamily: fonts.mono,
+    fontSize: 10.5,
+    color: colors.textMuted,
   },
   progressTrack: {
     height: 3,

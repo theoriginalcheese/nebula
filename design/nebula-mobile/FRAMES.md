@@ -36,12 +36,24 @@ in `BUILD-SPEC.md` — this is the navigation-shaped index.
 
 ## Frame → real screen mapping for Expo/RN
 
-| Frame | Suggested route |
-|---|---|
-| `f-now` + `f-offline` | `/` (tab: Now) — one screen, two states driven by connection status |
-| `f-clips` | `/clips` (tab: Clips) |
-| `f-remote` | `/remote` (tab: Remote) |
-| `f-games` | `/games` (tab: Games) |
-| `f-classify` | `/games/classify/[id]` (pushed, not a tab) |
-| `f-notify` | not a route — ActivityKit + notification-content extension work |
-| `f-appearance` | `/appearance` (modal or pushed; nav trigger TBD — see above) |
+| Frame | Route | File (as built) |
+|---|---|---|
+| `f-now` + `f-offline` | `/` (tab: Now) — one screen, two states driven by connection status | `app/(tabs)/index.tsx` |
+| `f-clips` | `/clips` (tab: Clips) | `app/(tabs)/clips.tsx` |
+| `f-remote` | `/remote` (tab: Remote) | `app/(tabs)/remote.tsx` |
+| `f-games` | `/games` (tab: Games) | `app/(tabs)/games/index.tsx` |
+| `f-classify` | `/games/classify/[id]` (pushed, not a tab) | `app/(tabs)/games/classify/[id].tsx` |
+| `f-notify` | not a route — ActivityKit + notification-content extension work | — |
+| `f-appearance` | `/appearance` (modal; **no nav trigger** — see above) | `app/appearance.tsx` |
+
+### Why Classify lives under `(tabs)/games/`
+
+The Games tab owns a nested `Stack` (`app/(tabs)/games/_layout.tsx`). Pushing
+Classify from a root-level route would unmount the tab bar entirely, which
+contradicts "tab bar shown: yes, active tab: Games". Keeping the push *inside*
+the tab group means the single `PillTabBar` — mounted once in
+`app/(tabs)/_layout.tsx` — stays put with Games still highlighted.
+
+Appearance is deliberately **not** in the tab group: the frame shows the bar
+with no tab highlighted, which a four-destination bar cannot express, and
+nothing links to it anyway. It renders without the bar until product decides.
