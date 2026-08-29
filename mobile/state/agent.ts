@@ -34,10 +34,15 @@ export type AgentConfig = { baseUrl: string; token: string };
  * the bundle**. `EXPO_PUBLIC_*` values are baked in at build time, so a direct
  * config would ship the secret to anyone who can read the JavaScript.
  *
- * **Direct mode** (`EXPO_PUBLIC_AGENT_URL` + `EXPO_PUBLIC_AGENT_TOKEN`) talks
- * to the agent on its own port. Needed for a native build, where there is no
- * server in front to proxy. That build does carry the token, so keep it on the
- * tailnet.
+ * **Absolute mode** (`EXPO_PUBLIC_AGENT_URL`) is what a native build uses,
+ * since there is no server in front of it. Point it at the app server's port
+ * rather than the agent's and the token stays unnecessary — the server already
+ * holds it, and it adds the headless disk fallback for free:
+ *
+ *   EXPO_PUBLIC_AGENT_URL=http://alien-pc.tail25e601.ts.net:8766
+ *
+ * `EXPO_PUBLIC_AGENT_TOKEN` is only needed to address the agent's own port
+ * directly, and a build carrying it must stay on the tailnet.
  *
  * Neither configured is the normal case for a fresh checkout, not an error:
  * the app runs standalone and every screen shows its honest empty state.
@@ -53,7 +58,8 @@ export function agentConfig(): AgentConfig | null {
     (typeof extra.agentToken === 'string' ? extra.agentToken : '')
   ).trim();
 
-  if (baseUrl && token) return { baseUrl: baseUrl.replace(/\/+$/, ''), token };
+  // A token is optional: pointed at the app server, auth is already handled.
+  if (baseUrl) return { baseUrl: baseUrl.replace(/\/+$/, ''), token };
   // Same-origin: the server in front holds the token.
   if (process.env.EXPO_PUBLIC_AGENT_PROXY === '1') return { baseUrl: '', token: '' };
   return null;

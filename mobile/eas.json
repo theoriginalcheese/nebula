@@ -1,23 +1,31 @@
 {
   "cli": {
     "version": ">= 16.0.0",
-    "appVersionSource": "remote"
+    "appVersionSource": "local"
   },
   "build": {
-    "development": {
+    "base": {
+      "env": {
+        "//": "Native builds have no server in front of them, so the app needs an absolute URL. Pointing at the app server's port rather than the agent's means no token is baked into the binary, and it inherits the headless disk fallback.",
+        "EXPO_PUBLIC_AGENT_URL": "http://alien-pc.tail25e601.ts.net:8766"
+      }
+    },
+    "device": {
+      "extends": "base",
+      "distribution": "internal",
+      "ios": {
+        "simulator": false,
+        "buildConfiguration": "Release"
+      }
+    },
+    "simulator": {
+      "extends": "base",
       "developmentClient": true,
       "distribution": "internal",
-      "ios": {
-        "simulator": true
-      }
-    },
-    "preview": {
-      "distribution": "internal",
-      "ios": {
-        "simulator": false
-      }
+      "ios": { "simulator": true }
     },
     "production": {
+      "extends": "base",
       "autoIncrement": true
     }
   },
