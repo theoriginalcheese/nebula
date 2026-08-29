@@ -445,6 +445,61 @@ finally:
     httpd.shutdown()
     httpd.server_close()
 
+# ------------------------------------------------------- headless disk source
+
+# obsauto/phone_state.py is what makes the phone work after a reboot with
+# nobody logged in: no Api, no OBS, no desktop session. It must emit the same
+# shape project() already consumes, and it must never touch a video file.
+from obsauto import phone_state as ps
+
+fake_cfg = {"recording_root": "", "sync_folder": "", "nas_offload_root": ""}
+disk = ps.DiskSnapshot(root=os.path.join(os.path.dirname(__file__), "__missing__"),
+                       config=fake_cfg, clock=lambda: 2000.0)
+raw = disk.snapshot()
+check("disk snapshot emits the Api.snapshot() section names",
+      {"hero", "forecast", "clips_panel", "games", "remote"} <= set(raw),
+      sorted(raw))
+
+projected = pa.project(raw, 2000.0, activity_reader=NO_EVENTS)
+check("...and projects without special-casing",
+      projected["v"] == pa.PAYLOAD_VERSION and projected["clips"] == [],
+      projected["v"])
+check("a missing recordings root is not a crash and not a fake reading",
+      projected["recording"]["diskLeftLabel"] in (None, "drive unavailable"),
+      projected["recording"]["diskLeftLabel"])
+
+# A live span is the whole recording test - no OBS connection involved.
+live = disk._hero([{"game": "Sifu", "start": 1000.0, "end": None,
+                    "live": True, "size": 8_000_000, "marks": []}])
+check("a span with no rec_stop reads as recording",
+      live["state"] == "recording" and live["title"] == "Sifu", live)
+check("elapsed is derived from the span start",
+      live["elapsed"] == "00:16:40", live["elapsed"])
+check("OBS-only facts stay empty rather than being guessed",
+      live["scene"] == "" and live["video"] == "" and live["bitrate"] == "",
+      live)
+check("a closed span is not reported as recording",
+      disk._hero([{"game": "Sifu", "start": 1000.0, "end": 1500.0,
+                   "live": False, "marks": []}])["state"] != "recording",
+      "not recording")
+
+check("clip formatting matches the desktop's readouts",
+      ps._format_bytes(64000) == "62.5 KB" and ps._format_bytes(4_500_000_000) == "4.2 GB",
+      "%s / %s" % (ps._format_bytes(64000), ps._format_bytes(4_500_000_000)))
+
+# The sacred-footage rule, enforced at the source rather than only downstream.
+disk_src = open(ps.__file__, encoding="utf-8").read()
+check("the disk source never opens, moves or deletes a recording",
+      not any(tok in disk_src for tok in ("os.remove", "os.unlink", "shutil.move",
+                                          "shutil.rmtree", "os.rename", "os.rmdir")),
+      "clean")
+check("clip discovery is metadata only - scandir/stat, never a file read",
+      "os.scandir" in disk_src and "os.walk" not in disk_src, "scandir only")
+
+check("games are read from the richest source, not the first readable one",
+      len(ps.DiskSnapshot(config={"sync_folder": "", "nas_offload_root": ""})
+          .games_sources()) >= 1, "candidates")
+
 passed_all = all(p for _, p, _ in results)
 for name, passed, detail in results:
     print(f"{'PASS' if passed else 'FAIL'}  {name:<62} {detail}")

@@ -45,6 +45,14 @@ type StudioContextValue = {
   agentConfigured: boolean;
   /** Non-null when the last poll failed — shown on the Now offline card. */
   agentError: string | null;
+  /**
+   * Whether the studio will accept commands. The v1 agent is read-only by
+   * contract (docs/PHONE-AGENT.md rule 3), so transport controls reflect state
+   * rather than drive it — a press would otherwise be reverted by the next
+   * poll, which is a control that appears to work and does not. Flip this when
+   * a write path exists.
+   */
+  agentCanControl: boolean;
   setConnection: (status: ConnectionStatus) => void;
   setMotionScale: (n: number) => void;
   setAccent: (id: AccentId) => void;
@@ -311,6 +319,7 @@ export function StudioProvider({ children }: { children: React.ReactNode }) {
       moonlightNotice,
       agentConfigured: Boolean(agent),
       agentError,
+      agentCanControl: false,
       setConnection,
       setMotionScale,
       setAccent,

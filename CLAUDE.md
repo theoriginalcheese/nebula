@@ -56,6 +56,7 @@ and `RESOURCE_DIR` (`sys._MEIPASS` when frozen) only for bundled read-only asset
 | `obsauto/offload.py` | `Offloader` | NAS recording offload - copy → SHA-256 verify → (move mode) delete local; persisted queue, retries |
 | `obsauto/tailscale.py` | `available()`, `status()`, `peer_online()` | Soft Tailscale probe - explains NAS offload waits, wakes the offloader when the tailnet returns; never a delete authority |
 | `obsauto/phone_agent.py` | `PhoneAgent`, `project()`, `looks_like_footage_path()` | Read-only tailnet HTTP surface for the iOS companion - projects `Api.snapshot()` into the phone contract (`docs/PHONE-AGENT.md`); opt-in, bearer-gated, Tailscale-bound, no write verbs |
+| `obsauto/phone_state.py` | `DiskSnapshot`, `SCAN_TTL_S` | Builds an `Api.snapshot()`-shaped payload from files so the phone works headless (no Nebula, no login); strictly read-only, never opens a recording |
 | `tools/serve_phone_app.py` | `Handler`, `main()` | Serves the exported phone app (`mobile/dist`) on the tailnet and proxies `/v1/*` to the agent, so the bundle carries no token; iOS installs it via Add to Home Screen |
 | `tools/install_phone_app_task.ps1` | - | Registers the `NebulaPhoneApp` boot-time task (SYSTEM, at startup) that runs the phone-app server; `-Uninstall` removes it. Needs an elevated shell |
 | `obsauto/teracopy.py` | `find_exe()`, `copy_into()` | TeraCopy CLI helper for bulk NAS transfer (soft optional); Nebula still SHA-256 verifies both ends afterwards |

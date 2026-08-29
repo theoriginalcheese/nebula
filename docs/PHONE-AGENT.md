@@ -132,18 +132,45 @@ Two processes, deliberately with different lifetimes:
 | Piece | Where it runs | Starts |
 |---|---|---|
 | The agent (`/v1`) | Inside desktop Nebula | With Nebula, from the Startup folder at logon |
-| The app server (static + `/v1` proxy) | `tools/serve_phone_app.py` | `NebulaPhoneApp` scheduled task, SYSTEM, at startup |
+| The app server (static + `/v1`) | `tools/serve_phone_app.py` | `NebulaPhoneApp` scheduled task, at startup |
 
-The app server runs as SYSTEM at startup rather than as a logon task, unlike
-the machine's other Nebula-adjacent tasks (`IdleSleep`, `LlamaSwap`,
-`NebulaLaunchOBS`) — those need a desktop session for CUDA and input
-detection, a static file server does not, and an at-logon task would stay dead
-after a reboot until someone logged in. It waits up to five minutes for a
-Tailscale address, because the task fires before tailscaled has one.
+### Headless: two sources, one endpoint
 
-Consequence worth knowing: after a reboot with nobody logged in, the app loads
-and honestly reports the studio unreachable, because the agent is inside
-Nebula. It fills in once you log in.
+`/v1` is answered by whichever source is available:
+
+1. **The agent inside Nebula**, when it is up. Richer, because it has an OBS
+   connection and therefore knows the scene and the live bitrate.
+2. **`obsauto/phone_state.py`**, when it is not. Builds the same
+   `Api.snapshot()` shape from files, so `project()` consumes it unchanged, and
+   the response carries `"source": "disk"`.
+
+The fallback is what makes the phone work after a reboot with nobody logged in.
+Measured against a live Api on the same machine it reaches parity on
+everything except the two OBS-only fields: recording state (a `session_log`
+span with no rec_stop is live), elapsed, clips, activity, games, non-games
+count, tailnet peers and the disk forecast all match. Scene and bitrate stay
+null and render as an em-dash.
+
+An HTTP error from the agent is passed through rather than falling back — a
+401 means the token is wrong, and quietly serving disk data would hide it.
+
+Running a second `Api()` would have been the obvious alternative and is worse:
+two instances both write `clip_index.json` and the icon caches, and the
+per-user config paths do not resolve under a service account.
+
+`phone_state.py` is strictly read-only and never opens a recording — clip
+discovery is `scandir` plus `stat`, directory metadata only.
+
+The task is at-startup rather than at-logon, unlike the machine's other
+Nebula-adjacent tasks (`IdleSleep`, `LlamaSwap`, `NebulaLaunchOBS`) — those
+need a desktop session for CUDA and input detection, a file server does not,
+and an at-logon task would stay dead after a reboot until someone logged in.
+It waits up to five minutes for a Tailscale address, because the task fires
+before tailscaled has one.
+
+It runs as the interactive user via S4U (no login, no stored password) rather
+than as SYSTEM, because the games list lives in the sync folder under the
+user's home and would not resolve for a service account.
 
 Install (elevated PowerShell):
 

@@ -7,18 +7,25 @@
     so the iOS home-screen app is reachable after a reboot without anyone
     logging in.
 
-    Runs as SYSTEM with an At-Startup trigger, deliberately unlike the
-    machine's other Nebula-adjacent tasks (IdleSleep, LlamaSwap,
-    NebulaLaunchOBS), which are user-session logon tasks because they need a
-    desktop session - CUDA and input detection are not available to session 0.
-    A static file server needs none of that, and an at-logon task would stay
-    dead after a reboot until someone logged in, which is exactly what this is
-    meant to avoid.
+    At-Startup, deliberately unlike the machine's other Nebula-adjacent tasks
+    (IdleSleep, LlamaSwap, NebulaLaunchOBS), which are user-session logon tasks
+    because they need a desktop session - CUDA and input detection are not
+    available to session 0. A file server needs none of that, and an at-logon
+    task would stay dead after a reboot until someone logged in, which is
+    exactly what this is meant to avoid.
 
-    The agent itself is not started here: it lives inside desktop Nebula, which
-    already auto-starts from the Startup folder at logon. So after a bare
-    reboot the app loads and honestly reports the studio as unreachable until
-    you log in.
+    Runs as the interactive user via S4U rather than as SYSTEM. S4U starts
+    without a login and without a stored password, and - the reason it matters
+    here - user-profile paths resolve correctly. The games list lives in the
+    sync folder under the user's home, so under SYSTEM it would resolve
+    somewhere else and the phone would report an empty library. Pass
+    -RunAsSystem to override; expect a thinner Games screen if you do.
+
+    The agent inside desktop Nebula is not started here. When it is up the
+    server proxies to it (richer: OBS knows the scene and bitrate); when it is
+    not, the server builds the same payload from files via
+    obsauto/phone_state.py. So a bare reboot with nobody logged in still shows
+    recording state, clips, activity, games, peers and the disk forecast.
 
 .NOTES
     Must be run from an elevated PowerShell. SYSTEM tasks are also invisible to
@@ -37,6 +44,7 @@ param(
     # Tailscale has no address for a while after boot; the server retries
     # rather than exiting into a race it cannot win.
     [int]$WaitSeconds = 300,
+    [switch]$RunAsSystem,
     [switch]$Uninstall
 )
 
@@ -82,8 +90,17 @@ $action = New-ScheduledTaskAction -Execute $python `
 
 $trigger = New-ScheduledTaskTrigger -AtStartup
 
-$principal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' `
-    -LogonType ServiceAccount -RunLevel Highest
+if ($RunAsSystem) {
+    $principal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' `
+        -LogonType ServiceAccount -RunLevel Highest
+    $who = 'SYSTEM'
+} else {
+    # S4U: runs at startup with no login and no stored password, while still
+    # resolving this user's profile paths.
+    $who = "$env:USERDOMAIN\$env:USERNAME"
+    $principal = New-ScheduledTaskPrincipal -UserId $who `
+        -LogonType S4U -RunLevel Limited
+}
 
 $settings = New-ScheduledTaskSettingsSet `
     -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
@@ -98,5 +115,5 @@ Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger `
     -Principal $principal -Settings $settings `
     -Description 'Serves the Nebula iOS companion on the tailnet and proxies /v1 to the phone agent.' | Out-Null
 
-"Registered '$TaskName' (SYSTEM, at startup, port $Port)."
+"Registered '$TaskName' (runs as $who, at startup, port $Port)."
 "Start it now with:  Start-ScheduledTask -TaskName $TaskName"

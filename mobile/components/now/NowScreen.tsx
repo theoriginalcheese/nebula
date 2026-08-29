@@ -141,6 +141,7 @@ export function NowScreen() {
     state,
     motionScale,
     agentError,
+    agentCanControl,
     tryAgain,
     wakeOverLan,
     pauseRecording,
@@ -159,7 +160,7 @@ export function NowScreen() {
   const chip = chipFor(rec.status);
   // Nothing can drive OBS without a live link, so the Record control reads as
   // unavailable rather than looking live and doing nothing when pressed.
-  const canRecord = state.connection === 'online';
+  const canRecord = state.connection === 'online' && agentCanControl;
 
   const confirmStop = () => {
     Alert.alert('Stop recording?', 'This ends the current session on the studio PC.', [
@@ -368,13 +369,18 @@ export function NowScreen() {
         </LinearGradient>
 
         {isActive ? (
+          <View>
           <View style={styles.transport}>
             <View style={styles.transportItem}>
               <Pressable
+                accessibilityRole="button"
+                accessibilityState={{ disabled: !agentCanControl }}
+                disabled={!agentCanControl}
                 onPress={isRec ? pauseRecording : resumeRecording}
                 style={({ pressed }) => [
                   styles.pauseBtn,
-                  pressed && { transform: [{ scale: 0.94 }] },
+                  !agentCanControl && styles.transportOff,
+                  pressed && agentCanControl && { transform: [{ scale: 0.94 }] },
                 ]}>
                 {isRec ? (
                   <Svg width={22} height={22} viewBox="0 0 24 24">
@@ -387,25 +393,39 @@ export function NowScreen() {
                   </Svg>
                 )}
               </Pressable>
-              <Text style={styles.pauseLabel}>{isRec ? 'Pause' : 'Resume'}</Text>
+              <Text style={[styles.pauseLabel, !agentCanControl && styles.recordLabelOff]}>
+                {isRec ? 'Pause' : 'Resume'}
+              </Text>
             </View>
 
             <View style={styles.transportItem}>
               <View style={styles.stopWrap}>
                 <StopHalo active={isRec} motionScale={motionScale} />
                 <Pressable
+                  accessibilityRole="button"
+                  accessibilityState={{ disabled: !agentCanControl }}
+                  disabled={!agentCanControl}
                   onPress={confirmStop}
                   style={({ pressed }) => [
                     styles.stopBtn,
-                    pressed && { transform: [{ scale: 0.94 }] },
+                    !agentCanControl && styles.transportOff,
+                    pressed && agentCanControl && { transform: [{ scale: 0.94 }] },
                   ]}>
                   <Svg width={26} height={26} viewBox="0 0 24 24">
                     <Rect x="6.6" y="6.6" width="10.8" height="10.8" rx="2.8" fill="#FFE1E7" />
                   </Svg>
                 </Pressable>
               </View>
-              <Text style={styles.stopLabel}>Stop</Text>
+              <Text style={[styles.stopLabel, !agentCanControl && styles.recordLabelOff]}>
+                Stop
+              </Text>
             </View>
+          </View>
+          {!agentCanControl ? (
+            <Text style={styles.transportNote}>
+              Showing what the studio is doing. Controlling it from the phone comes later.
+            </Text>
+          ) : null}
           </View>
         ) : (
           <RiseIn style={styles.recordAgainWrap}>
@@ -661,6 +681,15 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   transportOff: { opacity: 0.4 },
+  transportNote: {
+    fontSize: 11.5,
+    lineHeight: 17,
+    fontFamily: fonts.ui,
+    color: colors.textLabel,
+    textAlign: 'center',
+    paddingHorizontal: 24,
+    paddingBottom: 4,
+  },
   recordLabelOff: { color: colors.textLabel },
   recordAgainLabel: {
     fontSize: 11,

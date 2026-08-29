@@ -53,6 +53,10 @@ class Handler(SimpleHTTPRequestHandler):
 
     agent_url = ""
     agent_token = ""
+    #: Set when the agent is unreachable, or by --standalone. Shared so the
+    #: clip-scan cache survives across requests.
+    disk = None
+    standalone = False
 
     def log_message(self, *_args):
         """Quiet; this runs alongside the app, not in a terminal being watched."""
@@ -63,8 +67,20 @@ class Handler(SimpleHTTPRequestHandler):
         return SimpleHTTPRequestHandler.do_GET(self)
 
     def _proxy(self):
-        """Forward one GET to the agent, adding the token. Read-only by design:
-        only GET reaches here, and the agent refuses everything else anyway."""
+        """Answer one /v1 GET: from the agent if it is up, else from disk.
+
+        The agent inside desktop Nebula is richer - it has OBS, so it knows the
+        scene and bitrate - but it only exists in a logged-in session. When it
+        is unreachable the same payload is built from files instead, which is
+        what makes the phone work after a reboot with nobody logged in.
+
+        An HTTP error from the agent is passed through rather than papered
+        over: a 401 means the token is wrong, and silently serving disk data
+        would hide that.
+        """
+        if self.standalone:
+            return self._send_json(*self._from_disk())
+
         req = urllib.request.Request(self.agent_url + self.path)
         if self.agent_token:
             req.add_header("Authorization", "Bearer " + self.agent_token)
@@ -73,9 +89,25 @@ class Handler(SimpleHTTPRequestHandler):
                 body, code = resp.read(), resp.status
         except urllib.error.HTTPError as exc:
             body, code = exc.read() or b"{}", exc.code
+        except Exception:
+            body, code = self._from_disk()
+        return self._send_json(body, code)
+
+    def _from_disk(self):
+        """Build the payload locally. Never raises into the response."""
+        import time as _time
+        try:
+            from obsauto.phone_agent import PAYLOAD_VERSION, project
+            if self.path.rstrip("/") == "/v1/health":
+                return json.dumps({"ok": True, "v": PAYLOAD_VERSION,
+                                   "source": "disk"}).encode(), 200
+            payload = project(Handler.disk.snapshot(), _time.time())
+            payload["source"] = "disk"
+            return json.dumps(payload).encode(), 200
         except Exception as exc:
-            body = json.dumps({"error": "agent unreachable: %s" % exc}).encode()
-            code = 503
+            return json.dumps({"error": "no studio state: %s" % exc}).encode(), 503
+
+    def _send_json(self, body, code):
         self.send_response(code)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
@@ -127,6 +159,8 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--port", type=int, default=DEFAULT_PORT)
     ap.add_argument("--host", default="", help="override the bind address")
+    ap.add_argument("--standalone", action="store_true",
+                    help="always build /v1 from disk, never ask the agent")
     ap.add_argument("--wait", type=int, default=0,
                     help="seconds to wait for a Tailscale address before giving "
                          "up (boot-time tasks should pass a few minutes)")
@@ -148,13 +182,20 @@ def main():
         pass
     Handler.agent_token = str(cfg.get("phone_agent_token") or "")
     Handler.agent_url = "http://%s:%s" % (host, cfg.get("phone_agent_port") or 8765)
-    if not Handler.agent_token:
+    Handler.standalone = args.standalone
+    from obsauto.phone_state import DiskSnapshot
+    Handler.disk = DiskSnapshot(root=ROOT)
+    if not Handler.agent_token and not args.standalone:
         print("warning: no phone_agent_token in config.json - /v1 will 401")
 
     httpd = ThreadingHTTPServer((host, args.port),
                                 partial(Handler, directory=DIST))
     print("Nebula phone app: http://%s:%d" % (host, args.port))
-    print("  proxying /v1/* -> %s" % Handler.agent_url)
+    if args.standalone:
+        print("  /v1/* built from disk (standalone)")
+    else:
+        print("  /v1/* -> %s, falling back to disk when it is down"
+              % Handler.agent_url)
     print("On the iPhone: open that in Safari, then Share -> Add to Home Screen.")
     try:
         httpd.serve_forever()
