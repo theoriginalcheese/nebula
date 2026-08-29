@@ -56,6 +56,7 @@ and `RESOURCE_DIR` (`sys._MEIPASS` when frozen) only for bundled read-only asset
 | `obsauto/offload.py` | `Offloader` | NAS recording offload - copy → SHA-256 verify → (move mode) delete local; persisted queue, retries |
 | `obsauto/tailscale.py` | `available()`, `status()`, `peer_online()` | Soft Tailscale probe - explains NAS offload waits, wakes the offloader when the tailnet returns; never a delete authority |
 | `obsauto/phone_agent.py` | `PhoneAgent`, `project()`, `looks_like_footage_path()` | Read-only tailnet HTTP surface for the iOS companion - projects `Api.snapshot()` into the phone contract (`docs/PHONE-AGENT.md`); opt-in, bearer-gated, Tailscale-bound, no write verbs |
+| `tools/serve_phone_app.py` | `Handler`, `main()` | Serves the exported phone app (`mobile/dist`) on the tailnet and proxies `/v1/*` to the agent, so the bundle carries no token; iOS installs it via Add to Home Screen |
 | `obsauto/teracopy.py` | `find_exe()`, `copy_into()` | TeraCopy CLI helper for bulk NAS transfer (soft optional); Nebula still SHA-256 verifies both ends afterwards |
 | `obsauto/audio_detect.py` | `AudioKeepAlive` | Detect whether a watched app (e.g. Discord) is producing audio |
 | `obsauto/discord_detect.py` | `discord_voice_active()` | Detect an *active* Discord voice/video call (not merely Discord.exe open) - holds a recording across game switches |

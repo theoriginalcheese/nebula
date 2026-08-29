@@ -39,6 +39,10 @@
     ],
     "experiments": {
       "typedRoutes": true
+    },
+    "extra": {
+      "agentUrl": "",
+      "agentToken": ""
     }
   }
 }

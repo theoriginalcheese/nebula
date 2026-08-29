@@ -57,7 +57,7 @@ field-for-field, minus the two client-local fields (`savedToast`,
 ```jsonc
 {
   "v": 1,
-  "at": 1787866182.88,          // server unix time, for staleness display
+  "at": 1787866182880,          // epoch MILLISECONDS (see Rules 6)
   "connection": "online",        // always "online" if you got a response
   "recording": {
     "status": "idle",            // idle | recording | paused | stopped
@@ -71,11 +71,11 @@ field-for-field, minus the two client-local fields (`savedToast`,
     "diskWarning": false         // true only when the forecast is genuinely low
   },
   "activity": [
-    { "id": "…", "at": 1787866182.88, "label": "…", "kind": "info" }
+    { "id": "…", "at": 1787866182880, "label": "…", "kind": "info" }
   ],
   "clips": [
     { "id": "…", "title": "…", "durationLabel": null, "sizeLabel": "3.10 GB",
-      "state": "on-nas", "startedAt": 1787866182.88, "game": "…" }
+      "state": "on-nas", "startedAt": 1787866182880, "game": "…" }
   ],
   "moonlight": "ready",          // ready | busy | live
   "moonlightPaired": null,       // null = not reported, never assumed true
@@ -155,7 +155,13 @@ Run against a real `Api.snapshot()` on Alien-PC, 2026-08-29:
 4. **No footage paths.** The agent reads catalogue metadata only. It never
    opens, moves, or deletes a recording, and never returns an absolute path
    into `Z:\OBS`, `D:\OBS TEMP`, or any other footage location.
-5. **Never fatal to the app.** The server runs on a daemon thread and every
+5. **Every timestamp is epoch milliseconds.** Python speaks seconds
+   (`time.time()`, `st_mtime`) and JavaScript's `Date` takes milliseconds.
+   Sending seconds put every timestamp in January 1970 *while still rendering
+   as a plausible "17:40"*, so it passed inspection — the clips list silently
+   collapsed into one day group labelled "21 JAN". The agent multiplies on the
+   way out so the consumer never has to know which unit it got.
+6. **Never fatal to the app.** The server runs on a daemon thread and every
    handler is wrapped. A failure in the agent must degrade to a 500 for the
    phone, never take down desktop Nebula.
 

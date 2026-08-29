@@ -43,8 +43,16 @@ NO_EVENTS = lambda limit=None: []
 empty = pa.project({}, 1000.0, activity_reader=NO_EVENTS)
 
 check("empty snapshot still yields a versioned payload",
-      empty["v"] == pa.PAYLOAD_VERSION and empty["at"] == 1000.0,
+      empty["v"] == pa.PAYLOAD_VERSION and empty["at"] == 1000000,
       "v=%s at=%s" % (empty["v"], empty["at"]))
+
+# Python speaks epoch seconds, JavaScript's Date takes milliseconds. Handing
+# seconds over put every timestamp in January 1970 while still rendering as a
+# plausible clock time, so it survived inspection. Pin the unit.
+check("timestamps leave as milliseconds, not seconds",
+      pa._epoch_ms(1787992441.846) == 1787992441846, pa._epoch_ms(1787992441.846))
+check("a missing timestamp stays null rather than becoming 1970",
+      pa._epoch_ms(None) is None and pa._epoch_ms("") is None, "null")
 
 check("no snapshot means idle, not a fabricated session",
       empty["recording"]["status"] == "idle",
@@ -172,8 +180,9 @@ check("activity is newest-first", [r["label"] for r in feed][0].startswith("Paus
 check("rec_start reads as the design's line",
       "Recording started, Helldivers II" in [r["label"] for r in feed],
       [r["label"] for r in feed])
-check("timestamps are real epochs, not clock strings",
-      all(isinstance(r["at"], float) for r in feed), [r["at"] for r in feed])
+check("timestamps are real epoch milliseconds, not clock strings",
+      all(isinstance(r["at"], int) and r["at"] > 1_600_000_000_000 for r in feed),
+      [r["at"] for r in feed])
 check("the detector's 'unknown' placeholder is not shown as a title",
       not any("unknown" in r["label"].lower() for r in feed),
       [r["label"] for r in feed])
@@ -411,6 +420,27 @@ try:
         post_code = "refused"
     check("POST is not implemented anywhere on the surface",
           post_code in (405, 501, "refused"), post_code)
+
+    # The phone app is served from a different port, so its fetch is
+    # cross-origin and the browser preflights before sending the token.
+    req = request.Request(base + "/v1/snapshot", method="OPTIONS")
+    with request.urlopen(req, timeout=5) as resp:
+        pre_code, pre_hdrs = resp.status, dict(resp.headers)
+    check("CORS preflight succeeds without a token", pre_code == 204, pre_code)
+    check("preflight allows the Authorization header",
+          "authorization" in (pre_hdrs.get("Access-Control-Allow-Headers") or "").lower(),
+          pre_hdrs.get("Access-Control-Allow-Headers"))
+    check("preflight advertises GET only, never a write verb",
+          "POST" not in (pre_hdrs.get("Access-Control-Allow-Methods") or ""),
+          pre_hdrs.get("Access-Control-Allow-Methods"))
+
+    _, _ = get("/v1/health")
+    req = request.Request(base + "/v1/health")
+    req.add_header("Authorization", "Bearer s3cret")
+    with request.urlopen(req, timeout=5) as resp:
+        check("real responses carry the CORS origin header",
+              resp.headers.get("Access-Control-Allow-Origin") == "*",
+              resp.headers.get("Access-Control-Allow-Origin"))
 finally:
     httpd.shutdown()
     httpd.server_close()

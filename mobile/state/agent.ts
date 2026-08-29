@@ -25,18 +25,38 @@ export const SUPPORTED_PAYLOAD_VERSION = 1;
 export type AgentConfig = { baseUrl: string; token: string };
 
 /**
- * Where the agent lives. Set via app.json `extra`, or an .env consumed by it:
+ * Where the agent lives, in one of two shapes.
  *
- *   "extra": { "agentUrl": "http://100.x.y.z:8765", "agentToken": "…" }
+ * **Proxy mode** (`EXPO_PUBLIC_AGENT_PROXY=1`) is how the phone app ships:
+ * `tools/serve_phone_app.py` serves the bundle and forwards `/v1/*` to the
+ * agent, adding the token server-side. The fetch is same-origin, so no CORS is
+ * involved, and — the reason this is the default — **no token is inlined into
+ * the bundle**. `EXPO_PUBLIC_*` values are baked in at build time, so a direct
+ * config would ship the secret to anyone who can read the JavaScript.
  *
- * Absent config is the normal case for a fresh checkout, not an error.
+ * **Direct mode** (`EXPO_PUBLIC_AGENT_URL` + `EXPO_PUBLIC_AGENT_TOKEN`) talks
+ * to the agent on its own port. Needed for a native build, where there is no
+ * server in front to proxy. That build does carry the token, so keep it on the
+ * tailnet.
+ *
+ * Neither configured is the normal case for a fresh checkout, not an error:
+ * the app runs standalone and every screen shows its honest empty state.
  */
 export function agentConfig(): AgentConfig | null {
   const extra = (Constants.expoConfig?.extra ?? {}) as Record<string, unknown>;
-  const baseUrl = typeof extra.agentUrl === 'string' ? extra.agentUrl.trim() : '';
-  const token = typeof extra.agentToken === 'string' ? extra.agentToken.trim() : '';
-  if (!baseUrl || !token) return null;
-  return { baseUrl: baseUrl.replace(/\/+$/, ''), token };
+  const baseUrl = (
+    process.env.EXPO_PUBLIC_AGENT_URL ??
+    (typeof extra.agentUrl === 'string' ? extra.agentUrl : '')
+  ).trim();
+  const token = (
+    process.env.EXPO_PUBLIC_AGENT_TOKEN ??
+    (typeof extra.agentToken === 'string' ? extra.agentToken : '')
+  ).trim();
+
+  if (baseUrl && token) return { baseUrl: baseUrl.replace(/\/+$/, ''), token };
+  // Same-origin: the server in front holds the token.
+  if (process.env.EXPO_PUBLIC_AGENT_PROXY === '1') return { baseUrl: '', token: '' };
+  return null;
 }
 
 /** What a successful poll contributes to StudioState. */
@@ -69,7 +89,8 @@ export async function fetchSnapshot(
   let res: Response;
   try {
     res = await fetch(`${config.baseUrl}/v1/snapshot`, {
-      headers: { Authorization: `Bearer ${config.token}` },
+      // Proxy mode carries no token — the server in front adds it.
+      headers: config.token ? { Authorization: `Bearer ${config.token}` } : {},
       signal: controller.signal,
     });
   } finally {

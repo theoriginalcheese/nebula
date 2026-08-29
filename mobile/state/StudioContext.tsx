@@ -181,7 +181,13 @@ export function StudioProvider({ children }: { children: React.ReactNode }) {
       if (timer) clearInterval(timer);
       timer = null;
     };
-    if (AppState.currentState === 'active') begin();
+    /*
+      Fetch once on mount whatever AppState says. Opening the app is the moment
+      you most want data, and currentState can be 'unknown' on some platforms
+      (and 'background' on web whenever the tab is merely hidden), which would
+      otherwise leave a freshly-opened app showing an empty screen.
+    */
+    begin();
     const sub = AppState.addEventListener('change', (next) =>
       next === 'active' ? begin() : end(),
     );

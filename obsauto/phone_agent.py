@@ -92,6 +92,9 @@ def project(snapshot, now, activity_reader=None):
     fallback when a section faults, and a fallback must read as "unknown" on
     the phone rather than as a real zero.
 
+    `now` is epoch *seconds* (what `time.time()` gives); every timestamp in the
+    payload leaves as milliseconds, because the only consumer is JavaScript.
+
     `activity_reader` is injectable because the activity feed is the one field
     that does not come from the snapshot - it is read from `session_log`, and
     a projection that silently touches the disk is neither pure nor testable.
@@ -103,7 +106,7 @@ def project(snapshot, now, activity_reader=None):
 
     return {
         "v": PAYLOAD_VERSION,
-        "at": now,
+        "at": _epoch_ms(now),
         "connection": "online",
         "recording": _recording(hero, forecast),
         "activity": _activity(reader=activity_reader),
@@ -223,7 +226,7 @@ def _activity(_unused=None, reader=None):
         # "unknown" is the detector's own placeholder, not a title.
         if game and game.lower() != "unknown":
             label = "%s, %s" % (label, game)
-        at = _number(row.get("ts"))
+        at = _epoch_ms(row.get("ts"))
         out.append({
             "id": "evt-%s-%s" % (int(at) if at else i, i),
             "at": at,
@@ -238,6 +241,19 @@ def _number(value):
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def _epoch_ms(value):
+    """Seconds -> milliseconds.
+
+    Python speaks epoch seconds (`time.time()`, `os.stat().st_mtime`);
+    JavaScript's `Date` takes milliseconds. Handing seconds straight over put
+    every timestamp in January 1970 - and because the clock still *rendered*
+    as a plausible "17:40", it survived casual inspection. The contract is
+    milliseconds so the consumer never has to remember which it got.
+    """
+    seconds = _number(value)
+    return None if seconds is None else round(seconds * 1000.0)
 
 
 _CLIP_STATES = {"recording", "local", "offloading", "on-nas"}
@@ -271,7 +287,7 @@ def _clips(panel):
             "durationLabel": _text(clip.get("length")),
             "sizeLabel": _text(clip.get("size_label")),
             "state": _clip_state(clip),
-            "startedAt": _number(clip.get("mtime")),
+            "startedAt": _epoch_ms(clip.get("mtime")),
             "game": _text(clip.get("game")),
         })
     return out
@@ -521,13 +537,34 @@ def _make_handler(agent):
         def log_message(self, *_args):
             """Silence per-request stderr spam; real events go to the app log."""
 
+        def _cors(self):
+            """Allow any tailnet origin.
+
+            The origin is not the security boundary here - the bearer token and
+            the Tailscale-only bind are - and the phone app is served from a
+            different port to this one, so a browser fetch is cross-origin and
+            needs these. Only GET is ever advertised.
+            """
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.send_header("Access-Control-Allow-Headers", "Authorization")
+            self.send_header("Access-Control-Allow-Methods", "GET, OPTIONS")
+            self.send_header("Access-Control-Max-Age", "600")
+
         def _send(self, code, payload):
             body = json.dumps(payload).encode("utf-8")
             self.send_response(code)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(body)))
+            self._cors()
             self.end_headers()
             self.wfile.write(body)
+
+        def do_OPTIONS(self):  # noqa: N802 - BaseHTTPRequestHandler's spelling
+            """CORS preflight. Carries no data and needs no token."""
+            self.send_response(204)
+            self._cors()
+            self.send_header("Content-Length", "0")
+            self.end_headers()
 
         def do_GET(self):  # noqa: N802 - BaseHTTPRequestHandler's spelling
             try:
