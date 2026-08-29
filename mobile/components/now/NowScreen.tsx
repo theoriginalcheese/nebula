@@ -140,6 +140,7 @@ export function NowScreen() {
   const {
     state,
     motionScale,
+    agentError,
     tryAgain,
     wakeOverLan,
     pauseRecording,
@@ -196,7 +197,8 @@ export function NowScreen() {
               <View style={{ gap: 8, alignItems: 'center' }}>
                 <Text style={styles.offlineTitle}>Can&apos;t reach Studio PC</Text>
                 <Text style={styles.offlineBody}>
-                  Tailscale says the machine is offline.
+                  {/* Say what actually failed, not an assumed cause. */}
+                  {agentError ?? 'The studio PC is not reachable.'}
                   {state.recordingSafeOnDisconnect === true
                     ? ' Nothing was recording when the link dropped, so no clip is at risk.'
                     : ''}

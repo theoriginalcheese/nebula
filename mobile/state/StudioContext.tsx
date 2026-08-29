@@ -6,7 +6,9 @@ import React, {
   useMemo,
   useState,
 } from 'react';
-import { AccessibilityInfo, Linking } from 'react-native';
+import { AccessibilityInfo, AppState, Linking } from 'react-native';
+
+import { agentConfig, fetchSnapshot, type AgentPatch } from '@/state/agent';
 
 import {
   initialStudioState,
@@ -18,6 +20,13 @@ import { accentPresets, motion, type AccentId } from '@/constants/theme';
 
 /** Moonlight's iOS URL scheme — the app is a launcher, never an embedded decoder. */
 const MOONLIGHT_URL = 'moonlight://';
+
+/**
+ * Poll cadence while the app is foregrounded. A free Apple account rules out
+ * push (docs/PHONE-AGENT.md § Why polling, not push), so the phone asks while
+ * you are looking at it and stops the moment you background it.
+ */
+const POLL_MS = 5000;
 
 type StudioContextValue = {
   state: StudioState;
@@ -32,6 +41,10 @@ type StudioContextValue = {
   haptics: boolean;
   /** Non-null when the last Moonlight launch attempt could not proceed. */
   moonlightNotice: string | null;
+  /** True once an agent is configured; false means the app is running standalone. */
+  agentConfigured: boolean;
+  /** Non-null when the last poll failed — shown on the Now offline card. */
+  agentError: string | null;
   setConnection: (status: ConnectionStatus) => void;
   setMotionScale: (n: number) => void;
   setAccent: (id: AccentId) => void;
@@ -84,6 +97,8 @@ export function StudioProvider({ children }: { children: React.ReactNode }) {
   const [moonlightNotice, setMoonlightNotice] = useState<string | null>(null);
   const [accent, setAccent] = useState<AccentId>('violet');
   const [haptics, setHaptics] = useState(true);
+  const [agentError, setAgentError] = useState<string | null>(null);
+  const agent = useMemo(() => agentConfig(), []);
   const accentEntry = accentPresets.find((a) => a.id === accent) ?? accentPresets[0];
   const motionScale = reduceMotionFromSystem ? 0 : userMotion;
 
@@ -110,10 +125,80 @@ export function StudioProvider({ children }: { children: React.ReactNode }) {
     }));
   }, []);
 
+  const applyPatch = useCallback((patch: AgentPatch) => {
+    setAgentError(null);
+    setState((prev) => ({
+      ...prev,
+      ...patch,
+      connection: 'online',
+      lastSeenAt: Date.now(),
+      recordingSafeOnDisconnect: null,
+      /*
+        Once a real agent answers, its queue is the queue — the Sifu/Blender/
+        Yakuza fixtures are QA data and must not sit alongside live detections
+        pretending to be them. An empty live queue replaces them.
+      */
+      classifyQueue: patch.classifyQueue,
+    }));
+  }, []);
+
+  const notePollFailure = useCallback((message: string) => {
+    setAgentError(message);
+    setState((prev) => ({
+      ...prev,
+      connection: 'offline',
+      /*
+        The design's reassurance line ("nothing was recording when the link
+        dropped") may only appear when that is actually true, so derive it from
+        the last state we genuinely saw.
+      */
+      recordingSafeOnDisconnect:
+        prev.connection === 'online'
+          ? prev.recording.status === 'idle' || prev.recording.status === 'stopped'
+          : prev.recordingSafeOnDisconnect,
+    }));
+  }, []);
+
+  const poll = useCallback(async () => {
+    if (!agent) return;
+    try {
+      applyPatch(await fetchSnapshot(agent));
+    } catch (err) {
+      notePollFailure(err instanceof Error ? err.message : 'Studio agent unreachable.');
+    }
+  }, [agent, applyPatch, notePollFailure]);
+
+  /* Poll only while foregrounded — a backgrounded phone has nothing to show. */
+  useEffect(() => {
+    if (!agent) return;
+    let timer: ReturnType<typeof setInterval> | null = null;
+    const begin = () => {
+      if (timer) return;
+      void poll();
+      timer = setInterval(() => void poll(), POLL_MS);
+    };
+    const end = () => {
+      if (timer) clearInterval(timer);
+      timer = null;
+    };
+    if (AppState.currentState === 'active') begin();
+    const sub = AppState.addEventListener('change', (next) =>
+      next === 'active' ? begin() : end(),
+    );
+    return () => {
+      end();
+      sub.remove();
+    };
+  }, [agent, poll]);
+
   const tryAgain = useCallback(() => {
-    // No Tailscale probe yet — flip to unknown (honest loading), not fake online.
-    setConnection('unknown');
-  }, [setConnection]);
+    if (!agent) {
+      // Nothing configured to retry against — stay honest rather than pretend.
+      setConnection('unknown');
+      return;
+    }
+    void poll();
+  }, [agent, poll, setConnection]);
 
   const wakeOverLan = useCallback(() => {
     // WoL needs an always-on tailnet peer to send the magic packet (BUILD-SPEC
@@ -218,6 +303,8 @@ export function StudioProvider({ children }: { children: React.ReactNode }) {
       accentSoft: accentEntry.soft,
       haptics,
       moonlightNotice,
+      agentConfigured: Boolean(agent),
+      agentError,
       setConnection,
       setMotionScale,
       setAccent,
@@ -242,6 +329,8 @@ export function StudioProvider({ children }: { children: React.ReactNode }) {
       accentEntry,
       haptics,
       moonlightNotice,
+      agent,
+      agentError,
       setConnection,
       setMotionScale,
       setAccent,

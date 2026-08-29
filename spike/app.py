@@ -3187,6 +3187,22 @@ def main():
         host.start_window_watch()
         host.start_poll()
         host.autostart()
+
+        # Read-only tailnet surface for the iOS companion. Off unless
+        # phone_agent_enabled is set, imported here so its stdlib HTTP stays
+        # off the startup import chain, and wrapped because a failure to serve
+        # the phone must never cost the desktop app its boot.
+        def _start_phone_agent():
+            try:
+                from obsauto.phone_agent import PhoneAgent
+                agent = PhoneAgent(api, api.config())
+                if agent.enabled:
+                    api._phone_agent = agent
+                    agent.start()
+            except Exception as exc:
+                log_to_file("[PHONE] agent did not start: %s" % exc)
+
+        _start_phone_agent()
         # Quiet machine-to-machine sync: when the tree is clean, pull/push
         # origin/main so Alien ↔ Strix stay aligned without opening Settings.
         def _auto_sync():
