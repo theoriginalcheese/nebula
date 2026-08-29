@@ -8,9 +8,12 @@ needs the paid Developer Program - so the shipping route is Safari's "Add to
 Home Screen". The app then launches fullscreen with Nebula's own icon and no
 browser chrome (see the PWA tags in `mobile/app/+html.tsx`).
 
-Binds to the Tailscale address only, matching `obsauto/phone_agent.py`: the
-bundle has the agent token inlined by `EXPO_PUBLIC_*`, so it must not be
-reachable from the home LAN. Serving is read-only and confined to `mobile/dist`.
+Binds to the Tailscale address only, matching `obsauto/phone_agent.py`. This
+surface proxies to the agent with the token attached, so anyone who can reach
+it can read studio state - it must not exist on the home LAN. Serving is
+read-only and confined to `mobile/dist`.
+
+Installed as a boot-time scheduled task by `tools/install_phone_app_task.ps1`.
 
 Rebuild the bundle after any app change:
 
@@ -21,6 +24,7 @@ import io
 import json
 import os
 import sys
+import time
 import urllib.error
 import urllib.request
 from functools import partial
@@ -90,26 +94,52 @@ class Handler(SimpleHTTPRequestHandler):
 def tailscale_ip():
     from obsauto import tailscale as ts
     try:
-        status = ts.status()
+        status = ts.status(force=True)
     except Exception:
         return None
     ips = ((status or {}).get("self") or {}).get("ips") or []
     return ips[0] if ips else None
 
 
+def wait_for_tailscale(deadline_s, log=print):
+    """Poll until the tailnet address exists, or give up after `deadline_s`.
+
+    Run from a boot-time scheduled task this matters: the task fires before
+    tailscaled has an address, and exiting immediately would leave the phone
+    app dead until someone noticed. Retrying costs nothing and turns a race
+    into a wait.
+    """
+    started = time.monotonic()
+    announced = False
+    while True:
+        ip = tailscale_ip()
+        if ip:
+            return ip
+        if time.monotonic() - started >= deadline_s:
+            return None
+        if not announced:
+            log("waiting for a Tailscale address...")
+            announced = True
+        time.sleep(5)
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--port", type=int, default=DEFAULT_PORT)
     ap.add_argument("--host", default="", help="override the bind address")
+    ap.add_argument("--wait", type=int, default=0,
+                    help="seconds to wait for a Tailscale address before giving "
+                         "up (boot-time tasks should pass a few minutes)")
     args = ap.parse_args()
 
     if not os.path.isdir(DIST):
         sys.exit("No build at %s\nRun: cd mobile && npx expo export --platform web" % DIST)
 
-    host = args.host or tailscale_ip()
+    host = args.host or (wait_for_tailscale(args.wait) if args.wait
+                         else tailscale_ip())
     if not host:
-        sys.exit("No Tailscale address. Refusing to bind wider - the bundle "
-                 "carries the agent token and must stay off the home LAN.")
+        sys.exit("No Tailscale address. Refusing to bind wider - this surface "
+                 "reaches the agent and must stay off the home LAN.")
 
     cfg = {}
     try:

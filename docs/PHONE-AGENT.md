@@ -125,6 +125,34 @@ a 5s foreground poll is roughly 1 MB/minute of cellular data. Capped it is
 Clip ids are a truncated SHA-1 of the catalogue key rather than the key itself:
 stable across polls, and folder structure never rides along.
 
+## Running it after a reboot
+
+Two processes, deliberately with different lifetimes:
+
+| Piece | Where it runs | Starts |
+|---|---|---|
+| The agent (`/v1`) | Inside desktop Nebula | With Nebula, from the Startup folder at logon |
+| The app server (static + `/v1` proxy) | `tools/serve_phone_app.py` | `NebulaPhoneApp` scheduled task, SYSTEM, at startup |
+
+The app server runs as SYSTEM at startup rather than as a logon task, unlike
+the machine's other Nebula-adjacent tasks (`IdleSleep`, `LlamaSwap`,
+`NebulaLaunchOBS`) — those need a desktop session for CUDA and input
+detection, a static file server does not, and an at-logon task would stay dead
+after a reboot until someone logged in. It waits up to five minutes for a
+Tailscale address, because the task fires before tailscaled has one.
+
+Consequence worth knowing: after a reboot with nobody logged in, the app loads
+and honestly reports the studio unreachable, because the agent is inside
+Nebula. It fills in once you log in.
+
+Install (elevated PowerShell):
+
+    powershell -ExecutionPolicy Bypass -File tools\install_phone_app_task.ps1
+
+Remove it with `-Uninstall`. SYSTEM tasks are invisible to unelevated
+`Get-ScheduledTask`, so query them elevated too — "not found" from a normal
+shell means permissions, not absence.
+
 ## Verified live
 
 Run against a real `Api.snapshot()` on Alien-PC, 2026-08-29:
