@@ -37,7 +37,10 @@ def check(name, passed, detail=""):
 
 # ---------------------------------------------------------------- projection
 
-empty = pa.project({}, 1000.0)
+# No activity source in these cases - the feed is tested on its own below.
+NO_EVENTS = lambda limit=None: []
+
+empty = pa.project({}, 1000.0, activity_reader=NO_EVENTS)
 
 check("empty snapshot still yields a versioned payload",
       empty["v"] == pa.PAYLOAD_VERSION and empty["at"] == 1000.0,
@@ -66,6 +69,18 @@ check("empty lists rather than invented rows",
 check("no offload job is null, not a zero-progress job",
       empty["offload"] is None, empty["offload"])
 
+# `_remote` emits {enabled, text} only — no progress source exists, so a
+# disabled job is null and an enabled one carries words, not a fake fraction.
+check("a disabled offloader is null",
+      pa.project({"remote": {"offload": {"enabled": False, "text": ""}}},
+                 1.0)["offload"] is None, "null")
+_run = pa.project({"remote": {"offload": {"enabled": True,
+                                          "text": "3 clips queued"}}}, 1.0)["offload"]
+check("an enabled offloader reports its note with no invented progress",
+      _run and _run["note"] == "3 clips queued"
+      and _run["total"] is None and _run["done"] is None,
+      _run)
+
 check("unknown pairing is null, never assumed true",
       empty["moonlightPaired"] is None, empty["moonlightPaired"])
 
@@ -75,7 +90,7 @@ check("unknown non-games count is null, not zero",
 # The desktop uses "" for unknown. That must not survive as a rendered value.
 blank = pa.project({"hero": {"state": "recording", "size": "", "bitrate": "  ",
                              "title": "Helldivers II", "elapsed": "01:12:33"}},
-                   1000.0)
+                   1000.0, activity_reader=NO_EVENTS)
 check("desktop's empty-string idiom becomes null",
       blank["recording"]["fileSizeLabel"] is None
       and blank["recording"]["bitrateLabel"] is None,
@@ -97,7 +112,8 @@ check("a non-clock elapsed is null, not zero",
 
 # Readouts belong to a live session only.
 stopped = pa.project({"hero": {"state": "saved", "size": "8.42 GB",
-                               "title": "Helldivers II"}}, 1000.0)
+                               "title": "Helldivers II"}}, 1000.0,
+                     activity_reader=NO_EVENTS)
 check("stopped sessions do not keep reporting a live file size",
       stopped["recording"]["status"] == "stopped"
       and stopped["recording"]["fileSizeLabel"] is None,
@@ -136,9 +152,39 @@ check("no footage path appears anywhere in the payload",
 
 check("an unrecognised clip state falls back to local, not to on-nas",
       pa.project({"clips_panel": {"clips": [{"name": "x", "state": "weird"}]}},
-                 1.0)["clips"][0]["state"] == "local",
+                 1.0, activity_reader=NO_EVENTS)["clips"][0]["state"] == "local",
       pa.project({"clips_panel": {"clips": [{"name": "x", "state": "weird"}]}},
-                 1.0)["clips"][0]["state"])
+                 1.0, activity_reader=NO_EVENTS)["clips"][0]["state"])
+
+# ------------------------------------------------------------------ activity
+
+# The desktop's own `activity` pane is a debug log with clock-string stamps;
+# the phone's feed comes from session_log instead.
+events = [
+    {"ts": 1787992406.8, "type": "rec_start", "game": "Helldivers II"},
+    {"ts": 1787992441.5, "type": "rec_stop", "game": "Helldivers II"},
+    {"ts": 1787992500.0, "type": "idle_in", "game": "unknown"},
+    {"ts": 1787992600.0, "type": "wat", "game": "x"},
+]
+feed = pa._activity(reader=lambda limit=None: events)
+check("activity is newest-first", [r["label"] for r in feed][0].startswith("Paused"),
+      [r["label"] for r in feed])
+check("rec_start reads as the design's line",
+      "Recording started, Helldivers II" in [r["label"] for r in feed],
+      [r["label"] for r in feed])
+check("timestamps are real epochs, not clock strings",
+      all(isinstance(r["at"], float) for r in feed), [r["at"] for r in feed])
+check("the detector's 'unknown' placeholder is not shown as a title",
+      not any("unknown" in r["label"].lower() for r in feed),
+      [r["label"] for r in feed])
+check("an unrecognised event type is dropped, not guessed at",
+      len(feed) == 3, len(feed))
+check("recording events are tagged as such",
+      [r["kind"] for r in feed].count("recording") == 2,
+      [r["kind"] for r in feed])
+check("an unreadable session log yields no activity, never raises",
+      pa._activity(reader=lambda limit=None: (_ for _ in ()).throw(IOError("x"))) == [],
+      "empty")
 
 # ------------------------------------------------- disk warning derivation
 
@@ -152,7 +198,7 @@ for label, expected in [("4 days left", True), ("7 days left", True),
     check("disk warning for %r is %s" % (label, expected),
           pa.disk_warning(label) is expected, pa.disk_warning(label))
 
-warned = pa.project({"forecast": {"label": "4 days left"}}, 1.0)
+warned = pa.project({"forecast": {"label": "4 days left"}}, 1.0, activity_reader=NO_EVENTS)
 check("a low forecast surfaces as diskWarning on the phone",
       warned["recording"]["diskWarning"] is True
       and warned["recording"]["diskLeftLabel"] == "4 days left",
@@ -168,22 +214,26 @@ real_clips = pa.project({"clips_panel": {"clips": [
      "size_label": "7.20 GB", "location": "remote", "mtime": 1787000000.0},
     {"rel": "Factorio/x.mkv", "title": "x", "game": "Factorio",
      "size_label": "184 MB", "location": "local"},
-]}}, 1.0)["clips"]
+]}}, 1.0, activity_reader=NO_EVENTS)["clips"]
 check("clip title prefers the extension-less form",
       real_clips[0]["title"] == "2026-08-07 19-33-41", real_clips[0]["title"])
 check("location=remote maps to on-nas",
       real_clips[0]["state"] == "on-nas", real_clips[0]["state"])
 check("a local clip is not claimed to be on the NAS",
       real_clips[1]["state"] == "local", real_clips[1]["state"])
-check("clip id uses the stable rel key",
-      real_clips[0]["id"] == "Helldivers II/2026-08-07.mkv", real_clips[0]["id"])
+check("clip id is an opaque hash, not the catalogue path",
+      len(real_clips[0]["id"]) == 16 and "/" not in real_clips[0]["id"],
+      real_clips[0]["id"])
+check("...and is stable across projections",
+      real_clips[0]["id"] == pa._stable_id("Helldivers II/2026-08-07.mkv", 0),
+      real_clips[0]["id"])
 check("size label projects from size_label",
       real_clips[0]["sizeLabel"] == "7.20 GB", real_clips[0]["sizeLabel"])
 
 real_games = pa.project({"games": {"games": [
     {"name": "Helldivers II", "exes": ["helldivers2.exe"], "meta": "553850"},
     {"name": "Factorio", "exes": ["factorio.exe"]},
-], "non_games": [{"name": "cursor.exe"}]}}, 1.0)
+], "non_games": [{"name": "cursor.exe"}]}}, 1.0, activity_reader=NO_EVENTS)
 check("game exe comes from the exes list, not a singular key",
       real_games["detectedGames"][0]["exe"] == "helldivers2.exe",
       real_games["detectedGames"][0]["exe"])
@@ -197,7 +247,7 @@ check("non-games are counted, not listed",
 peered = pa.project({"remote": {"tailscale": {"peers": [
     {"name": "nas-vault", "online": True, "status": "direct"},
     {"name": "work-laptop", "online": False},
-]}}}, 1000.0)
+]}}}, 1000.0, activity_reader=NO_EVENTS)
 check("peers project from the nested tailscale section",
       [p["name"] for p in peered["peers"]] == ["nas-vault", "work-laptop"],
       [p["name"] for p in peered["peers"]])

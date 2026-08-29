@@ -53,8 +53,11 @@ export function RemoteScreen() {
 
   const onlinePeers = state.peers.filter((p) => p.online).length;
   const offload = state.offload;
+  // Only a real done/total draws a bar; a note-only job gets words instead.
   const progress =
-    offload && offload.total > 0 ? Math.min(1, offload.done / offload.total) : 0;
+    offload && offload.total && offload.done != null
+      ? Math.min(1, offload.done / offload.total)
+      : null;
 
   return (
     <View style={styles.screen}>
@@ -177,19 +180,25 @@ export function RemoteScreen() {
           <View style={styles.offloadHead}>
             <Eyebrow>NAS offload</Eyebrow>
             <Text style={styles.offloadCount}>
-              {offload
-                ? `${offload.done} of ${offload.total}${offload.sizeLabel ? ` · ${offload.sizeLabel}` : ''}`
-                : 'idle'}
+              {offload && offload.total != null
+                ? `${offload.done ?? 0} of ${offload.total}${offload.sizeLabel ? ` · ${offload.sizeLabel}` : ''}`
+                : offload
+                  ? 'running'
+                  : 'idle'}
             </Text>
           </View>
-          <View style={styles.progressTrack}>
-            <View style={[styles.progressFill, { width: `${progress * 100}%` }]} />
-          </View>
+          {progress != null ? (
+            <View style={styles.progressTrack}>
+              <View style={[styles.progressFill, { width: `${progress * 100}%` }]} />
+            </View>
+          ) : null}
           {offload?.currentFile ? (
             <Text style={styles.offloadFile}>
               {offload.currentFile}
               {offload.throughputLabel ? ` · ${offload.throughputLabel}` : ''}
             </Text>
+          ) : offload?.note ? (
+            <Text style={styles.emptyLine}>{offload.note}</Text>
           ) : (
             <Text style={styles.emptyLine}>Nothing queued</Text>
           )}

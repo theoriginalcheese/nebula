@@ -65,14 +65,20 @@ export type Peer = {
 };
 
 export type Offload = {
-  /** Files already moved. */
-  done: number;
-  total: number;
+  /**
+   * Files already moved, and the batch size. Both null when the desktop only
+   * reports a human note — the progress bar renders only when these are real,
+   * never with an invented fill. See docs/PHONE-AGENT.md.
+   */
+  done: number | null;
+  total: number | null;
   /** Total size of the batch, pre-formatted. */
   sizeLabel: string | null;
   /** Current file line, e.g. "Factorio replay". */
   currentFile: string | null;
   throughputLabel: string | null;
+  /** Human sentence from the desktop, e.g. "3 clips queued · over LAN". */
+  note: string | null;
 };
 
 export type DetectedGame = {

@@ -193,13 +193,16 @@ function asPeer(v: unknown): Peer[] {
 function asOffload(v: unknown): Offload | null {
   if (!isRecord(v)) return null;
   const total = asNumber(v.total);
-  if (!total || total <= 0) return null;
+  const note = asText(v.note);
+  // A job with neither a count nor a note has nothing to say.
+  if (!total && !note) return null;
   return {
-    done: asNumber(v.done) ?? 0,
-    total,
+    done: total ? (asNumber(v.done) ?? 0) : null,
+    total: total && total > 0 ? total : null,
     sizeLabel: asText(v.sizeLabel),
     currentFile: asText(v.currentFile),
     throughputLabel: asText(v.throughputLabel),
+    note,
   };
 }
 

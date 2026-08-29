@@ -5,9 +5,11 @@
 
 Wire contract: `docs/PHONE-AGENT.md`. This module owns no state and collects
 nothing. `spike/app.py`'s `Api.snapshot()` already computes every section the
-phone needs and is fault-isolated per section, so `project()` is a pure
+phone needs and is fault-isolated per section, so `project()` is mostly a
 translation of that payload into the phone's shape - adding a phone stat means
-projecting an existing field, never writing new collection logic.
+projecting an existing field, never writing new collection logic. The one
+exception is the activity feed, which comes from `session_log` because the
+desktop's own activity pane is a debug log, not a session history.
 
 Five rules the tests pin, all of them load-bearing:
 
@@ -23,6 +25,7 @@ Five rules the tests pin, all of them load-bearing:
 Imported lazily by the app so `requests`-free stdlib stays off the startup
 import chain (`tests/test_import_budget.py`).
 """
+import hashlib
 import hmac
 import json
 import re
@@ -34,17 +37,20 @@ from obsauto.app_log import log_to_file
 PAYLOAD_VERSION = 1
 DEFAULT_PORT = 8765
 
-#: Substrings that mark a value as a footage path. Rule 4 in the contract:
-#: catalogue metadata may travel, locations never do.
-_FOOTAGE_MARKERS = ("z:\\obs", "z:/obs", "d:\\obs", "d:/obs", "obs-recovered")
+#: An absolute filesystem location: a drive letter followed by a separator, or
+#: a UNC prefix. Rule 4 in the contract says catalogue metadata may travel but
+#: locations never do, and "absolute path" is the honest test for that -
+#: matching folder names like "obs-recovered" instead flags the catalogue's own
+#: *relative* keys ("OBS-recovered/0145294.mkv"), which are metadata and are
+#: allowed. Blocking every absolute path is both stricter and simpler.
+_ABSOLUTE_PATH = re.compile(r"(?<![A-Za-z])[A-Za-z]:[\\/]|^\\\\|^/")
 
 
 def looks_like_footage_path(value):
-    """True if ``value`` smells like a recording location rather than a label."""
+    """True if ``value`` is an absolute location rather than a label."""
     if not isinstance(value, str):
         return False
-    low = value.lower()
-    return any(marker in low for marker in _FOOTAGE_MARKERS)
+    return bool(_ABSOLUTE_PATH.search(value.strip()))
 
 
 def _scrub(value):
@@ -79,12 +85,16 @@ def _hero_status(hero):
     return "idle"
 
 
-def project(snapshot, now):
+def project(snapshot, now, activity_reader=None):
     """Translate an `Api.snapshot()` payload into the phone contract.
 
     Tolerates missing sections throughout: `Api.snapshot()` substitutes a
     fallback when a section faults, and a fallback must read as "unknown" on
     the phone rather than as a real zero.
+
+    `activity_reader` is injectable because the activity feed is the one field
+    that does not come from the snapshot - it is read from `session_log`, and
+    a projection that silently touches the disk is neither pure nor testable.
     """
     snapshot = snapshot or {}
     hero = snapshot.get("hero") or {}
@@ -96,7 +106,7 @@ def project(snapshot, now):
         "at": now,
         "connection": "online",
         "recording": _recording(hero, forecast),
-        "activity": _activity(snapshot.get("activity")),
+        "activity": _activity(reader=activity_reader),
         "clips": _clips(snapshot.get("clips_panel")),
         "moonlight": _moonlight_state(remote),
         "moonlightPaired": remote.get("paired") if isinstance(remote.get("paired"), bool) else None,
@@ -167,31 +177,60 @@ def _elapsed_seconds(label):
     return total
 
 
-def _activity(activity):
-    rows = (activity or {}).get("rows") or []
+#: session_log event type -> the phone's activity line. The desktop's own
+#: `activity` pane is a debug log ("Taskbar hover - orbit", "Backfill: Indexed
+#: 0 NAS clips") with display-formatted "HH:MM:SS" timestamps, which is a
+#: different artefact from the session feed the phone's Now screen wants.
+_EVENT_TEXT = {
+    "rec_start": ("Recording started", "recording"),
+    "rec_stop": ("Recording saved", "recording"),
+    "idle_in": ("Paused - no input", "info"),
+    "idle_out": ("Resumed", "info"),
+}
+
+ACTIVITY_LIMIT = 20
+GAMES_LIMIT = 60
+#: The desktop caps its own clip list at 400. Sending all of them made an 80 KB
+#: payload, and at a 5s foreground poll that is ~1 MB/minute of cellular data
+#: for a screen that shows the most recent day or two. Newest-first, then cut.
+CLIPS_LIMIT = 120
+
+
+def _activity(_unused=None, reader=None):
+    """Recent session events, newest first, from `session_log`.
+
+    Deliberately not a projection of `snapshot()["activity"]`: that pane is the
+    app's own debug log, and piping it to the phone fills the Now screen with
+    "Taskbar hover - orbit". Its `ts` is a formatted clock string too, so it
+    could not carry a real timestamp even if the text were wanted.
+    """
+    try:
+        if reader is None:
+            from obsauto.session_log import read as reader
+        rows = reader(limit=ACTIVITY_LIMIT) or []
+    except Exception as exc:
+        log_to_file("[PHONE] session log unreadable: %s" % exc)
+        return []
+
     out = []
-    for i, row in enumerate(rows):
+    for i, row in enumerate(reversed(list(rows))):
         if not isinstance(row, dict):
             continue
-        label = _text(row.get("label") or row.get("text"))
+        label, kind = _EVENT_TEXT.get(row.get("type"), (None, "info"))
         if not label:
             continue
+        game = _text(row.get("game"))
+        # "unknown" is the detector's own placeholder, not a title.
+        if game and game.lower() != "unknown":
+            label = "%s, %s" % (label, game)
+        at = _number(row.get("ts"))
         out.append({
-            "id": str(row.get("id") or "act-%d" % i),
-            "at": _number(row.get("ts") or row.get("at")),
+            "id": "evt-%s-%s" % (int(at) if at else i, i),
+            "at": at,
             "label": label,
-            "kind": _activity_kind(row.get("kind") or row.get("tag")),
+            "kind": kind,
         })
     return out
-
-
-def _activity_kind(raw):
-    kind = (str(raw or "")).lower()
-    if "rec" in kind:
-        return "recording"
-    if "offline" in kind or "error" in kind:
-        return "offline"
-    return "info"
 
 
 def _number(value):
@@ -214,6 +253,11 @@ def _clips(panel):
     `path` is a footage location and is deliberately never read.
     """
     entries = (panel or {}).get("clips") or []
+    entries = sorted(
+        (c for c in entries if isinstance(c, dict)),
+        key=lambda c: _number(c.get("mtime")) or 0.0,
+        reverse=True,
+    )[:CLIPS_LIMIT]
     out = []
     for i, clip in enumerate(entries):
         if not isinstance(clip, dict):
@@ -222,15 +266,23 @@ def _clips(panel):
         if not title:
             continue
         out.append({
-            "id": str(clip.get("rel") or clip.get("id") or "clip-%d" % i),
+            "id": _stable_id(clip.get("rel") or clip.get("id"), i),
             "title": title,
-            "durationLabel": _text(clip.get("duration") or clip.get("duration_label")),
+            "durationLabel": _text(clip.get("length")),
             "sizeLabel": _text(clip.get("size_label")),
             "state": _clip_state(clip),
-            "startedAt": _number(clip.get("mtime") or clip.get("when")),
+            "startedAt": _number(clip.get("mtime")),
             "game": _text(clip.get("game")),
         })
     return out
+
+
+def _stable_id(key, index):
+    """Opaque, stable row id. The catalogue key is a relative path; hashing it
+    keeps the id stable across polls without shipping folder structure."""
+    if not key:
+        return "clip-%d" % index
+    return hashlib.sha1(str(key).encode("utf-8")).hexdigest()[:16]
 
 
 def _clip_state(clip):
@@ -273,18 +325,26 @@ def _peers(remote):
 
 
 def _offload(remote, snapshot=None):
+    """NAS offload state.
+
+    `_remote` emits only ``{enabled, text}`` - a human sentence like "3 clips
+    queued". There is no done/total/throughput anywhere in `snapshot()`, so the
+    design's progress bar has no real source and the phone gets a note instead
+    of a bar it would have to invent a fill for. Richer progress needs the
+    agent to read `Offloader` directly; until then, honest words.
+    """
     job = remote.get("offload") or (snapshot or {}).get("offload")
-    if not isinstance(job, dict):
+    if not isinstance(job, dict) or not job.get("enabled"):
         return None
+    note = _text(job.get("text"))
     total = _int(job.get("total"))
-    if not total:
-        return None
     return {
-        "done": _int(job.get("done")) or 0,
+        "done": _int(job.get("done")) if total else None,
         "total": total,
         "sizeLabel": _text(job.get("size_label")),
         "currentFile": _text(job.get("current")),
         "throughputLabel": _text(job.get("throughput")),
+        "note": note,
     }
 
 
@@ -299,6 +359,8 @@ def _games(games):
     """
     rows = (games or {}).get("games") or []
     out = []
+    # The classifier knows ~100 titles; the phone shows a browsable list, not
+    # the whole library. Only the first exe of each travels.
     for i, game in enumerate(rows):
         if not isinstance(game, dict):
             continue
@@ -313,6 +375,8 @@ def _games(games):
             "exe": exe or "",
             "recording": True,
         })
+        if len(out) >= GAMES_LIMIT:
+            break
     return out
 
 

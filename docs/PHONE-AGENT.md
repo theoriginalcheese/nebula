@@ -100,13 +100,41 @@ em-dash rather than showing as a bug.
 | Phone field | Desktop source |
 |---|---|
 | `recording.*` | `hero` (`state`, `title`, `scene`, `video`, `elapsed`, `size`, `bitrate`) |
+| `activity[]` | **`session_log.read()`, not `snapshot()["activity"]`** — that pane is the app's debug log ("Taskbar hover — orbit", "Backfill: Indexed 0 NAS clips") and its `ts` is a formatted `"02:05:16"` clock string, so it could not carry a real timestamp even if the text were wanted |
 | `recording.diskLeftLabel` | `forecast.label` |
 | `recording.diskWarning` | derived from that label — `forecast` exposes no boolean; hours, or days inside `forecast.PROJECTION_DAYS` |
-| `clips[]` | `clips_panel.clips[]` — `title`, `rel`, `game`, `size_label`, `location` (`"remote"` = on NAS) |
+| `clips[]` | `clips_panel.clips[]` — `title`, `rel`, `game`, `size_label`, `length` (duration), `mtime`, `location` (`"remote"` = on NAS). `path`/`nas_path` are absolute and are never read |
+| `offload` | `remote.offload` — only `{enabled, text}` exists. There is no done/total/throughput anywhere in `snapshot()`, so the phone gets the sentence and draws **no** progress bar rather than inventing a fill |
 | `peers[]` | `remote.tailscale.peers[]` — no RTT in that payload, so `pingMs` is null |
 | `detectedGames[]` | `games.games[]` — `name`, `exes[0]`. There is no per-title record switch: membership in this list *is* the recording decision, which is what the frame's "Recording · N" counts |
 | `notGamesCount` | `len(games.non_games)` |
 | `moonlight` | `remote.moonlight.state` |
+
+### Limits
+
+Measured on a live Alien-PC snapshot: the uncapped payload was 80 KB, which at
+a 5s foreground poll is roughly 1 MB/minute of cellular data. Capped it is
+31 KB.
+
+| Field | Cap | Why |
+|---|---|---|
+| `clips` | 120, newest first | The desktop caps its own list at 400; the phone shows the recent day or two |
+| `detectedGames` | 60 | The classifier knows ~100 titles, some with 30+ executables; only the first exe travels |
+| `activity` | 20 | The Now screen shows a short feed |
+
+Clip ids are a truncated SHA-1 of the catalogue key rather than the key itself:
+stable across polls, and folder structure never rides along.
+
+## Verified live
+
+Run against a real `Api.snapshot()` on Alien-PC, 2026-08-29:
+
+- `GET /v1/health` → 200; `/v1/snapshot` → 200, 31 KB, 0.31s.
+- No token and wrong token → 401. `POST` → 501.
+- `netstat` showed the listener on `100.90.134.9:8765` only. The LAN address
+  (`192.168.68.51:8765`) and loopback both refused — the socket genuinely does
+  not exist off the tailnet.
+- Payload contained no absolute path.
 
 ## Rules
 
