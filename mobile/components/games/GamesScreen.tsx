@@ -16,7 +16,7 @@ const TAB_CLEAR = 110;
 export function GamesScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
-  const { state, toggleGameRecording } = useStudio();
+  const { state, toggleGameRecording, agentConfigured } = useStudio();
   const waiting = state.classifyQueue.length;
   const nextId = state.classifyQueue[0]?.id;
   const recordingCount = state.detectedGames.filter((g) => g.recording).length;
@@ -94,15 +94,23 @@ export function GamesScreen() {
           <View style={{ gap: 8 }}>
             {state.detectedGames.map((game, i) => (
               <RiseIn key={game.id} delay={i * 55}>
-                <GameRow game={game} onToggle={() => toggleGameRecording(game.id)} />
+                <GameRow
+                  game={game}
+                  onToggle={() => toggleGameRecording(game.id)}
+                  /* The agent is read-only (docs/PHONE-AGENT.md rule 3), so a
+                     flip here would be reverted by the next poll. Reflect
+                     only. */
+                  readOnly={agentConfigured}
+                />
               </RiseIn>
             ))}
           </View>
         )}
 
         <Text style={styles.footnote}>
-          Icons come from the executable. The tint behind each is hashed from the name, so a game
-          keeps its colour.
+          {agentConfigured && state.detectedGames.length > 0
+            ? 'Switches show what the studio PC is recording. Changing them from the phone arrives in a later version.'
+            : 'Icons come from the executable. The tint behind each is hashed from the name, so a game keeps its colour.'}
         </Text>
       </ScrollView>
     </View>

@@ -25,6 +25,7 @@ import chain (`tests/test_import_budget.py`).
 """
 import hmac
 import json
+import re
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -107,6 +108,31 @@ def project(snapshot, now):
     }
 
 
+def disk_warning(label):
+    """True when the disk forecast falls inside the app's own projection window.
+
+    `_forecast` in spike/app.py returns only ``{label, rate, used_pct}`` - there
+    is no boolean to read - so the warning is derived from the label vocabulary
+    `forecast.days_left_label()` produces: "N hours", "N days", "60+ days", or
+    an empty/explanatory string. Anything measured in hours is a warning; days
+    are a warning inside `forecast.PROJECTION_DAYS`, which is the horizon the
+    desktop already projects against rather than a threshold invented here.
+
+    Unknown ("", "drive unavailable", "needs history") is never a warning -
+    not knowing is not the same as knowing it is bad.
+    """
+    if not label:
+        return False
+    low = str(label).lower()
+    if "hour" in low:
+        return True
+    match = re.search(r"(\d+)\s*day", low)
+    if not match or "+" in low:
+        return False
+    from obsauto.forecast import PROJECTION_DAYS
+    return int(match.group(1)) <= PROJECTION_DAYS
+
+
 def _recording(hero, forecast):
     status = _hero_status(hero)
     live = status in ("recording", "paused")
@@ -121,7 +147,7 @@ def _recording(hero, forecast):
         "fileSizeLabel": _text(hero.get("size")) if live else None,
         "bitrateLabel": _text(hero.get("bitrate")) if live else None,
         "diskLeftLabel": _text(forecast.get("label")),
-        "diskWarning": bool(forecast.get("warning")),
+        "diskWarning": disk_warning(forecast.get("label")),
     }
 
 
@@ -179,25 +205,39 @@ _CLIP_STATES = {"recording", "local", "offloading", "on-nas"}
 
 
 def _clips(panel):
+    """Clip rows from `_clips_panel`.
+
+    That payload carries `title` (name without extension), `size_label`, and
+    `location` - "remote" meaning the copy lives on the NAS. It has no
+    phone-style `state` field, so on-NAS/local is derived from `location`;
+    "offloading" needs the live offloader queue and is not in this payload.
+    `path` is a footage location and is deliberately never read.
+    """
     entries = (panel or {}).get("clips") or []
     out = []
     for i, clip in enumerate(entries):
         if not isinstance(clip, dict):
             continue
-        title = _text(clip.get("name") or clip.get("title"))
+        title = _text(clip.get("title") or clip.get("name"))
         if not title:
             continue
-        state = str(clip.get("state") or "").lower()
         out.append({
-            "id": str(clip.get("id") or clip.get("rel") or "clip-%d" % i),
+            "id": str(clip.get("rel") or clip.get("id") or "clip-%d" % i),
             "title": title,
             "durationLabel": _text(clip.get("duration") or clip.get("duration_label")),
-            "sizeLabel": _text(clip.get("size_label") or clip.get("size")),
-            "state": state if state in _CLIP_STATES else "local",
-            "startedAt": _number(clip.get("mtime") or clip.get("started_at")),
+            "sizeLabel": _text(clip.get("size_label")),
+            "state": _clip_state(clip),
+            "startedAt": _number(clip.get("mtime") or clip.get("when")),
             "game": _text(clip.get("game")),
         })
     return out
+
+
+def _clip_state(clip):
+    explicit = str(clip.get("state") or "").lower()
+    if explicit in _CLIP_STATES:
+        return explicit
+    return "on-nas" if clip.get("location") == "remote" else "local"
 
 
 def _moonlight_state(remote):
@@ -249,20 +289,29 @@ def _offload(remote, snapshot=None):
 
 
 def _games(games):
+    """Titles the classifier has ruled games.
+
+    `_games` emits `{name, exes[], meta, icon}` - there is no per-title record
+    switch on the desktop, because membership in this list *is* the recording
+    decision (which is what the frame's "Recording · N" counter counts). So
+    `recording` is True for every row here, and the phone's switch is a
+    read-only reflection of that until the agent grows a write path.
+    """
     rows = (games or {}).get("games") or []
     out = []
     for i, game in enumerate(rows):
         if not isinstance(game, dict):
             continue
         name = _text(game.get("name") or game.get("title"))
-        exe = _text(game.get("exe"))
         if not name:
             continue
+        exes = game.get("exes")
+        exe = _text(exes[0]) if isinstance(exes, list) and exes else _text(game.get("exe"))
         out.append({
-            "id": str(game.get("id") or exe or "game-%d" % i),
+            "id": str(game.get("key") or exe or name or "game-%d" % i),
             "name": name,
             "exe": exe or "",
-            "recording": bool(game.get("recording", True)),
+            "recording": True,
         })
     return out
 

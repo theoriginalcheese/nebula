@@ -7,6 +7,8 @@ type Props = {
   value: boolean;
   onValueChange: () => void;
   accessibilityLabel?: string;
+  /** Reflect-only: the control shows state it cannot change. */
+  disabled?: boolean;
 };
 
 /**
@@ -14,7 +16,7 @@ type Props = {
  * Track and knob cross-fade over 420ms on the shared ease; the knob slides
  * rather than the whole control flashing colour.
  */
-export function Toggle({ value, onValueChange, accessibilityLabel }: Props) {
+export function Toggle({ value, onValueChange, accessibilityLabel, disabled = false }: Props) {
   const t = useRef(new Animated.Value(value ? 1 : 0)).current;
 
   useEffect(() => {
@@ -45,12 +47,17 @@ export function Toggle({ value, onValueChange, accessibilityLabel }: Props) {
   return (
     <Pressable
       accessibilityRole="switch"
-      accessibilityState={{ checked: value }}
+      accessibilityState={{ checked: value, disabled }}
       accessibilityLabel={accessibilityLabel}
-      onPress={onValueChange}
+      onPress={disabled ? undefined : onValueChange}
+      disabled={disabled}
       hitSlop={6}>
       <Animated.View
-        style={[styles.track, { backgroundColor: trackColour, borderColor: borderColour }]}>
+        style={[
+          styles.track,
+          { backgroundColor: trackColour, borderColor: borderColour },
+          disabled && { opacity: 0.45 },
+        ]}>
         <Animated.View
           style={[
             styles.knob,

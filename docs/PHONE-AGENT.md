@@ -91,6 +91,23 @@ field-for-field, minus the two client-local fields (`savedToast`,
 }
 ```
 
+## Field sources
+
+Verified against what `spike/app.py` actually emits, not inferred — a guessed
+key name silently nulls a field, which the phone then renders as an honest
+em-dash rather than showing as a bug.
+
+| Phone field | Desktop source |
+|---|---|
+| `recording.*` | `hero` (`state`, `title`, `scene`, `video`, `elapsed`, `size`, `bitrate`) |
+| `recording.diskLeftLabel` | `forecast.label` |
+| `recording.diskWarning` | derived from that label — `forecast` exposes no boolean; hours, or days inside `forecast.PROJECTION_DAYS` |
+| `clips[]` | `clips_panel.clips[]` — `title`, `rel`, `game`, `size_label`, `location` (`"remote"` = on NAS) |
+| `peers[]` | `remote.tailscale.peers[]` — no RTT in that payload, so `pingMs` is null |
+| `detectedGames[]` | `games.games[]` — `name`, `exes[0]`. There is no per-title record switch: membership in this list *is* the recording decision, which is what the frame's "Recording · N" counts |
+| `notGamesCount` | `len(games.non_games)` |
+| `moonlight` | `remote.moonlight.state` |
+
 ## Rules
 
 1. **Null, never invented.** Every scalar is nullable and the phone renders

@@ -25,9 +25,11 @@ function hashHue(name: string): number {
 export function GameRow({
   game,
   onToggle,
+  readOnly = false,
 }: {
   game: DetectedGame;
   onToggle: () => void;
+  readOnly?: boolean;
 }) {
   const hue = hashHue(game.exe || game.name);
   const tint = `hsl(${hue}, 62%, 66%)`;
@@ -66,6 +68,7 @@ export function GameRow({
       <Toggle
         value={game.recording}
         onValueChange={onToggle}
+        disabled={readOnly}
         accessibilityLabel={`Record ${game.name}`}
       />
     </View>

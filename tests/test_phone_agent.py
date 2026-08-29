@@ -140,6 +140,58 @@ check("an unrecognised clip state falls back to local, not to on-nas",
       pa.project({"clips_panel": {"clips": [{"name": "x", "state": "weird"}]}},
                  1.0)["clips"][0]["state"])
 
+# ------------------------------------------------- disk warning derivation
+
+# `_forecast` in spike/app.py returns only {label, rate, used_pct} - there is
+# no boolean - so the warning is read out of the label vocabulary.
+for label, expected in [("4 days left", True), ("7 days left", True),
+                        ("8 days left", False), ("1 day left", True),
+                        ("3 hours left", True), ("60+ days left", False),
+                        ("", False), ("drive unavailable", False),
+                        ("Not enough history", False), (None, False)]:
+    check("disk warning for %r is %s" % (label, expected),
+          pa.disk_warning(label) is expected, pa.disk_warning(label))
+
+warned = pa.project({"forecast": {"label": "4 days left"}}, 1.0)
+check("a low forecast surfaces as diskWarning on the phone",
+      warned["recording"]["diskWarning"] is True
+      and warned["recording"]["diskLeftLabel"] == "4 days left",
+      warned["recording"]["diskLeftLabel"])
+
+# ------------------------------------------------------ real desktop shapes
+
+# These key names are the ones spike/app.py actually emits. Guessing them wrong
+# silently nulls a field, which looks like honest-empty rather than a bug.
+real_clips = pa.project({"clips_panel": {"clips": [
+    {"rel": "Helldivers II/2026-08-07.mkv", "name": "2026-08-07 19-33-41.mkv",
+     "title": "2026-08-07 19-33-41", "game": "Helldivers II",
+     "size_label": "7.20 GB", "location": "remote", "mtime": 1787000000.0},
+    {"rel": "Factorio/x.mkv", "title": "x", "game": "Factorio",
+     "size_label": "184 MB", "location": "local"},
+]}}, 1.0)["clips"]
+check("clip title prefers the extension-less form",
+      real_clips[0]["title"] == "2026-08-07 19-33-41", real_clips[0]["title"])
+check("location=remote maps to on-nas",
+      real_clips[0]["state"] == "on-nas", real_clips[0]["state"])
+check("a local clip is not claimed to be on the NAS",
+      real_clips[1]["state"] == "local", real_clips[1]["state"])
+check("clip id uses the stable rel key",
+      real_clips[0]["id"] == "Helldivers II/2026-08-07.mkv", real_clips[0]["id"])
+check("size label projects from size_label",
+      real_clips[0]["sizeLabel"] == "7.20 GB", real_clips[0]["sizeLabel"])
+
+real_games = pa.project({"games": {"games": [
+    {"name": "Helldivers II", "exes": ["helldivers2.exe"], "meta": "553850"},
+    {"name": "Factorio", "exes": ["factorio.exe"]},
+], "non_games": [{"name": "cursor.exe"}]}}, 1.0)
+check("game exe comes from the exes list, not a singular key",
+      real_games["detectedGames"][0]["exe"] == "helldivers2.exe",
+      real_games["detectedGames"][0]["exe"])
+check("classified games are all recorded - membership is the decision",
+      all(g["recording"] for g in real_games["detectedGames"]), "all true")
+check("non-games are counted, not listed",
+      real_games["notGamesCount"] == 1, real_games["notGamesCount"])
+
 # --------------------------------------------------------------------- peers
 
 peered = pa.project({"remote": {"tailscale": {"peers": [
