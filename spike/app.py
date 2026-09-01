@@ -3195,7 +3195,7 @@ def main():
         def _start_phone_agent():
             try:
                 from obsauto.phone_agent import PhoneAgent
-                agent = PhoneAgent(api, api.config())
+                agent = PhoneAgent(api, api.cfg)
                 if agent.enabled:
                     api._phone_agent = agent
                     agent.start()

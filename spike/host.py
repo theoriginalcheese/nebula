@@ -494,6 +494,23 @@ class NebulaHost:
     def attach(self, window):
         self.window = window
 
+    def enable_user_resize(self):
+        """Restore WS_THICKFRAME on the frameless window for the HTML resize grips.
+
+        Not implemented yet — frameless strips the bit and nothing here adds
+        it back via ctypes. No-op so boot doesn't die on it; the .resize-edge
+        grips stay inert until this is written.
+        """
+        self._log("[Window] enable_user_resize: not implemented, resize grips are inert.")
+
+    def begin_resize(self, edge):
+        """Would start the native size-move loop for an HTML edge/corner grip.
+
+        Not implemented yet — see enable_user_resize(). False so the JS
+        promise resolves instead of rejecting into a console error.
+        """
+        return False
+
     def show(self):
         if not self.window:
             return
