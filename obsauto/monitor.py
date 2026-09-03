@@ -40,7 +40,7 @@ except ImportError:  # pragma: no cover
     win32gui = None
     win32process = None
 
-from .obs_client import OBSError
+from .obs_client import OBSError, is_not_ready_error
 from . import discord_detect
 from . import session_detect
 from .audio_detect import AudioKeepAlive
@@ -165,6 +165,63 @@ def _wait_for_obs(timeout, log):
     return is_obs_running()
 
 
+def _wait_for_obs_exit(timeout, log):
+    """Wait until obs64.exe is gone — used after killing a stuck shutdown."""
+    deadline = time.monotonic() + max(0.5, float(timeout))
+    while time.monotonic() < deadline:
+        if not is_obs_running():
+            return True
+        time.sleep(0.35)
+    if not is_obs_running():
+        return True
+    log("[OBS] OBS process still running after %.0fs; continuing anyway." % timeout)
+    return False
+
+
+def recover_stuck_obs(obs, config, log, on_connection_change=None):
+    """Kill a zombie OBS (often hung mid-shutdown) and relaunch elevated."""
+    log("[OBS] Frontend stuck not-ready — restarting OBS.")
+    try:
+        if obs.is_recording():
+            log("[OBS] Skipping restart: OBS reports an active recording.")
+            return False
+    except OBSError:
+        pass
+    try:
+        obs.disconnect()
+    except Exception:
+        pass
+    for proc in psutil.process_iter(["name"]):
+        try:
+            if (proc.info.get("name") or "").lower() == "obs64.exe":
+                proc.kill()
+        except (psutil.NoSuchProcess, psutil.AccessDenied) as exc:
+            log("[OBS] Could not stop obs64.exe: %s" % exc)
+    _wait_for_obs_exit(15.0, log)
+    ensure_obs_running(config.get("obs_path"), log=log, wait=25.0)
+    deadline = time.monotonic() + 25.0
+    last_exc = None
+    while time.monotonic() < deadline:
+        try:
+            obs.connect()
+            break
+        except Exception as exc:
+            last_exc = exc
+            time.sleep(0.5)
+    else:
+        log("[OBS] Reconnect after restart failed: %s" % last_exc)
+        if on_connection_change:
+            on_connection_change(False)
+        return False
+    if not obs.wait_until_ready(timeout=60.0):
+        log("[OBS] OBS restarted but still not accepting requests.")
+        return False
+    if on_connection_change:
+        on_connection_change(True)
+    log("[OBS] Restart complete — OBS is ready.")
+    return True
+
+
 def ensure_obs_running(obs_path, log=lambda msg: None, wait=20.0):
     """Launch OBS if it isn't already running. Used both for the initial
     connection (in case OBS isn't set to autostart with Windows) and for
@@ -277,6 +334,14 @@ class Monitor:
     # After a natural game-process exit, quiet window before auto-recording
     # that same basename again. Other games are unaffected.
     REOPEN_COOLDOWN_SECONDS = 30
+    # How long OBS may reject every request with 207 before we kill/relaunch.
+    NOT_READY_RECOVERY_AFTER_S = 45.0
+    # Shorter threshold when OBS was already running at monitor start (zombie).
+    NOT_READY_RECOVERY_ZOMBIE_S = 12.0
+    # Minimum gap between automatic OBS restarts (stuck mid-shutdown).
+    NOT_READY_RECOVERY_COOLDOWN_S = 120.0
+    # Rate-limit repeated start-failure logs while OBS is not ready.
+    START_FAIL_LOG_INTERVAL_S = 30.0
 
     def __init__(self, obs_client, classifier, config, on_log=None, on_state=None, on_notify=None,
                  on_connection_change=None, offloader=None, on_record_prompt=None):
@@ -328,6 +393,12 @@ class Monitor:
         self._audio_keep_alive = AudioKeepAlive(
             config.get("keep_alive_audio_processes", ["discord.exe"]), on_log=self.log,
         )
+        self._auto_pause_reason = None
+        self._last_focus_hold_log = 0.0
+        self._obs_not_ready_since = None
+        self._last_obs_recovery_at = 0.0
+        self._last_start_fail_logged_at = 0.0
+        self._obs_was_running_at_start = False
 
     def log(self, msg):
         self.on_log(msg)
@@ -335,6 +406,7 @@ class Monitor:
     def start(self):
         if self._running:
             return
+        self._obs_was_running_at_start = is_obs_running()
         self._running = True
         self._thread = threading.Thread(target=self._loop, daemon=True)
         self._thread.start()
@@ -350,6 +422,7 @@ class Monitor:
             self._pending_target = _UNSET
             self._pending_count = 0
             self._auto_paused = False
+            self._auto_pause_reason = None
             self.clear_hold_off()
             self.clear_reopen_cooldown()
         self.log("[Monitor] Stopped.")
@@ -579,6 +652,7 @@ class Monitor:
 
         self._recording_started_at = None
         self._auto_paused = False  # a stop finalizes the file; any pause state is moot
+        self._auto_pause_reason = None
         time.sleep(0.3)  # OBS needs a moment to fully settle after stopping
         return True
 
@@ -601,6 +675,48 @@ class Monitor:
         pid, basename, _, _ = self._recording_target
         exe_path, _ = _process_info(pid)
         return exe_path is not None and os.path.basename(exe_path).lower() == basename
+
+    # How often the "waiting for the game" hold may say so in the log.
+    FOCUS_HOLD_LOG_INTERVAL_S = 120.0
+
+    def _recorded_game_foreground(self):
+        """True when the game being recorded owns the foreground window.
+
+        Fails **open**. Without pywin32, or when the foreground window's exe
+        can't be read (an elevated game, a splash window with no title), the
+        honest answer is "don't know" - and a check that can't answer must
+        never be the thing that keeps a recording paused for ever. Losing
+        footage to a silent hold is far worse than resuming a beat early.
+        """
+        target = self._recording_target
+        if not target:
+            return True
+        info = get_foreground_window_info()
+        if info is None:
+            return True
+        pid, exe_path, proc_name, _title, _cls = info
+        if pid == target[0]:
+            return True
+        if not exe_path:
+            return True
+        if os.path.basename(exe_path).lower() == target[1]:
+            return True
+        # A *different* game in front also releases the hold, even though it
+        # is not the game on the target. Holding here would mean a session
+        # that records nothing at all: the sticky-target rule keeps the open
+        # recording pointed at the first game until it exits, so a pause that
+        # only the first game can lift would sit through the whole of the
+        # second one. Cache-only - the loop must not block on a Steam lookup.
+        result, _name = self.classifier.peek(exe_path, proc_name)
+        return result == "game"
+
+    def _log_focus_hold(self):
+        now = time.monotonic()
+        if now - self._last_focus_hold_log < self.FOCUS_HOLD_LOG_INTERVAL_S:
+            return
+        self._last_focus_hold_log = now
+        name = self._recording_target[2] if self._recording_target else "the game"
+        self.log("[Monitor] Still paused - waiting for %s to be in front again." % name)
 
     def _recording_gate_open(self, basename):
         """For session-gated apps (Moonlight), recording should only start/
@@ -709,6 +825,7 @@ class Monitor:
         if self._auto_paused:
             return
         self._auto_paused = True
+        self._auto_pause_reason = reason
         try:
             status = self.obs.get_record_status()
             if status.get("outputActive") and not status.get("outputPaused"):
@@ -725,6 +842,7 @@ class Monitor:
         if not self._auto_paused:
             return
         self._auto_paused = False
+        self._auto_pause_reason = None
         try:
             status = self.obs.get_record_status()
             if status.get("outputActive") and status.get("outputPaused"):
@@ -854,7 +972,13 @@ class Monitor:
 
             started = False
             last_error = None
-            for attempt in range(3):
+            attempts = 3
+            pause_s = 0.5
+            if not self._obs_requests_ready():
+                attempts = 8
+                pause_s = 1.0
+                self.obs.wait_until_ready(timeout=min(15.0, attempts * pause_s))
+            for attempt in range(attempts):
                 try:
                     self._retarget_game_capture(_process_info(target[0])[0])
                     self.obs.set_record_directory(folder)
@@ -863,8 +987,16 @@ class Monitor:
                     break
                 except OBSError as e:
                     last_error = e
-                    self.log(f"[OBS] Start failed (attempt {attempt + 1}): {e}")
-                    time.sleep(0.5)
+                    if is_not_ready_error(e):
+                        self._log_start_failure(
+                            "[OBS] Start waiting on OBS readiness (attempt %d): %s"
+                            % (attempt + 1, e))
+                        if attempt + 1 < attempts:
+                            self.obs.wait_until_ready(timeout=pause_s)
+                            continue
+                    else:
+                        self.log(f"[OBS] Start failed (attempt {attempt + 1}): {e}")
+                    time.sleep(pause_s)
             if started:
                 self._recording_started_at = time.time()
                 self.log(f"[OBS] Recording started: {display_name} -> {folder}")
@@ -878,7 +1010,13 @@ class Monitor:
                 # the fabricated data the spec forbids.
                 session_log.append("rec_start", game=display_name)
             else:
-                self.log(f"[OBS] Giving up on start after retries: {last_error}")
+                if last_error and is_not_ready_error(last_error):
+                    self._log_start_failure(
+                        "[OBS] Start deferred: OBS not ready (%s)" % last_error)
+                    # Leave _recording_target unset; the loop will retry once OBS
+                    # accepts requests again (or _recover_stuck_obs clears it).
+                else:
+                    self.log(f"[OBS] Giving up on start after retries: {last_error}")
                 target = None
         else:
             self.on_state(game=None, folder=None)
@@ -892,6 +1030,61 @@ class Monitor:
     # flicker caused several rapid stop/start cycles - and several tiny
     # leftover clips - for what should have been one clean stop.
     DEBOUNCE_TICKS = 2
+
+    def _obs_requests_ready(self):
+        """True when OBS accepts ordinary websocket requests."""
+        if not self.obs.connected:
+            self._obs_not_ready_since = None
+            return False
+        try:
+            self.obs.get_version()
+            self._obs_not_ready_since = None
+            return True
+        except OBSError as exc:
+            if is_not_ready_error(exc):
+                if self._obs_not_ready_since is None:
+                    self._obs_not_ready_since = time.monotonic()
+                return False
+            raise
+
+    def _maybe_recover_stuck_obs(self):
+        """Restart OBS when the websocket is up but the frontend never loads."""
+        if self._obs_not_ready_since is None:
+            return False
+        elapsed = time.monotonic() - self._obs_not_ready_since
+        threshold = (self.NOT_READY_RECOVERY_ZOMBIE_S
+                     if self._obs_was_running_at_start
+                     else self.NOT_READY_RECOVERY_AFTER_S)
+        if elapsed < threshold:
+            return False
+        now = time.monotonic()
+        if now - self._last_obs_recovery_at < self.NOT_READY_RECOVERY_COOLDOWN_S:
+            return False
+        return self._recover_stuck_obs()
+
+    def _recover_stuck_obs(self):
+        ok = recover_stuck_obs(
+            self.obs, self.config, self.log,
+            on_connection_change=self._on_recover_connection,
+        )
+        if ok:
+            self._was_disconnected = False
+            self._last_obs_recovery_at = time.monotonic()
+            self._obs_not_ready_since = None
+        else:
+            self._last_obs_recovery_at = time.monotonic()
+        return ok
+
+    def _on_recover_connection(self, connected):
+        self._was_disconnected = not connected
+        self.on_connection_change(bool(connected))
+
+    def _log_start_failure(self, message):
+        now = time.monotonic()
+        if now - self._last_start_fail_logged_at < self.START_FAIL_LOG_INTERVAL_S:
+            return
+        self._last_start_fail_logged_at = now
+        self.log(message)
 
     def _maybe_reconnect(self):
         """If OBS crashes/closes mid-session, the websocket recv loop
@@ -922,12 +1115,18 @@ class Monitor:
             self.obs.connect()
         except Exception as e:
             self.log(f"[OBS] Reconnect attempt failed: {e}")
+            return self.obs.connected
         return self.obs.connected
 
     def _loop(self):
         while self._running:
             try:
                 if not self._maybe_reconnect():
+                    time.sleep(self.config["poll_interval_seconds"])
+                    continue
+
+                obs_ready = self._obs_requests_ready()
+                if not obs_ready and self._maybe_recover_stuck_obs():
                     time.sleep(self.config["poll_interval_seconds"])
                     continue
 
@@ -966,6 +1165,19 @@ class Monitor:
                 if should_pause and in_discord_call:
                     should_pause = False
 
+                # Any input at all used to resume an idle pause - so replying
+                # to a Discord message, or reading a wiki in a browser, put
+                # the recording straight back on while the game sat in the
+                # background. Hold the pause until the game you were recording
+                # is genuinely in front again.
+                if (not should_pause and self._auto_paused
+                        and self._auto_pause_reason == "idle"
+                        and game_still_running
+                        and not self._recorded_game_foreground()):
+                    should_pause = True
+                    pause_reason = "idle"
+                    self._log_focus_hold()
+
                 # The GUI "Idle" pill reflects whether recording is actually
                 # being held idle, not just the raw local input timer - so it
                 # won't read "idle" while a stream or a voice call keeps it live.
@@ -975,13 +1187,14 @@ class Monitor:
                     # Pause in place rather than stopping - the game's still
                     # open. Resuming continues the same file instead of
                     # starting a new clip. Skip target resolution this tick.
-                    self._ensure_paused(reason=pause_reason)
+                    if obs_ready:
+                        self._ensure_paused(reason=pause_reason)
                     self._pending_target = _UNSET
                     self._pending_count = 0
                     time.sleep(self.config["poll_interval_seconds"])
                     continue
 
-                if self._auto_paused:
+                if self._auto_paused and obs_ready:
                     self._ensure_resumed()
 
                 hold_recording = False
@@ -1039,9 +1252,16 @@ class Monitor:
                             self._pending_target = _UNSET
                             self._pending_count = 0
                         else:
-                            self._apply_target(target, hold_recording=hold_recording)
-                            self._pending_target = _UNSET
-                            self._pending_count = 0
+                            if obs_ready:
+                                self._apply_target(target,
+                                                   hold_recording=hold_recording)
+                                self._pending_target = _UNSET
+                                self._pending_count = 0
+                            elif target is not None:
+                                # Debounce is satisfied but OBS is still
+                                # booting — show the game and retry next tick.
+                                self.on_state(game=target[2], folder=None,
+                                              idle=should_pause)
             except Exception as e:  # keep the loop alive no matter what
                 self.log(f"[Monitor] Error: {e}")
             time.sleep(self.config["poll_interval_seconds"])

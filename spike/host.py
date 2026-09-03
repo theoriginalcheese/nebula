@@ -266,6 +266,10 @@ class NebulaHost:
         self._is_paused = False
         self._pause_reason = None   # "idle" | "session" | None — monitor auto-pause
         self._monitoring_on = False
+        # You pressed "Pause monitoring". Kept apart from _monitoring_on,
+        # which is also false while OBS is simply unreachable - the whole
+        # point is that a deliberate pause must not read as a fault.
+        self._monitoring_paused = False
         self._connecting = False
         self._connect_gen = 0
         self._abort_connect = False
@@ -396,6 +400,11 @@ class NebulaHost:
             return "paused"
         if self._is_recording:
             return "recording"
+        # Below the recording states on purpose: pausing the watcher does not
+        # touch a recording that is already running, so "Recording" stays the
+        # honest answer while one is open.
+        if self._monitoring_paused:
+            return "monitoring_paused"
         return "idle"
 
     def hero_readouts(self):
@@ -859,6 +868,7 @@ class NebulaHost:
             "paused": ("Paused — stream ended"
                        if self._pause_reason == "session" else "Paused"),
             "idle": "Watching for a game",
+            "monitoring_paused": "Monitoring paused",
             "disconnected": ("Looking for OBS" if self._connecting
                              else "OBS disconnected"),
         }[state]
@@ -872,6 +882,8 @@ class NebulaHost:
         elif state == "disconnected":
             detail = "%s:%s" % (self.config.get("obs_host", "localhost"),
                                 self.config.get("obs_port", 4455))
+        elif state == "monitoring_paused":
+            detail = "Nothing will record until you resume"
         elif game:
             detail = game
         else:
@@ -1049,6 +1061,7 @@ class NebulaHost:
         self._monitoring_on = True
         with self._state_lock:
             self._obs_connected = True
+            self._monitoring_paused = False
         self.monitor.start()
         self._log("[Monitor] Auto-started.")
         self.refresh_tray_icon()
@@ -1312,6 +1325,7 @@ class NebulaHost:
             self._obs_connected = False
             self._is_recording = False
             self._is_paused = False
+            self._monitoring_paused = False
         self.refresh_tray_icon()
 
     # --- actions the tray menu can reach --------------------------------
@@ -1373,11 +1387,43 @@ class NebulaHost:
         if not self.monitor:
             return
         if self.monitor._running:
-            self._stop()
-            self._log("[Hotkey] Monitoring disabled.")
+            self.pause_monitoring()
+        else:
+            self.resume_monitoring()
+
+    def pause_monitoring(self):
+        """Stop watching for games, but keep the OBS websocket up.
+
+        This used to go through `_stop()`, which disconnects. The hero card
+        then had no way to tell "you pressed Pause monitoring" apart from
+        "OBS fell over", so it showed the ember frame 2h - `Can't reach OBS`,
+        `Retry now` - for a connection that was never lost. Hold the socket,
+        stop only the watcher, and let the card say what actually happened.
+
+        A recording already in progress is deliberately left alone: pausing
+        the watcher means "stop starting and stopping things for me", not
+        "cut the clip I'm in the middle of".
+        """
+        self.monitor.stop()
+        self._monitoring_on = False
+        with self._state_lock:
+            self._monitoring_paused = True
+        self._log("[Monitor] Monitoring paused - OBS stays connected.")
+        self.refresh_tray_icon()
+        self._poll_now()
+
+    def resume_monitoring(self):
+        """Watch for games again. Reconnects first if OBS went away meanwhile."""
+        with self._state_lock:
+            self._monitoring_paused = False
+        if self.obs and self.obs.connected:
+            self.monitor.start()
+            self._monitoring_on = True
+            self._log("[Monitor] Monitoring resumed.")
+            self.refresh_tray_icon()
+            self._poll_now()
         else:
             self.autostart()
-            self._log("[Hotkey] Monitoring enabled.")
 
     def _save_replay(self):
         """Save the buffered seconds. Reachable from the tray and the hotkey."""

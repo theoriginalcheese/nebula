@@ -28,6 +28,11 @@ class OBSError(Exception):
     pass
 
 
+def is_not_ready_error(exc):
+    """True when obs-websocket returned 207 (OBS frontend still loading or stuck)."""
+    return isinstance(exc, OBSError) and "not ready" in str(exc).lower()
+
+
 class OBSClient:
     def __init__(self, host, port, password="", on_log=None):
         self.host = host
@@ -230,6 +235,24 @@ class OBSClient:
 
     def set_record_directory(self, path):
         self.call("SetRecordDirectory", {"recordDirectory": path})
+
+    def wait_until_ready(self, timeout=60.0, interval=0.5):
+        """Poll until OBS accepts requests, or return False on timeout.
+
+        The websocket handshake can succeed while ``obs_frontend_ready()``
+        is still false — or while OBS is hung mid-shutdown with its socket
+        still listening. Callers should treat False as "not usable yet".
+        """
+        deadline = time.monotonic() + max(0.0, float(timeout))
+        while time.monotonic() < deadline:
+            try:
+                self.get_version()
+                return True
+            except OBSError as exc:
+                if not is_not_ready_error(exc):
+                    raise
+            time.sleep(max(0.05, float(interval)))
+        return False
 
     # ---- scene/source management (used for the dynamic Game Capture source) ----
     def get_scene_item_list(self, scene_name):

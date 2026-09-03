@@ -30,6 +30,11 @@ class FakeOBS:
     def is_recording(self):
         return self._recording
 
+    def get_version(self):
+        # The loop asks this every tick to tell "OBS is up" from "OBS is up
+        # but not accepting requests yet" (websocket 207).
+        return "30.2.3"
+
     def get_record_status(self):
         return {"outputActive": self._recording, "outputPaused": False}
 

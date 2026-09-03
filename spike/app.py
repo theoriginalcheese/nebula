@@ -704,7 +704,7 @@ class Api:
             readouts = self._host.hero_readouts()
             meta = self._host.obs_meta()
 
-        hero_key = "watching" if state == "idle" else state
+        hero_key = "watching" if state in ("idle", "monitoring_paused") else state
         spec = dv.HERO_STATES.get(hero_key, dv.HERO_STATES["disconnected"])
         idle = int(self.cfg.get("idle_timeout_seconds") or 4)
         reconnect = int(self.cfg.get("reconnect_interval_seconds") or 10)
@@ -720,6 +720,7 @@ class Api:
             "idle": "Idle — watching",
             "recording": "Recording",
             "paused": paused_eyebrow,
+            "monitoring_paused": "Monitoring paused",
         }.get(state, spec["eyebrow"])
 
         title = s.get("heading") or {
@@ -727,6 +728,7 @@ class Api:
             "idle": "No game in focus",
             "recording": "Recording",
             "paused": "Paused",
+            "monitoring_paused": "Monitoring paused",
         }.get(state, "Nebula")
 
         hint = ""
@@ -749,7 +751,18 @@ class Api:
                 source = detail
         elif state == "paused" and pause_reason == "session":
             source = "Moonlight stream ended — recording held"
+        elif state == "paused" and pause_reason == "idle":
+            hint = ("Resumes on its own when the game you were recording is "
+                    "back in the foreground.")
+        elif state == "monitoring_paused":
+            hint = ("You paused monitoring — OBS is still connected, nothing "
+                    "will start or stop by itself until you resume.")
         show_readouts = state in ("recording", "paused")
+        # Frame 2f's pair is wrong here: it offers "Pause monitoring" on a card
+        # that is already paused, and no way back.
+        actions = tuple(spec.get("actions") or ())
+        if state == "monitoring_paused":
+            actions = ("Resume monitoring", "Record anyway")
         scene = meta.get("scene") or ""
         video = meta.get("video_label") or ""
         seq = 0
@@ -773,9 +786,8 @@ class Api:
             "video": video,
             "preview_seq": seq,
             "connecting": connecting and state == "disconnected",
-            "actions": list(spec.get("actions") or ()),
-            "actions_enabled": [a for a in (spec.get("actions") or ())
-                                if a != "Mark clip"],
+            "actions": list(actions),
+            "actions_enabled": [a for a in actions if a != "Mark clip"],
         }
 
     def _tiles(self):
@@ -1471,7 +1483,8 @@ class Api:
         routes = {
             "Retry now": lambda: self._host.autostart(force=True),
             "Record anyway": self._host._toggle_record,
-            "Pause monitoring": self._host._toggle_monitoring,
+            "Pause monitoring": self._host.pause_monitoring,
+            "Resume monitoring": self._host.resume_monitoring,
             "Stop recording": self._host._toggle_record,
             "Pause": self._host._toggle_pause,
             "Resume": self._host._toggle_pause,
@@ -1725,6 +1738,9 @@ class Api:
                                 ("transport", "pause")))
         elif state == "idle":
             add(palette_mod.Row("Actions", "Record anyway", ("transport", "record")))
+        elif state == "monitoring_paused":
+            add(palette_mod.Row("Actions", "Resume monitoring",
+                                ("monitoring", "resume")))
 
         if host and host.replay and host.replay.enabled:
             add(palette_mod.Row("Actions",
@@ -1784,6 +1800,10 @@ class Api:
             return {"ok": True, "goto": arg}
         if kind == "transport" and host:
             (host._toggle_record if arg == "record" else host._toggle_pause)()
+            return {"ok": True}
+        if kind == "monitoring" and host:
+            (host.resume_monitoring if arg == "resume"
+             else host.pause_monitoring)()
             return {"ok": True}
         if kind == "replay" and host:
             (host._save_replay if arg == "save" else host.toggle_replay_arm)()
