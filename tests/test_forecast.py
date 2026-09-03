@@ -72,8 +72,10 @@ check("the clip's path and size come through",
 summary = session_log.summarise(spans)
 check("the header counts distinct games", summary["games"] == 2, summary)
 check("the header counts marks", summary["marks"] == 1, summary)
-check("the header sums recorded time",
-      abs(summary["seconds"] - (1 + 1 + 0.5) * HOUR) < 1, summary)
+# 2.5h of spans, one of which holds a 0.1h idle gap. The header answers
+# "how long did I record", so the pause comes out - it used to be counted.
+check("the header sums recorded time, pauses excluded",
+      abs(summary["seconds"] - (1 + 1 + 0.5 - 0.1) * HOUR) < 1, summary)
 
 # A log that begins mid-recording (a crash, a first run) must not lose the clip.
 orphan = session_log.spans(

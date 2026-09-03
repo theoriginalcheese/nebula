@@ -45,6 +45,9 @@ from .fsprobe import isdir_within
 _CHUNK = 4 * 1024 * 1024
 _VIDEO_EXTS = (".mkv", ".mp4", ".mov", ".flv", ".ts", ".m4v")
 _INDEX_NAME = "clip_index.json"
+# A backfill that changes nothing still says so this often, so a quiet run
+# is distinguishable from a dead one.
+_BACKFILL_QUIET_LOG_S = 3600.0
 _CACHE_DIRNAME = "clip_cache"
 _FETCH_PROBE_TIMEOUT_S = 8.0
 _PAUSE_POLL_S = 0.12
@@ -99,6 +102,9 @@ class ClipCatalog:
         self._cancel = {}  # rel -> threading.Event
         self._pause = {}  # rel -> threading.Event (set => paused)
         self._loaded = False
+        # Last backfill result that was worth an activity line, and when.
+        self._last_backfill_said = None
+        self._last_backfill_said_at = 0.0
 
     # ---- config helpers -------------------------------------------------
     @property
@@ -585,7 +591,19 @@ class ClipCatalog:
             self.flush()
         msg = "Indexed %d NAS clip%s (%d scanned)." % (
             added, "" if added == 1 else "s", seen)
-        self._log("[Clips] Backfill: %s" % msg)
+        # The activity pane is the only place these land, and a reconcile that
+        # found nothing is not news. "Indexed 0 NAS clips (4767 scanned)."
+        # every few minutes buried everything else in the feed. Speak when
+        # something changed - anything indexed, or a different file count -
+        # and otherwise no more than once an hour, so a long quiet run still
+        # shows the scan is alive.
+        now = time.time()
+        state = (added, seen)
+        if (added or state != self._last_backfill_said
+                or now - self._last_backfill_said_at >= _BACKFILL_QUIET_LOG_S):
+            self._last_backfill_said = state
+            self._last_backfill_said_at = now
+            self._log("[Clips] Backfill: %s" % msg)
         return {"ok": True, "message": msg, "added": added, "seen": seen}
 
     # ---- fetch / ensure_local -------------------------------------------

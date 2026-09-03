@@ -37,7 +37,8 @@ ALIASES = {
     "websocket": "websocket-client",
     "win32api": "pywin32", "win32con": "pywin32",
     "win32gui": "pywin32", "win32ui": "pywin32", "pythoncom": "pywin32",
-    "win32process": "pywin32",
+    "win32process": "pywin32", "win32file": "pywin32",
+    "win32com": "pywin32",
     "PIL": "Pillow",
     "webview": "pywebview",
 }

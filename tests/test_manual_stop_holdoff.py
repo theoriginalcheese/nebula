@@ -37,6 +37,12 @@ class FakeOBS:
         # but not accepting requests yet" (websocket 207).
         return "30.2.3"
 
+    def get_record_status(self):
+        # _stop_current_recording reads this for outputDuration: the length
+        # OBS actually wrote, which is what the cull and the log go by.
+        return {"outputActive": self.recording, "outputPaused": False,
+                "outputDuration": 600_000, "outputBytes": 1}
+
     def stop_record(self):
         self.stops += 1
         self.recording = False

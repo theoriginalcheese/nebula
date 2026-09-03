@@ -113,8 +113,10 @@ FIELDS = (
                "dashboard's Idle timeout slider writes this same value."),
     Field("min_clip_seconds", "Minimum clip", "int", "recording",
           minimum=0, maximum=3600,
-          hint="Clips shorter than this are deleted when they finish \u2014 "
-               "catches a game window that only flickered. 0 keeps everything."),
+          hint="Clips shorter than this go to the Recycle Bin when they "
+               "finish \u2014 catches a game window that only flickered. "
+               "Measured as what OBS actually wrote, so sitting paused does "
+               "not save a short clip. 0 keeps everything."),
     Field("poll_interval_seconds", "Poll interval", "int", "recording",
           minimum=1, maximum=60,
           hint="Seconds between foreground-window checks."),

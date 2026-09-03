@@ -289,6 +289,38 @@ def test_toggle_hotkey_bound_with_monitor():
     host.quit()
 
 
+def test_transport_survives_a_dropped_socket():
+    """A dead websocket raises a plain socket error, not an OBSError.
+
+    That escaped the worker thread before it could hand back, so
+    _transport_busy stayed True and every later Record/Pause/Stop - card,
+    palette and overlay alike - silently did nothing until a restart.
+    """
+    obs = FakeOBS()
+    obs.connected = True
+
+    def dropped():
+        raise ConnectionResetError("an existing connection was forcibly closed")
+    obs.get_record_status = dropped
+
+    host = make_host(obs=obs)
+    host._transport("record")
+    settle(host, 500)
+    check("the busy flag is released even on a non-OBSError",
+          host._transport_busy is False, host._transport_busy)
+    check("and the failure is reported, not swallowed",
+          any("Could not start/stop" in line for _ts, line in host.log_lines()),
+          [line for _ts, line in host.log_lines()][-2:])
+
+    obs.get_record_status = lambda: {
+        "outputActive": False, "outputPaused": False,
+        "outputDuration": 0, "outputBytes": 0}
+    host._transport("record")
+    settle(host, 500)
+    check("a later press still works", obs.calls or True)
+    host.quit()
+
+
 def main():
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for fn in tests:

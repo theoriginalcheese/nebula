@@ -158,7 +158,7 @@ Settings live in `config.json` next to the executable (created on first run):
 | `sync_folder` | *(empty — local only)* | Where `games.json` lives. Point it at e.g. `OneDrive/ObsAutoFolder` so classifications follow you between machines |
 | `idle_timeout_seconds` | `4` | Idle time before recording auto-pauses |
 | `poll_interval_seconds` | `1` | How often the monitor checks the foreground window |
-| `min_clip_seconds` | `10` | Clips shorter than this are auto-deleted (catches a window that just flickered) |
+| `min_clip_seconds` | `15` | Clips shorter than this are culled to the Recycle Bin when they finish (catches a window that just flickered) |
 | `obs_path` | — | OBS executable, used to auto-launch it if it isn't running |
 | `toggle_hotkey` | — | Global key to toggle monitoring on/off |
 | `github_token` | *(empty)* | Token with `repo` scope for the game-list sync. **Local only — never committed or synced.** |

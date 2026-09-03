@@ -2413,9 +2413,15 @@ class Api:
             b = min(s["end"] or now, start + day)
             if b <= a:
                 continue
+            # The bar's geometry stays wall clock - it answers *when* you
+            # were in a session. The duration does not: it is what OBS
+            # actually wrote, so a span left paused does not read back as
+            # footage. That is why a block's label can be shorter than the
+            # block looks.
             blocks.append({"game": s["game"],
                            "live": bool(recording and s is spans[-1]),
-                           "duration_s": b - a,
+                           "duration_s": session_log.span_recorded_seconds(
+                               s, now=now, window=(a, b)),
                            # Clock labels, so a span can say when it was
                            # without the reader converting a percentage of a
                            # day back into a time in their head.
@@ -2474,14 +2480,14 @@ class Api:
 
         def worker():
             try:
-                self._scan_clips()
+                self._scan_clips(force=force)
             finally:
                 self._clips_scan_busy = False
                 self._clips_scanned_at = time.time()
 
         threading.Thread(target=worker, daemon=True).start()
 
-    def _scan_clips(self):
+    def _scan_clips(self, force=False):
         """Fast path: local disk + durable index. NAS tree walk is async."""
         root = self.cfg.get("recording_root") or ""
         local_clips, error = [], None
@@ -2540,7 +2546,10 @@ class Api:
         self._queue_thumb_work(thumb_src, root)
         self._queue_poster_work(clips)
         # Reconcile index with NAS in the background — never blocks the list.
-        self._schedule_nas_backfill(force=True)
+        # Not forced unless the user asked for this scan: the pane re-scans
+        # every 30s on its own, and forcing here walked the whole share (and
+        # wrote an activity line) every time.
+        self._schedule_nas_backfill(force=force)
 
     def _schedule_nas_backfill(self, force=False):
         """Walk NAS into the index off the list path."""

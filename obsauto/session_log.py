@@ -183,9 +183,38 @@ def spans(rows=None, now=None):
     return out
 
 
+def span_recorded_seconds(span, now=None, window=None):
+    """Seconds OBS actually wrote in this span: its extent minus idle gaps.
+
+    A span's extent is wall clock, and it contains every idle pause inside
+    the recording - time when the file is not growing at all. Anything that
+    answers "how long did I record" has to take those out, or a session left
+    paused over lunch reads back as an hour of footage that does not exist.
+
+    `window` clips the answer to a (start, end) pair - the ribbon needs "of
+    this span, how much landed inside today".
+    """
+    now = time.time() if now is None else now
+    start = span.get("start") or 0
+    end = span.get("end") or now
+    if window:
+        start = max(start, window[0])
+        end = min(end, window[1])
+    seconds = max(0.0, end - start)
+    for gap_start, gap_end in span.get("gaps") or ():
+        overlap = min(end, gap_end or now) - max(start, gap_start)
+        if overlap > 0:
+            seconds -= overlap
+    return max(0.0, seconds)
+
+
 def summarise(span_list):
-    """"4h 12m recorded · 3 games · 7 marks" - the ribbon's header line."""
-    recorded = sum(max(0.0, (s["end"] or 0) - s["start"]) for s in span_list)
+    """"4h 12m recorded · 3 games · 7 marks" - the ribbon's header line.
+
+    Idle gaps come out: this line used to read the span's wall-clock extent,
+    so it counted every pause as footage.
+    """
+    recorded = sum(span_recorded_seconds(s) for s in span_list)
     return {"seconds": recorded,
             "games": len({s["game"] for s in span_list}),
             "marks": sum(len(s["marks"]) for s in span_list)}
@@ -203,6 +232,8 @@ def today():
     recorded = 0.0
     bytes_written = 0
     started = None
+    live_gaps = 0.0        # idle time inside the recording still in progress
+    idle_since = None
     kept_by_path = {}
     kept_anon = []
     culled_paths = set()
@@ -210,8 +241,12 @@ def today():
         kind = row.get("type")
         if kind == "rec_start":
             started = row.get("ts")
+            live_gaps = 0.0
+            idle_since = None
         elif kind == "rec_stop":
             started = None
+            live_gaps = 0.0
+            idle_since = None
             path = (row.get("path") or "").strip()
             if row.get("culled"):
                 if path:
@@ -230,6 +265,12 @@ def today():
                 kept_anon.append(row)
         elif kind == "idle_in":
             idle_pauses += 1
+            if started is not None and idle_since is None:
+                idle_since = row.get("ts")
+        elif kind == "idle_out":
+            if idle_since is not None:
+                live_gaps += max(0.0, float(row.get("ts") or 0) - idle_since)
+                idle_since = None
     for row in list(kept_by_path.values()) + kept_anon:
         clips += 1
         recorded += float(row.get("duration") or 0)
@@ -239,6 +280,10 @@ def today():
     # the duration only lands on rec_stop - which looked like a broken tile
     # rather than the honest "nothing has *finished* today".
     if started:
-        recorded += max(0.0, time.time() - started)
+        now = time.time()
+        live = now - started - live_gaps
+        if idle_since is not None:   # still paused right now
+            live -= max(0.0, now - idle_since)
+        recorded += max(0.0, live)
     return {"clips": clips, "recorded_seconds": recorded, "bytes": bytes_written,
             "culled": culled, "idle_pauses": idle_pauses}

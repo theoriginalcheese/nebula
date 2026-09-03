@@ -73,7 +73,7 @@ check("every mapped key exists in config.DEFAULTS", not missing, f"missing={miss
 
 # The spec pins three defaults by name; a drift here changes what the pane shows.
 check("reconnect_interval_seconds default is 10", DEFAULTS["reconnect_interval_seconds"] == 10)
-check("min_clip_seconds default is 10", DEFAULTS["min_clip_seconds"] == 10)
+check("min_clip_seconds default is 15", DEFAULTS["min_clip_seconds"] == 15)
 check("idle_timeout_seconds default is 4", DEFAULTS["idle_timeout_seconds"] == 4)
 check("poll_interval_seconds default is 1", DEFAULTS["poll_interval_seconds"] == 1)
 

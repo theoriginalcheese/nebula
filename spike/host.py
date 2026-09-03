@@ -1257,7 +1257,16 @@ class NebulaHost:
                     result.update(event="pause", outcome="Recording paused.")
             except OBSError as exc:
                 result["problem"] = str(exc)
-            self.call_soon(lambda r=result: self._transport_done(r))
+            except Exception as exc:
+                # Not just OBSError: a dropped websocket raises out of
+                # OBSClient.call()'s send() as a plain socket error. That
+                # killed this thread before it could hand back, leaving
+                # _transport_busy stuck True - after which every Record,
+                # Pause and Stop, on the card, the palette and the overlay,
+                # silently did nothing until the app was restarted.
+                result["problem"] = "%s: %s" % (type(exc).__name__, exc)
+            finally:
+                self.call_soon(lambda r=result: self._transport_done(r))
 
         threading.Thread(target=worker, daemon=True).start()
 

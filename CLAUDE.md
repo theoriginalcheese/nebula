@@ -66,6 +66,7 @@ and `RESOURCE_DIR` (`sys._MEIPASS` when frozen) only for bundled read-only asset
 | `obsauto/session_detect.py` | `moonlight_session_active()` | Detect a live Moonlight streaming session |
 | `obsauto/config.py` | `load_config()`, `save_config()` | Config persistence |
 | `obsauto/paths.py` | `APP_DIR`, `RESOURCE_DIR` | Dev vs. frozen-onefile path resolution |
+| `obsauto/recycle.py` | `recyclable()`, `to_recycle_bin()`, `RecycleError` | The only place a recording is removed: Recycle Bin via pywin32's SHFileOperation, and a hard **no** on network paths, which have no bin - a "recycle" there would silently be a permanent delete |
 | `obsauto/silent_proc.py` | `run_kwargs()`, `resolve_git()` | subprocess helpers so CLI probes never flash a console under `pythonw` |
 | `obsauto/app_log.py` | `setup_logging()`, `log_to_file()` | File logging (works under silent `pythonw`) |
 | `obsauto/version.py` | `__version__`, `display_version()`, `version_info()`, `is_frozen()` | One release number + an honest source label (`+N`, `+N*`) for the titlebar badge and Updates pane |

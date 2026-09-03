@@ -45,6 +45,12 @@ class FakeOBS:
         # but not accepting requests yet" (websocket 207).
         return "30.2.3"
 
+    def get_record_status(self):
+        # _stop_current_recording reads this for outputDuration: the length
+        # OBS actually wrote, which is what the cull and the log go by.
+        return {"outputActive": self.recording, "outputPaused": False,
+                "outputDuration": 600_000, "outputBytes": 1}
+
     def stop_record(self):
         self.stops += 1
         self.recording = False
@@ -185,6 +191,16 @@ check("overlapping applies: last target wins",
 check("overlapping applies: OBS sane",
       obs.recording and obs.starts - starts_before_overlap == 2,
       f"recording={obs.recording} starts={obs.starts}")
+
+# Monitoring off has the same race a manual stop has: the loop thread can be
+# holding a target it already decided to record. note_manual_stop() always
+# invalidated it through _stop_epoch; stop() did not, so a recording could be
+# started by a Monitor that had just been torn down - and nothing left alive
+# would ever stop it.
+epoch_before = mon._stop_epoch
+mon.stop()
+check("stop() invalidates an in-flight apply", mon._stop_epoch > epoch_before,
+      f"{epoch_before} -> {mon._stop_epoch}")
 
 failed = 0
 for name, passed, detail in results:

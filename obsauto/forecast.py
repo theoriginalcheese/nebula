@@ -60,16 +60,18 @@ def rates(spans=None, now=None, window_days=WINDOW_DAYS):
         end = span.get("end") or now
         if end < cutoff:
             continue
-        seconds = max(0.0, end - span["start"])
         # Idle gaps are paused time: the file isn't growing, so counting them
         # would understate GB/h and overstate how long the disk lasts.
-        for gap_start, gap_end in span.get("gaps", ()):
-            seconds -= max(0.0, (gap_end or end) - gap_start)
-        seconds = max(0.0, seconds)
+        seconds = session_log.span_recorded_seconds(span, now=now)
         hours = seconds / 3600.0
-        total_hours += hours
+        # GB/h needs hours and bytes that describe the same footage. A live
+        # span has real hours but no size until rec_stop writes one, so
+        # counting its hours here divided the same bytes by a bigger number
+        # every minute a long session ran - understating the rate, and so
+        # overstating days-left, exactly while the disk filled fastest.
         if span.get("size"):
             total_bytes += int(span["size"])
+            total_hours += hours
         per_day.setdefault(_day(span["start"]), 0.0)
         per_day[_day(span["start"])] += hours
 

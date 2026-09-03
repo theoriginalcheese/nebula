@@ -17,7 +17,7 @@ DEFAULTS = {
     # Clips shorter than this get auto-deleted right after they finish -
     # catches junk from a game window that briefly flickered rather than an
     # actual play session.
-    "min_clip_seconds": 10,
+    "min_clip_seconds": 15,
     # ---- instant replay (spec 7a) ----
     # OBS's own rolling RAM buffer. Nebula arms it, asks for the save, and
     # files the result into <recording_root>/<game>/<replay_subfolder>/.

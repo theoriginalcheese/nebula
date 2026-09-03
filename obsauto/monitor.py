@@ -41,6 +41,7 @@ except ImportError:  # pragma: no cover
     win32process = None
 
 from .obs_client import OBSError, is_not_ready_error
+from .recycle import RecycleError, to_recycle_bin
 from . import discord_detect
 from . import session_detect
 from .audio_detect import AudioKeepAlive
@@ -414,6 +415,14 @@ class Monitor:
 
     def stop(self):
         self._running = False
+        # Bump the epoch BEFORE taking the lock. The loop thread can be
+        # sitting just outside _obs_lock with a target it already decided to
+        # record; if stop() wins the lock first it finds nothing recording,
+        # does nothing, and returns - and the loop then starts a recording
+        # that nothing will ever stop, because the Monitor it belonged to is
+        # gone. note_manual_stop() already used this epoch for exactly the
+        # same race; stop() never did.
+        self._stop_epoch += 1
         with self._obs_lock:
             if self.obs.connected:
                 prev_name = self._recording_target[2] if self._recording_target else "unknown"
@@ -582,8 +591,16 @@ class Monitor:
         rejects it), then discard the clip if it turned out too short to be
         worth keeping - e.g. a game window that flickered open and shut
         rather than an actual play session."""
-        if not self.obs.is_recording():
+        # One GetRecordStatus does both jobs: "is anything running" and
+        # "how long has OBS actually been writing". Asking after StopRecord
+        # is too late - the output is gone by then.
+        try:
+            status = self.obs.get_record_status()
+        except OBSError:
+            status = {}
+        if not status.get("outputActive"):
             return True
+        recorded_ms = status.get("outputDuration")
 
         response = None
         for attempt in range(2):
@@ -598,7 +615,15 @@ class Monitor:
             return False
 
         self.log(f"[OBS] Stopped recording ({prev_name}).")
+        # OBS's own duration excludes paused time; wall clock does not. With
+        # the idle timeout at several minutes, a session that recorded 8s and
+        # then sat paused for half an hour used to log as half an hour - which
+        # inflated every "hours recorded" figure downstream and, worse, meant
+        # the short-clip cull below never fired on it. Wall clock stays as the
+        # fallback for when OBS could not be asked.
         elapsed = (time.time() - self._recording_started_at) if self._recording_started_at else None
+        if isinstance(recorded_ms, (int, float)) and recorded_ms > 0:
+            elapsed = float(recorded_ms) / 1000.0
         output_path = response.get("outputPath")
         file_size = None
         if output_path:
@@ -619,6 +644,12 @@ class Monitor:
         min_seconds = self.config.get("min_clip_seconds", 0)
         too_short = elapsed is not None and output_path and elapsed < min_seconds
         if too_short:
+            # The Recycle Bin, not os.remove: the settings text has always
+            # promised a cull is recoverable, and a mis-measured duration
+            # taking a real clip must not be final. A recording root on a
+            # network drive has no bin, so there the clip is simply kept -
+            # never silently destroyed instead.
+            #
             # OBS still holds the file open for a moment after StopRecord
             # returns (finalizing the container), so an immediate delete can
             # fail with "file in use" - retry briefly before giving up.
@@ -626,22 +657,27 @@ class Monitor:
             last_error = None
             for attempt in range(5):
                 try:
-                    os.remove(output_path)
+                    to_recycle_bin(output_path)
                     deleted = True
                     break
-                except OSError as e:
+                except RecycleError as e:
                     last_error = e
                     time.sleep(0.5)
             if deleted:
-                self.log(f"[Monitor] Discarded clip under {min_seconds}s: {output_path}")
+                self.log(f"[Monitor] Culled clip under {min_seconds}s "
+                         f"({elapsed:.0f}s recorded) to the Recycle Bin: {output_path}")
             else:
-                self.log(f"[Monitor] Failed to discard tiny clip {output_path}: {last_error}")
+                self.log(f"[Monitor] Kept short clip {output_path} - "
+                         f"could not recycle it: {last_error}")
         # One rec_stop either way, flagged with whether the clip survived. The
         # dashboard's "Auto-culled" tile counts the flagged ones (6.3), and 7c's
         # forecast needs the sizes of the ones that didn't get culled.
+        # `culled` records what actually happened to the file, not what was
+        # intended: a short clip still on disk because the bin refused it is
+        # a kept clip, and the Auto-culled tile must not claim otherwise.
         session_log.append("rec_stop", game=prev_name, path=output_path,
                            duration=elapsed, size=file_size,
-                           culled=True if too_short else None)
+                           culled=True if (too_short and deleted) else None)
 
         if not too_short and output_path and self.offloader is not None:
             # A real clip that we're keeping: hand it to the NAS offloader (a
