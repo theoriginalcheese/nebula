@@ -120,6 +120,17 @@ class OBSClient:
         return self._identified.is_set()
 
     def _recv_loop(self):
+        # `_identified.clear()` lives in the finally, not after the loop.
+        # `connected` is that flag, so an exception escaping the body used to
+        # kill this thread while still reporting the socket as up: every
+        # later call() then hung for its whole timeout, and _maybe_reconnect
+        # never fired because it only acts on connected == False.
+        try:
+            self._recv_forever()
+        finally:
+            self._identified.clear()
+
+    def _recv_forever(self):
         while not self._stop and self._ws:
             try:
                 raw = self._ws.recv()
@@ -134,11 +145,15 @@ class OBSClient:
 
             op = msg.get("op")
             if op == OP_REQUEST_RESPONSE:
-                req_id = msg["d"].get("requestId")
+                # `.get("d")`, not `["d"]`: the response branch used to be the
+                # one place here that could raise on an unexpected frame,
+                # while the event branch beside it was already guarded.
+                data = msg.get("d") or {}
+                req_id = data.get("requestId")
                 with self._lock:
                     ev = self._pending.get(req_id)
                 if ev:
-                    ev["response"] = msg["d"]
+                    ev["response"] = data
                     ev["event"].set()
             elif op == OP_REEVENT:
                 # 7a needs ReplayBufferSaved: OBS writes the clip to its own
@@ -152,7 +167,6 @@ class OBSClient:
                                 msg["d"].get("eventData") or {})
                     except Exception as exc:
                         self.log(f"[OBS] Event handler failed: {exc}")
-        self._identified.clear()
 
     # ---- requests ----
     def call(self, request_type, request_data=None, timeout=5):

@@ -258,6 +258,7 @@ class ThumbWorker:
         self._thread = None
         self._stop = threading.Event()
         self._seen = set()
+        self._failures = {}   # key -> attempts, so a retry is bounded
 
     def start(self):
         if self._thread and self._thread.is_alive():
@@ -270,6 +271,12 @@ class ThumbWorker:
         self._stop.set()
         self._queue.put(None)
 
+    #: How many times one clip may fail before it is left alone. A file that
+    #: is genuinely unreadable should stop costing four seeks every refresh;
+    #: a file that was merely locked by OBS for a moment should not be
+    #: written off for the life of the process.
+    MAX_ATTEMPTS = 3
+
     def submit(self, clip_path, duration=None):
         """Queue one clip. Silently ignores duplicates and a missing ffmpeg."""
         if not available() or not clip_path:
@@ -277,10 +284,17 @@ class ThumbWorker:
         key = os.path.normcase(os.path.abspath(clip_path))
         if key in self._seen:
             return False
+        if self._failures.get(key, 0) >= self.MAX_ATTEMPTS:
+            return False
         self._seen.add(key)
         self._queue.put((clip_path, duration))
         self.start()
         return True
+
+    def _note_failure(self, key):
+        """Release the duplicate guard so a later pass can try again."""
+        self._failures[key] = self._failures.get(key, 0) + 1
+        self._seen.discard(key)
 
     def backfill(self, clip_paths):
         """Queue clips that have no frames yet, newest first.
@@ -308,10 +322,19 @@ class ThumbWorker:
                     return
             if self._stop.is_set():
                 return
+            key = os.path.normcase(os.path.abspath(clip_path))
             try:
                 frames = extract(self.recording_root, clip_path, duration)
             except Exception as exc:
                 self.log(f"[Thumbs] {os.path.basename(clip_path)}: {exc}")
+                self._note_failure(key)
                 continue
             if frames:
+                self._failures.pop(key, None)
                 self.on_done(clip_path, frames)
+            else:
+                # No frames and no exception: ffmpeg was there and produced
+                # nothing - a locked file, a bad seek. `_seen` was claimed
+                # back in submit(), so leaving it set meant this clip could
+                # never be retried, however many times the pane refreshed.
+                self._note_failure(key)

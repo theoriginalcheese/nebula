@@ -248,6 +248,10 @@ class NebulaHost:
         self._visible = False
         self._awake = True
         self._quiet = False
+        # Serialises the setAwake/setQuiet pushes and lets an overtaken one
+        # drop itself, so the page can't end up asleep over a visible window.
+        self._gpu_push_lock = threading.Lock()
+        self._gpu_gen = 0
         self._suspended = False
         self._suspend_seen = set()
         # Defer WebView TrySuspend until first paint has had a chance.
@@ -276,6 +280,7 @@ class NebulaHost:
         self._transport_busy = False
         self._poll_timer = None
         self._poll_lock = threading.Lock()
+        self._poll_running = threading.Lock()
         self._bitrate_sample = None
         self._bitrate_text = ""
         self._last_written_bytes = 0
@@ -608,6 +613,14 @@ class NebulaHost:
     def _apply_page_gpu(self, on_screen, focused):
         """Drive .asleep / .quiet / TrySuspend from real window state."""
         st = gpu_page_state(on_screen, focused)
+        # Each push used to get its own unsynchronised thread, so a hide
+        # quickly followed by a show could deliver them in either order and
+        # leave the page wearing .asleep - backdrop frozen, animations
+        # stopped - over a window that was visible and focused. Serialise
+        # them, and let a push that has been overtaken drop itself.
+        with self._gpu_push_lock:
+            self._gpu_gen += 1
+            gen = self._gpu_gen
         self._awake = st["awake"]
         self._quiet = st["quiet"]
         if self.window:
@@ -618,10 +631,13 @@ class NebulaHost:
             window = self.window
 
             def push_js():
-                try:
-                    window.evaluate_js(js)
-                except Exception as exc:
-                    self._log("[Window] setAwake/setQuiet failed: %s" % exc)
+                with self._gpu_push_lock:
+                    if gen != self._gpu_gen:
+                        return          # a newer state already went out
+                    try:
+                        window.evaluate_js(js)
+                    except Exception as exc:
+                        self._log("[Window] setAwake/setQuiet failed: %s" % exc)
 
             threading.Thread(target=push_js, daemon=True).start()
         self._suspend_webview(st["suspend"])
@@ -991,6 +1007,14 @@ class NebulaHost:
             finally:
                 if gen == self._connect_gen:
                     self._connecting = False
+            # Every other checkpoint in this worker is generation-guarded;
+            # the success path was not. "Retry now" while a previous attempt
+            # was still in _fetch_obs_meta() therefore let the *old* attempt
+            # report success - with stale version/scene/handshake - and
+            # _connect_succeeded could not tell, because autostart() clears
+            # _abort_connect for the new attempt on its way in.
+            if gen != self._connect_gen or self._abort_connect:
+                return
             self.call_soon(lambda m=meta: self._connect_succeeded(m))
 
         threading.Thread(target=worker, daemon=True).start()
@@ -1154,6 +1178,21 @@ class NebulaHost:
         self._poll_tick()
 
     def _poll_obs_status(self):
+        # Timer.cancel() cannot stop a callback that has already begun, so
+        # _poll_now() - called from the connect path and from pause/resume
+        # monitoring - could start a second poll on top of a running one:
+        # two GetRecordStatus round trips, and two preview screenshots
+        # racing on the same check-then-set of _preview_last_fetch. If one
+        # is already in flight, come back in a moment instead.
+        if not self._poll_running.acquire(blocking=False):
+            self._schedule_poll(0.05)
+            return
+        try:
+            self._poll_obs_status_locked()
+        finally:
+            self._poll_running.release()
+
+    def _poll_obs_status_locked(self):
         is_recording = False
         is_paused = False
         if self.obs and self.obs.connected:

@@ -156,6 +156,14 @@ class Classifier:
                     on_disk = json.load(f)
             except (OSError, json.JSONDecodeError):
                 pass
+        # Heal the disk copy too, not just the one _load() read at startup.
+        # merge_classifications only strips a key from the opposite bucket
+        # when the *overlay* has an opinion on it, so a double-filed entry
+        # this process never touched survived every save - and was only ever
+        # repaired by a restart, until the next sync conflict put it back.
+        on_disk.setdefault("games", {})
+        on_disk.setdefault("non_games", {})
+        on_disk = self._heal(on_disk)
         self._data = merge_classifications(on_disk, self._data)
         with open(DATA_FILE, "w", encoding="utf-8") as f:
             json.dump(self._data, f, indent=2, sort_keys=True)
