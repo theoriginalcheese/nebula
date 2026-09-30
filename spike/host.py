@@ -326,6 +326,7 @@ class NebulaHost:
             on_connection_change=self._on_connection_change,
             offloader=offloader,
             on_record_prompt=self._on_record_prompt,
+            on_unknown_app=self._on_unknown_app,
         )
 
     def on_offload_state(self, pending, reachability=None):
@@ -1360,6 +1361,47 @@ class NebulaHost:
                 self._log("[Toast] %s" % exc)
 
         self.call_soon(show)
+
+    def _on_unknown_app(self, basename, display_name):
+        """One toast for a foreground app Nebula has never classified."""
+        b = basename
+        n = display_name or basename
+
+        def show():
+            self._log("[Monitor] Asking about %s" % n)
+
+            def accept():
+                self._resolve_unknown(b, True, n)
+
+            def dismiss():
+                self._resolve_unknown(b, False, n)
+
+            try:
+                self._windows.toast_replace(
+                    "prompt", n, {"title": "Record this?"},
+                    actions=[("It's a game", accept), ("Not a game", dismiss)],
+                )
+            except Exception as exc:
+                self._log("[Toast] %s" % exc)
+
+        self.call_soon(show)
+
+    def _resolve_unknown(self, basename, is_game, display_name):
+        classifier = getattr(self, "classifier", None)
+        if classifier is None:
+            return
+        try:
+            item = classifier.pop_pending_item(basename)
+        except Exception:
+            item = None
+        basenames = item[0] if item else [basename]
+        try:
+            classifier.resolve_review(
+                basenames, is_game, display_name if is_game else None)
+            classifier.finish_review(basename)
+        except Exception as exc:
+            self._log("[Classifier] %s" % exc)
+        self._poll_now()
 
     def _stop(self):
         self._abort_connect = True

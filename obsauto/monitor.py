@@ -56,6 +56,18 @@ _RESERVED_NAMES = frozenset(
 )
 _UNSET = object()
 
+
+def _review_label(title, basename):
+    """A short name for the "record this?" toast. Prefer the window title."""
+    stem = os.path.splitext(basename or "")[0] or (basename or "this app")
+    text = " ".join((title or "").split())
+    if not text or len(text) > 60:
+        return stem
+    if text.lower() in {(basename or "").lower(), stem.lower()}:
+        return stem
+    return text
+
+
 GAME_CAPTURE_INPUT_NAME = "Game Capture (Auto)"
 
 # Apps whose recording should track a live *session*, not just the process
@@ -393,7 +405,8 @@ class Monitor:
     START_FAIL_LOG_INTERVAL_S = 30.0
 
     def __init__(self, obs_client, classifier, config, on_log=None, on_state=None, on_notify=None,
-                 on_connection_change=None, offloader=None, on_record_prompt=None):
+                 on_connection_change=None, offloader=None, on_record_prompt=None,
+                 on_unknown_app=None):
         self.obs = obs_client
         self.classifier = classifier
         self.config = config
@@ -405,6 +418,9 @@ class Monitor:
         # Fired when hold-off wants the UI to ask "Record again?" / "Record X?".
         # Args: basename, display_name, reason ("same"|"switch"), target tuple.
         self.on_record_prompt = on_record_prompt or (lambda *a, **k: None)
+        # Fired once when the foreground app isn't a known game or non-game.
+        # Args: basename, a short label (window title or exe stem).
+        self.on_unknown_app = on_unknown_app or (lambda *a, **k: None)
         self._running = False
         self._thread = None
         self._recording_target = None  # (pid, basename, display_name, folder, window_id) or None
@@ -856,6 +872,7 @@ class Monitor:
         no network, and no manual-review queueing.
         """
         classify = self.classifier.peek if peek_only else self.classifier.classify
+        pending_unknown = None
         fg = get_foreground_window_info()
         if fg:
             pid, exe_path, proc_name, title, cls = fg
@@ -887,19 +904,40 @@ class Monitor:
                     and proc_name.lower() not in self.SELF_PROCESSES):
                 self._last_foreground = proc_name
                 self.on_state(foreground=(proc_name, result))
+            # Don't ask yet. A known game may still be visible behind this
+            # window, and the question should be about the game, not Discord.
+            if result == "unknown" and not peek_only and exe_path:
+                pending_unknown = (exe_path, proc_name, title)
 
         for pid, exe_path, proc_name, title, cls in list_visible_windows():
             result, display_name = classify(exe_path, proc_name)
             if result == "game":
                 if self._recording_gate_open(os.path.basename(exe_path).lower()):
                     return self._make_target(pid, exe_path, display_name)
-            elif result == "unknown":
-                if peek_only:
-                    continue
-                basename = os.path.basename(exe_path).lower()
-                if self.classifier.queue_for_manual_review(basename):
-                    self.log(f"[Monitor] Unrecognized app awaiting review: {basename}")
+        if pending_unknown:
+            self._ask_about_unknown(*pending_unknown)
         return None
+
+    def _ask_about_unknown(self, exe_path, proc_name, title):
+        """Ask once about the foreground app. Other windows stay quiet.
+
+        Scanning every visible window used to drop browsers, launchers and
+        chat apps into the review queue together. The thing in front is the
+        only one that might be the game they just launched.
+        """
+        basename = os.path.basename(exe_path).lower()
+        if not basename or not proc_name:
+            return
+        if proc_name.lower() in self.SELF_PROCESSES:
+            return
+        if not self.classifier.queue_for_manual_review(basename):
+            return
+        label = _review_label(title, basename)
+        self.log(f"[Monitor] Unrecognized app awaiting review: {basename}")
+        try:
+            self.on_unknown_app(basename, label)
+        except Exception as exc:
+            self.log(f"[Monitor] Couldn't ask about {basename}: {exc}")
 
     def _ensure_paused(self, reason="idle"):
         """The game's still open but recording should pause in place rather

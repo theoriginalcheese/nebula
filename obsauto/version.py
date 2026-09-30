@@ -21,7 +21,7 @@ from .silent_proc import resolve_git, run_kwargs
 # ---------------------------------------------------------------------------
 # Bump this when you ship. Tag the same number as vX.Y.Z on GitHub.
 # ---------------------------------------------------------------------------
-__version__ = "4.0.1"
+__version__ = "4.0.2"
 
 _GIT_CACHE = {"at": 0.0, "describe": "", "branch": "", "subject": ""}
 _GIT_TTL_S = 60.0

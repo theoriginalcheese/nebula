@@ -23,15 +23,20 @@ live and double-click it.
 1. Install [OBS Studio](https://obsproject.com/) 28 or newer if you haven't already, and turn
    on **Tools → WebSocket Server Settings → Enable WebSocket server**. Nebula talks to OBS
    through that; it is the one thing it cannot do for you.
-2. Run `Nebula.exe`. On a machine that has never run it before, a **four-step setup** walks
-   you through connecting to OBS (with a Test button that tells you what is wrong if it
-   can't), choosing where clips go, scanning your Steam library, and picking the toggle
-   hotkey.
-3. It minimises to the tray and starts watching. Launch a game and it records.
+2. Put `Nebula.exe` in its own folder (for example `C:\Nebula\`) and run it. Windows may
+   say the publisher is unknown — choose **More info → Run anyway**. The first launch
+   opens a four-step setup: test the OBS connection, pick a clips folder (your
+   `Videos\Nebula` folder is the default), optionally scan Steam, and confirm the
+   toggle hotkey (`Ctrl+Alt+R`).
+3. It minimises to the tray and starts watching. Launch a game. If Nebula isn't sure,
+   it asks once: **It's a game** or **Not a game**.
+
+You do **not** need a NAS, Tailscale, Moonlight, or a GitHub token. Those stay off
+until you fill them in under Settings. Clips stay on this PC.
 
 > **Where its files live.** Nebula keeps `config.json`, `games.json`, `logs/` and its icon
-> cache **next to the exe**, not in `%APPDATA%`. Put it in its own folder — `C:\Nebula\`, say
-> — rather than loose in Downloads. Moving that folder moves your whole setup with it.
+> cache **next to the exe**, not in `%APPDATA%`. Put it in its own folder rather than
+> loose in Downloads. Moving that folder moves your whole setup with it.
 
 Windows will warn that it's from an unknown publisher; the build isn't code-signed. *More
 info → Run anyway*, or build it yourself from source (below) if you'd rather not take that
@@ -94,8 +99,9 @@ The whole thing is a fixed-pixel canvas design with a generated nebula backdrop 
 translucent glass panels, scaled by one uniform factor so it stays crisp and proportional on
 high-DPI displays.
 
-> The nav rail's other destinations (Recordings, Games, Activity, Macropad, Settings) are
-> scaffolded but not yet implemented — Dashboard is the working view.
+The rail is Dashboard, Clips, Games, Remote streaming, Macropad, and Settings.
+Macropad stays empty until there's a real device to bind. Remote streaming and
+NAS offload are optional and stay quiet until you configure them.
 
 ## Requirements
 
@@ -151,9 +157,9 @@ Settings live in `config.json` next to the executable (created on first run):
 |-----|---------|--------------|
 | `obs_host` / `obs_port` | `localhost` / `4455` | obs-websocket connection |
 | `obs_password` | *(empty)* | obs-websocket password, if you've set one |
-| `recording_root` | `D:/OBS Recordings` | Where per-game folders are created |
+| `recording_root` | `Videos/Nebula` in your user folder | Where per-game folders are created. An existing install keeps its saved path. |
 | `sync_folder` | *(empty — local only)* | Where `games.json` lives. Point it at e.g. `OneDrive/ObsAutoFolder` so classifications follow you between machines |
-| `idle_timeout_seconds` | `4` | Idle time before recording auto-pauses |
+| `idle_timeout_seconds` | `90` | Idle time before recording auto-pauses. A saved config keeps its own value. |
 | `poll_interval_seconds` | `1` | How often the monitor checks the foreground window |
 | `min_clip_seconds` | `15` | Clips shorter than this are culled to the Recycle Bin when they finish (catches a window that just flickered) |
 | `obs_path` | — | OBS executable, used to auto-launch it if it isn't running |

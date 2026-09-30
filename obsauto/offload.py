@@ -179,7 +179,7 @@ class Offloader:
         if cached_root and (now - cached_at) < _PATH_PROBE_TTL:
             return cached_root
 
-        # Public CurAddr ⇒ another site (overlapping 192.168.68.x at dad's).
+        # Public CurAddr ⇒ another site (don't trust a shared home subnet).
         # Never fall through to the LAN UNC in that case.
         cur = ts.peer_cur_addr("nas")
         away = bool(cur) and not ts._endpoint_looks_lan(cur)

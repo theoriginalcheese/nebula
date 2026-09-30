@@ -18,7 +18,7 @@ Design points:
 
 Config keys (all optional; absent = feature off):
   github_token          a token with `repo` scope (kept in local config only)
-  github_gamedata_repo  "owner/name", e.g. "theoriginalcheese/nebula-gamedata"
+  github_gamedata_repo  "owner/name", e.g. "you/nebula-gamedata"
   github_gamedata_path  file path in the repo (default "games.json")
 """
 

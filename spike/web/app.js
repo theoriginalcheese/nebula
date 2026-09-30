@@ -1940,7 +1940,7 @@ function renderClips(d) {
       if (cp.indexing) parts.push("updating index…");
       $("pane-eyebrow").textContent = parts.join(" · ");
     } else if (cp.indexing) {
-      $("pane-eyebrow").textContent = "Updating NAS index…";
+      $("pane-eyebrow").textContent = cp.nas_configured ? "Updating NAS index…" : "Updating…";
     } else if (cp.empty_title) {
       $("pane-eyebrow").textContent = "Clips";
     }
@@ -1949,7 +1949,9 @@ function renderClips(d) {
   if (cp.scanning && !(cp.clips && cp.clips.length)) {
     rows.innerHTML = `<div class="empty clips-empty clips-empty-rich">
       <div class="clips-empty-title">Scanning…</div>
-      <div class="clips-empty-body">Checking local recordings and the NAS index.</div>
+      <div class="clips-empty-body">${cp.nas_configured
+        ? "Checking local recordings and the NAS index."
+        : "Checking your clips folder."}</div>
     </div>`;
     return;
   }
@@ -1968,7 +1970,7 @@ function renderClips(d) {
       rows.innerHTML = `<div class="empty clips-empty clips-empty-rich" data-kind="${esc(cp.empty_kind || "")}">
         <div class="clips-empty-title">${esc(cp.empty_title || "No clips yet")}</div>
         <div class="clips-empty-body">${esc(cp.empty_body || cp.min_clip_note || "")}</div>
-        <div class="clips-empty-hint">Refresh when the NAS is up · Sync from Settings → Offload</div>
+        <div class="clips-empty-hint">${esc(cp.empty_hint || "Play a game and the clip shows up here.")}</div>
       </div>`;
       return;
     }
@@ -2619,7 +2621,7 @@ function renderRemote(d) {
       target.textContent = `Connect · ${ctrl.host} · ${ctrl.app || "Desktop"} · ${ctrl.display_mode || "borderless"}`;
     } else if (!ctrl.installed) {
       target.hidden = false;
-      target.textContent = "Moonlight not found — set the path in Settings.";
+      target.textContent = "Optional. Install Moonlight and set a host if you want remote play.";
     } else {
       target.hidden = false;
       target.textContent = "Set a host in Settings to enable Connect.";
@@ -2989,8 +2991,9 @@ const SETUP_STEPS = [
     title: "Welcome to Nebula",
     body: "Nebula sits in your tray and watches for games. When one starts it tells "
         + "OBS to record, and when you stop playing it files the clip under that "
-        + "game's name. Nothing to press. This takes about a minute, and you can "
-        + "change any of it later in Settings.",
+        + "game's name. Nothing to press. You don't need a NAS — clips stay on "
+        + "this PC unless you later choose to copy them. This takes about a "
+        + "minute, and you can change any of it later in Settings.",
     fields: [],
   },
   {
@@ -3011,8 +3014,9 @@ const SETUP_STEPS = [
     key: "folder",
     nav: "Choose a recordings folder",
     title: "Where should clips go?",
-    body: "Nebula creates one folder per game inside this one. Point it at the drive "
-        + "with room on it — a session can be several gigabytes.",
+    body: "Nebula creates one folder per game inside this one. Your Videos folder "
+        + "is a fine default. A NAS is optional — leave Offload blank in Settings "
+        + "if you don't have one.",
     fields: [{ key: "recording_root", label: "Recording root", browse: true }],
   },
   {
@@ -3022,7 +3026,7 @@ const SETUP_STEPS = [
     body: "Scanning Steam teaches Nebula which of your installed apps are games, so it "
         + "does not have to ask the first time you launch one. The hotkey toggles "
         + "watching on and off from anywhere, even mid-game.",
-    fields: [{ key: "toggle_hotkey", label: "Toggle key", hint: "A key name, e.g. ` or f12 or ctrl+alt+r." }],
+    fields: [{ key: "toggle_hotkey", label: "Toggle key", hint: "A key name, e.g. ctrl+alt+r or f12. Avoid a bare backtick — it can also swallow apostrophes." }],
     scan: "Scan Steam library",
   },
 ];

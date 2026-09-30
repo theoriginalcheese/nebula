@@ -63,6 +63,11 @@ from spike import host as host_mod
 INDEX = os.path.join(RESOURCE_DIR, "spike", "web", "index.html")
 
 
+def start_hidden_for(argv, setup_needed):
+    """Tray boot stays hidden. First-run setup has to be on screen."""
+    return "--show" not in argv and not setup_needed
+
+
 def spike_page_url(index, url_args="", start_hidden=False):
     """WebView start URL. Hidden boots paint under ``.asleep`` from frame 0."""
     parts = []
@@ -495,15 +500,30 @@ class Api:
                 self.cfg[key] = value
         if errors:
             return {"ok": False, "errors": errors}
+        root = str(self.cfg.get("recording_root") or "").strip()
+        if root:
+            try:
+                os.makedirs(root, exist_ok=True)
+            except OSError as exc:
+                return {"ok": False, "errors": [
+                    "Couldn't create the clips folder (%s)." % exc]}
         self.cfg["setup_complete"] = True
         save_config(self.cfg)
         self._fresh_install = False
         self._api_log("[Setup] First-run setup %s."
                       % ("skipped" if skipped else "complete"))
         if self._host:
-            # Rebind against whatever was just written, then start watching.
             try:
                 self._host.config.update(self.cfg)
+                obs = getattr(self._host, "obs", None)
+                if obs is not None:
+                    obs.host = self.cfg.get("obs_host") or "localhost"
+                    obs.port = int(self.cfg.get("obs_port") or 4455)
+                    obs.password = self.cfg.get("obs_password") or ""
+                    try:
+                        obs.disconnect()
+                    except Exception:
+                        pass
                 self._host.call_soon(self._host.start_hotkeys)
                 self._host.call_soon(self._host.autostart)
             except Exception as exc:
@@ -1012,18 +1032,36 @@ class Api:
             return " · ".join(bits)
 
         if not ts.available():
-            tail = {
-                "state": "missing",
-                "label": "Tailscale not found",
-                "detail": (
-                    "CLI missing from PATH. Offload still checks the NAS path "
-                    "directly."
-                ),
-                "backend": "",
-                "peer": "",
-                "meta": "",
-                "peers": [],
-            }
+            nas = any((self.cfg.get(key) or "").strip() for key in (
+                "nas_offload_root", "nas_offload_root_lan",
+                "nas_offload_root_remote"))
+            moon = (self.cfg.get("moonlight_host") or "").strip()
+            if not nas and not moon:
+                tail = {
+                    "state": "off",
+                    "label": "Not used",
+                    "detail": (
+                        "Optional. Only needed if you offload clips to a "
+                        "NAS or play over Tailscale."
+                    ),
+                    "backend": "",
+                    "peer": "",
+                    "meta": "",
+                    "peers": [],
+                }
+            else:
+                tail = {
+                    "state": "missing",
+                    "label": "Tailscale not found",
+                    "detail": (
+                        "CLI missing from PATH. Offload still checks the NAS path "
+                        "directly."
+                    ),
+                    "backend": "",
+                    "peer": "",
+                    "meta": "",
+                    "peers": [],
+                }
         else:
             # Honour the 5s cache — snapshot polls every 1–5s while awake;
             # force=True was shelling tailscale (+ conhost flash) every beat.
@@ -2793,6 +2831,7 @@ class Api:
                 "summary": {"count": 0, "total_bytes": 0, "total_label": ""},
                 "min_clip_note": note,
                 "ffmpeg": thumbs.available(),
+                "nas_configured": bool(self._cached_nas_root()),
             }
         if self._clips_error is not None:
             return {
@@ -2921,9 +2960,18 @@ class Api:
             "empty_kind": empty_kind,
             "empty_title": empty_title,
             "empty_body": empty_body,
+            "empty_hint": (
+                "Refresh when the NAS is up · Sync from Settings → Offload"
+                if nas_root else
+                "Play a game and the clip shows up here."
+            ),
             "delete_policy": (
-                "Local/cache deletes never remove the NAS copy. "
-                "Remote-only rows can be removed from the list only."
+                "Local deletes use the Recycle Bin when the drive has one. "
+                "A permanent local delete only happens after a verified NAS "
+                "copy. NAS-only rows can leave this list; the NAS file stays."
+                if nas_root else
+                "Deletes go to the Recycle Bin when the drive has one. "
+                "Nebula won't erase the only copy of a recording."
             ),
         }
 
@@ -3281,8 +3329,9 @@ def main():
     ).start()
 
     # 2j: start hidden. Nebula is a tray app; the window is a thing you open,
-    # not the thing that is running. `--show` is for development.
-    start_hidden = "--show" not in sys.argv
+    # not the thing that is running. `--show` is for development. First-run
+    # setup is the exception — a hidden wizard is a wizard nobody can finish.
+    start_hidden = start_hidden_for(sys.argv, api.setup_needed())
 
     # ?nowind=1 / ?nosheet=1 / ?hud=1 - measurement switches, see app.css.
     url_args = next((x[6:] for x in sys.argv if x.startswith("--url=")), "")
@@ -3320,7 +3369,10 @@ def main():
         host.enable_user_resize()
         host.start_window_watch()
         host.start_poll()
-        host.autostart()
+        if api.setup_needed():
+            host._log("[Setup] Waiting for first-run setup before monitoring.")
+        else:
+            host.autostart()
 
         # Read-only tailnet surface for the iOS companion. Off unless
         # phone_agent_enabled is set, imported here so its stdlib HTTP stays

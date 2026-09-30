@@ -7,12 +7,22 @@ from .paths import APP_DIR
 
 CONFIG_FILE = os.path.join(APP_DIR, "config.json")
 
+
+def default_recording_root():
+    """Clips folder for a machine that has never been configured.
+
+    An existing config.json keeps whatever path it already has. This only
+    fills the gap on first run, and it does not assume a second drive.
+    """
+    return os.path.join(os.path.expanduser("~"), "Videos", "Nebula")
+
+
 DEFAULTS = {
     "obs_host": "localhost",
     "obs_port": 4455,
     "obs_password": "",
-    "recording_root": "D:/OBS Recordings",
-    "idle_timeout_seconds": 4,
+    "recording_root": default_recording_root(),
+    "idle_timeout_seconds": 90,
     "poll_interval_seconds": 1,
     # Clips shorter than this get auto-deleted right after they finish -
     # catches junk from a game window that briefly flickered rather than an
@@ -109,10 +119,10 @@ DEFAULTS = {
     "nas_offload_unix_root": "",
     # Optional absolute path to TeraCopy.exe; blank = auto-discover.
     "teracopy_path": "",
-    # When true, pick between nas_offload_root_lan (mum's Deco / same site)
+    # When true, pick between nas_offload_root_lan (same site as the NAS)
     # and nas_offload_root_remote (Tailscale UNC) using Tailscale CurAddr /
-    # ping RTT — not the overlapping 192.168.68.x subnet alone. Default
-    # false so Alien-PC keeps a fixed Z: (5GbE) via nas_offload_root.
+    # ping RTT — not a shared home subnet alone. Default false so a machine
+    # with a fixed mapped drive keeps nas_offload_root.
     "nas_offload_auto_lan": False,
     "nas_offload_root_lan": "",
     "nas_offload_root_remote": "",
@@ -138,13 +148,13 @@ DEFAULTS = {
     # game). A `keyboard`-package binding string, e.g. "f12" or "ctrl+alt+r".
     # This is also the label drawn on the keycap hint in the title bar.
     # Empty = no hotkey.
-    "toggle_hotkey": "`",
+    "toggle_hotkey": "ctrl+alt+r",
     # Optional: bind this exact *physical* key (scan code) instead of resolving
     # `toggle_hotkey` as text. Needed when a character maps to more than one
     # scan code - "`" resolves to both 41 (the real backtick key) and 40, and 40
     # is also the apostrophe key, so binding by name would suppress apostrophes
     # system-wide. 41 = the backtick/grave key left of "1". None = bind by name.
-    "toggle_hotkey_scancode": 41,
+    "toggle_hotkey_scancode": None,
     # After a manual Stop, wait this many seconds before offering "Record
     # again?" for the same still-running game. A different game prompts as
     # soon as it is detected. 0 = prompt for the same game immediately too.

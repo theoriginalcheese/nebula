@@ -12,8 +12,15 @@ logs/
 
 # Machine-specific config & data (per-machine paths/prefs; regenerated on first run)
 config.json
+config.json.corrupt
+config.json.tmp
+*.corrupt
+*.partial
 games.json
 steam_appid_cache.json
+.env
+.env.*
+!mobile/.env.example
 
 # graphify knowledge graph (regenerate locally; not source)
 graphify-out/

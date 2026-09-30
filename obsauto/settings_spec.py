@@ -240,25 +240,25 @@ FIELDS = (
     Field("teracopy_path", "TeraCopy.exe", "path", "offload",
           hint="Optional. Blank auto-finds TeraCopy when Use TeraCopy is on."),
     Field("nas_offload_auto_lan", "Auto LAN / remote path", "bool", "offload",
-          hint="On: switch between LAN root (at mum's) and remote Tailscale "
-               "root (at dad's) using Tailscale's live endpoint — not Deco "
-               "subnet alone (both houses share 192.168.68.x). Off: use NAS "
-               "root only. Leave Off on Alien-PC (fixed Z: over 5GbE)."),
+          hint="On: switch between the LAN root (same network as the NAS) and "
+               "the remote Tailscale root, using Tailscale's live endpoint. "
+               "Off: use NAS root only. Leave off when a mapped drive is the "
+               "path you want."),
     Field("nas_offload_root_lan", "LAN root (home)", "path", "offload",
-          hint="Fast path when colocated with the NAS, e.g. "
-               "\\\\192.168.68.59\\50tb\\OBS. Used only when Auto is on."),
+          hint="Fast path when this PC is on the same network as the NAS, "
+               "e.g. \\\\nas\\share\\OBS. Used only when Auto is on. "
+               "Leave blank if you don't have a NAS."),
     Field("nas_offload_root_remote", "Remote root (Tailscale)", "path", "offload",
-          hint="Path when away, e.g. \\\\100.84.207.58\\50tb\\OBS. Used only "
-               "when Auto is on. Prefer Tailscale IP — avoids dad's Deco "
-               "colliding with mum's 192.168.68.59."),
+          hint="Path when you're away, e.g. a Tailscale UNC. Used only when "
+               "Auto is on. Leave blank if you don't have a NAS."),
 
     # ---- Remote streaming (Moonlight client) ----
     Field("moonlight_path", "Moonlight.exe", "path", "remote",
           hint="Path to Moonlight. Leave the default if you installed to "
                "Program Files; blank falls back to PATH and known locations."),
     Field("moonlight_host", "Host", "text", "remote",
-          hint="Sunshine PC — Tailscale IP or MagicDNS name, e.g. "
-               "100.90.134.9 or alien-pc. Must already be paired in Moonlight."),
+          hint="Sunshine PC — a Tailscale IP or MagicDNS name. Must already "
+               "be paired in Moonlight. Blank leaves remote play off."),
     Field("moonlight_app", "App", "text", "remote",
           hint="Sunshine app to launch. Desktop is the full session; other "
                "names must match Sunshine's app list exactly."),

@@ -45,7 +45,7 @@ def peer_for_path(root):
     """UNC host from a NAS root, or None for drive letters / local paths.
 
     ``\\\\nas\\share\\OBS`` → ``nas``
-    ``\\\\100.84.207.58\\50tb\\OBS`` → ``100.84.207.58``
+    ``\\\\100.64.0.2\\share\\OBS`` → ``100.64.0.2``
     ``Z:/OBS Recordings`` → None
     """
     if not root:
@@ -230,11 +230,11 @@ def peer_online(host, st=None):
 
 
 def peer_cur_addr(host, st=None):
-    """Live WireGuard endpoint for ``host`` (e.g. ``192.168.68.59:41641``).
+    """Live WireGuard endpoint for ``host`` (e.g. ``192.168.1.10:41641``).
 
     Empty when the peer has no active path yet. Used to tell same-LAN
-    (private CurAddr) from cross-site (public CurAddr) without trusting the
-    overlapping Deco ``192.168.68.0/24`` at dad's house.
+    (private CurAddr) from cross-site (public CurAddr) without trusting a
+    shared home subnet on its own.
     """
     if not host:
         return None
@@ -308,7 +308,7 @@ def ping_rtt_ms(host, count=1):
     if not result or not result.stdout:
         return None
     text = result.stdout.decode("utf-8", errors="replace")
-    # "pong from nas (100.x) via 192.168.68.59:41641 in 2ms"
+    # "pong from nas (100.x) via 192.168.1.10:41641 in 2ms"
     best = None
     for line in text.splitlines():
         line = line.strip().lower()
@@ -331,7 +331,7 @@ def home_lan_preferred(lan_root, peer="nas"):
     Cheap and conservative:
       1. ``lan_root`` must already be reachable (``isdir``).
       2. Prefer Tailscale ``CurAddr`` — private endpoint ⇒ same site.
-         Public endpoint ⇒ remote site (dad's Virgin → mum's NAS).
+         Public endpoint ⇒ remote site, so keep the Tailscale path.
       3. If no CurAddr yet, fall back to ping RTT ≤ ``_HOME_RTT_MS``.
 
     Never invents "home" from overlapping Deco subnets alone.
