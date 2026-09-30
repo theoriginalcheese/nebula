@@ -237,6 +237,43 @@ def run():
     check("sanitize matches monitor",
           _sanitize("Foo:Bar?") == sanitize_folder_name("Foo:Bar?"))
 
+    # A display name must never become a path that leaves recording_root.
+    # ".." survives a naive invalid-char strip and join(root, "..") is the
+    # drive above the recording root - OBS would record straight into D:\.
+    from obsauto.monitor import game_folder_under
+    for evil in ("..", ".", "...", " .. ", ". .", ""):
+        check(f"sanitize refuses {evil!r}", sanitize_folder_name(evil) == "Unknown",
+              repr(sanitize_folder_name(evil)))
+    # With the separator replaced these are harmless single names, not dots.
+    for evil in ("..\\", "../", "..\\..", "../x"):
+        out = sanitize_folder_name(evil)
+        check(f"sanitize defuses {evil!r}",
+              out.strip(".") and "\\" not in out and "/" not in out, repr(out))
+    check("sanitize strips trailing dots (Win32 does anyway)",
+          sanitize_folder_name("Halo 3.") == "Halo 3")
+    check("sanitize strips control chars",
+          "\x00" not in sanitize_folder_name("Bad\x00Name") and
+          "\n" not in sanitize_folder_name("Bad\nName"))
+    for dev in ("CON", "nul", "COM1", "Lpt9", "con.mkv"):
+        out = sanitize_folder_name(dev)
+        check(f"sanitize defuses reserved {dev}",
+              out.split(".", 1)[0].upper() not in ("CON", "NUL", "COM1", "LPT9"), out)
+    check("sanitize leaves ordinary names alone",
+          sanitize_folder_name("Elden Ring") == "Elden Ring")
+
+    esc_root = os.path.join(work, "esc-root")
+    os.makedirs(esc_root, exist_ok=True)
+    for evil in ("..", "..\\..", "../x", "C:\\Windows", "\\\\nas\\share"):
+        folder = game_folder_under(esc_root, evil)
+        inside = os.path.commonpath(
+            [os.path.abspath(esc_root), os.path.abspath(folder)]) == os.path.abspath(esc_root)
+        check(f"game folder stays under root for {evil!r}", inside, folder)
+    check("game folder is exactly one segment",
+          os.path.dirname(game_folder_under(esc_root, "a/b\\c")) == esc_root,
+          game_folder_under(esc_root, "a/b\\c"))
+    check("game folder plain name unchanged",
+          game_folder_under(esc_root, "Elden Ring") == os.path.join(esc_root, "Elden Ring"))
+
     fold_root = os.path.join(work, "fold-local")
     os.makedirs(os.path.join(fold_root, "Real Folder"), exist_ok=True)
     fold_clip = os.path.join(fold_root, "Real Folder", "x.mkv")

@@ -68,6 +68,45 @@ def isdir_within(path, timeout=2.0):
     return ok
 
 
+def filesize_within(path, timeout=2.0):
+    """``os.path.getsize`` for a regular file, or ``None`` if the path is
+    missing, not a file, or has not answered within ``timeout``.
+
+    Same shape as ``isdir_within`` and for the same reason: the manual-delete
+    gate needs to know whether the NAS copy really is there and the right
+    size, and it asks from the JS-bridge thread, where a dead SMB share must
+    not be allowed to freeze the window. ``None`` is "could not prove it",
+    which every caller treats as "do not delete".
+    """
+    path = (path or "").strip()
+    if not path:
+        return None
+    try:
+        timeout = float(timeout)
+    except (TypeError, ValueError):
+        timeout = 2.0
+    if timeout <= 0:
+        timeout = 2.0
+
+    box = []
+
+    def check():
+        try:
+            if os.path.isfile(path):
+                box.append(os.path.getsize(path))
+            else:
+                box.append(None)
+        except OSError:
+            box.append(None)
+
+    worker = threading.Thread(target=check, daemon=True)
+    worker.start()
+    worker.join(timeout)
+    if worker.is_alive() or not box:
+        return None
+    return box[0]
+
+
 def forget(path):
     """Drop any memoised negative verdict for *path*.
 

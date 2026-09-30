@@ -47,7 +47,7 @@ and `RESOURCE_DIR` (`sys._MEIPASS` when frozen) only for bundled read-only asset
 | `obsauto/updater.py` | `check_for_update`, `save_source_snapshot`, `load_source_snapshot`, `relaunch_source`, `sync_source_checkout` (back-compat) | Updates: packaged = Releases; source = Save this machine / Load latest / Restart now on `main`. No wip shuttle |
 | `obsauto/monitor.py` | `Monitor` | Core loop: foreground/idle detection, ensure/launch OBS, start/stop + retarget recording, manual-stop hold-off (`Classifier.peek()` on UI paths - never network there) |
 | `obsauto/hotkey.py` | `register`, `unregister` | Global hotkey toggle via low-level keyboard hook; callers must pair register/unregister or stale hooks pile up |
-| `obsauto/fsprobe.py` | `isdir_within` | Bounded filesystem probes: `os.path.isdir` on a dead mapped/SMB drive blocks 20–60s, so probe with a worker + timeout; negative verdicts memoised ~10s |
+| `obsauto/fsprobe.py` | `isdir_within`, `filesize_within` | Bounded filesystem probes: `os.path.isdir` on a dead mapped/SMB drive blocks 20–60s, so probe with a worker + timeout; negative verdicts memoised ~10s |
 | `obsauto/obs_client.py` | `OBSClient`, `OBSError` | Minimal obs-websocket **v5** client |
 | `obsauto/classifier.py` | `Classifier`, `merge_classifications()` | Game vs non-game classification (Steam-aware hybrid); `peek()` = cache-only variant |
 | `obsauto/steam_scanner.py` | `build_steam_game_index()` | Scan Steam libraries, parse VDF, classify AppIDs |
@@ -64,6 +64,7 @@ and `RESOURCE_DIR` (`sys._MEIPASS` when frozen) only for bundled read-only asset
 | `obsauto/discord_detect.py` | `discord_voice_active()` | Detect an *active* Discord voice/video call (not merely Discord.exe open) - holds a recording across game switches |
 | `obsauto/moonlight.py` | `start_stream()`, `wait_until_streaming()`, `end_session()` | Launch/control Moonlight via its CLI (soft optional): stream windows, chrome guard, hide/reveal, end session |
 | `obsauto/session_detect.py` | `moonlight_session_active()` | Detect a live Moonlight streaming session |
+| `obsauto/atomic_json.py` | `write_json_atomic()`, `read_json()` | Crash-safe JSON state: temp + fsync + `os.replace`; corrupt files are quarantined as `.corrupt` and logged, never silently read as empty (used by the offload queue/state and `games.json`) |
 | `obsauto/config.py` | `load_config()`, `save_config()` | Config persistence |
 | `obsauto/paths.py` | `APP_DIR`, `RESOURCE_DIR` | Dev vs. frozen-onefile path resolution |
 | `obsauto/recycle.py` | `recyclable()`, `to_recycle_bin()`, `RecycleError` | The only place a recording is removed: Recycle Bin via pywin32's SHFileOperation, and a hard **no** on network paths, which have no bin - a "recycle" there would silently be a permanent delete |

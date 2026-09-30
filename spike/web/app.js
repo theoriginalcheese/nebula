@@ -54,6 +54,29 @@ const DASH_TOAST_MS = 6000;
 const DASH_GHOST_COMPACT = [200, 44];
 
 let dashMeta = null;
+/* Used when config() has not landed yet. showPane always paints the add-module
+   tile, and that tile reads dashMeta.blocks. A null here used to throw, and
+   the throw sat in the same try as the snapshot poll — so one failed boot
+   call left "Looking for OBS" / "data stuck" on screen until restart.
+   Numbers match obsauto/design_v3.py GRID_COLS / SPANS and SPIKE_DEFAULT_GRID. */
+const DASH_FALLBACK = {
+  blocks: ["hero", "stats", "activity"],
+  labels: { hero: "Live session", stats: "Session stats", activity: "Activity" },
+  default_grid: [
+    { id: "hero", span: 12 },
+    { id: "stats", span: 6 },
+    { id: "activity", span: 12 },
+  ],
+  cols: 12,
+  gap: 16,
+  spans: [6, 8, 12],
+  span_labels: { 6: "½", 8: "⅔", 12: "Full" },
+  layout: [
+    { id: "hero", span: 12 },
+    { id: "stats", span: 6 },
+    { id: "activity", span: 12 },
+  ],
+};
 let dashLayout = [];
 let dashEditing = false;
 let dashLayoutBeforeEdit = null;
@@ -74,7 +97,7 @@ function cloneDashLayout(src) {
 function spanOf(id) {
   const it = dashLayout.find((x) => x.id === id);
   if (!it) return dashMeta ? dashMeta.cols : 12;
-  return id === "hero" ? dashMeta.cols : it.span;
+  return id === "hero" ? (dashMeta ? dashMeta.cols : 12) : it.span;
 }
 
 function packGridRows(layout) {
@@ -170,7 +193,7 @@ function syncDashBlockVisibility() {
    slot it grows into the space the removed modules just freed. */
 function paintAddModuleTile() {
   const tile = $("dash-add-tile");
-  if (!tile) return;
+  if (!tile || !dashMeta) return;
   const placed = new Set(dashLayout.map((it) => it.id));
   const missing = (dashMeta.blocks || []).filter((id) => !placed.has(id));
   if (!missing.length || !dashEditing || currentPane !== "dashboard") {
@@ -625,8 +648,9 @@ function beginDashPointerDrag(e, id, opts) {
 }
 
 function initDashboard(cfg) {
-  dashMeta = cfg.dashboard || {};
-  dashLayout = cloneDashLayout(dashMeta.layout || dashMeta.default_grid || []);
+  const dash = (cfg && cfg.dashboard) || DASH_FALLBACK;
+  dashMeta = dash;
+  dashLayout = cloneDashLayout(dash.layout || dash.default_grid || []);
   applyDashLayout(dashLayout, { animate: false });
 }
 
@@ -2918,7 +2942,6 @@ function load() {
   if (loadPromise) return loadPromise;
   loadPromise = (async () => {
     const rateEl = $("fc-rate");
-    const connEl = $("conn-label");
     try {
       if (rateEl && !dataReady) rateEl.textContent = "loading storage…";
       const d = await window.pywebview.api.snapshot();
@@ -2940,11 +2963,10 @@ function load() {
       dataReady = true;
       return d;
     } catch (e) {
+      // Leave the badge on "checking…" — a rejected snapshot is retried by
+      // the poll. Stamping "data stuck" here made a boot blip look permanent,
+      // and the next line used to wipe the real message fail() just wrote.
       fail("snapshot", e);
-      if (rateEl) rateEl.textContent = "storage read failed — see log";
-      if (connEl && connEl.textContent === "checking…") {
-        connEl.textContent = "data stuck";
-      }
       return lastSnapshot;
     } finally {
       loadPromise = null;
@@ -3278,11 +3300,26 @@ window.setQuiet = setQuiet;
 /* --- wiring ------------------------------------------------------------ */
 
 function ready() {
+  /* window.pywebview.api is an empty object the moment the bridge script
+     runs, and the methods are attached a tick later. Resolving on the empty
+     object calls config() / snapshot() before they exist; both reject, and
+     the dashboard stays on the HTML placeholders. Wait until the functions
+     are actually there. pywebviewready fires once that attach has happened,
+     including when it fired before this script parsed. */
   return new Promise((resolve) => {
-    const go = () => window.pywebview && window.pywebview.api && (resolve(), true);
+    let t = 0;
+    const go = () => {
+      const api = window.pywebview && window.pywebview.api;
+      if (!api || typeof api.snapshot !== "function" || typeof api.config !== "function") {
+        return false;
+      }
+      if (t) clearInterval(t);
+      resolve();
+      return true;
+    };
     if (go()) return;
     window.addEventListener("pywebviewready", go, { once: true });
-    const t = setInterval(() => go() && clearInterval(t), 50);
+    t = setInterval(() => { go(); }, 50);
   });
 }
 
@@ -3328,20 +3365,40 @@ function wireResizeEdges() {
   });
 }
 
+let bootWired = false;
+
+async function ensureBoot() {
+  if (bootCfg) return;
+  const cfg = await window.pywebview.api.config();
+  /* Paint steps must not keep this retrying. A throw in the bake used to
+     leave bootCfg unset, so the poll called ensureBoot again on every tick
+     — including while the page was asleep — and re-rasterised the aurora
+     forever. Once config() has answered, one attempt is enough. */
+  try {
+    applyAppearance(cfg.appearance);
+    applyVersion(cfg.version);
+    buildBackdrop(cfg.background, cfg.seed);
+    initDashboard(cfg);
+    if (!bootWired) {
+      bootWired = true;
+      wireDashCustomise();
+      wireSetup();
+      wireResizeEdges();
+      if (cfg.setup && cfg.setup.needed) startSetup(cfg);
+      ensureSpots();
+      wirePointer(cfg.background.motion.pointer_lean_window_px);
+    }
+  } catch (e) { fail("backdrop", e); }
+  bootCfg = cfg;
+}
+
 (async function init() {
+  // Layout exists before the bridge answers, so showPane cannot throw on
+  // a null dashboard and take the snapshot poll down with it.
+  initDashboard(null);
   await ready();
   try {
-    bootCfg = await window.pywebview.api.config();
-    applyAppearance(bootCfg.appearance);
-    applyVersion(bootCfg.version);
-    buildBackdrop(bootCfg.background, bootCfg.seed);
-    initDashboard(bootCfg);
-    wireDashCustomise();
-    wireSetup();
-    wireResizeEdges();
-    if (bootCfg.setup && bootCfg.setup.needed) startSetup(bootCfg);
-    ensureSpots();
-    wirePointer(bootCfg.background.motion.pointer_lean_window_px);
+    await ensureBoot();
   } catch (e) { fail("backdrop", e); }
   try { startHud(); } catch (e) { fail("hud", e); }
   try {
@@ -3356,12 +3413,15 @@ function wireResizeEdges() {
       if (r && r.pane) bootPane = r.pane;
       if (r && r.group) settingsGroup = r.group;
     } catch (_) { /* bridge not ready */ }
-    showPane(bootPane);
+    try { showPane(bootPane); } catch (e) { fail("data", e); }
     let pollMs = 2000;
     const pollLoop = async () => {
       const asleep = document.documentElement.classList.contains("asleep");
       // Keep retrying until the first snapshot lands, even if something
       // flipped .asleep during boot.
+      if (!bootCfg) {
+        try { await ensureBoot(); } catch (e) { fail("backdrop", e); }
+      }
       if (!asleep || !dataReady) {
         try { await load(); } catch (_) { /* fail() already surfaced */ }
       }
@@ -3565,12 +3625,13 @@ document.addEventListener("click", async (e) => {
       const indexOnly = check.policy === "index_only";
       const msg = indexOnly
         ? (check.message || `Remove ${check.rel} from Nebula's list?\n\nThe NAS file will not be deleted.`)
-        : `Delete local copy of ${check.rel}?\n\n${check.size_label} · the NAS copy (if any) is left alone.`;
+        : (check.message || `Delete local copy of ${check.rel}?\n\n${check.size_label} · the NAS copy (if any) is left alone.`);
       if (!confirm(msg)) return;
       check = await window.pywebview.api.delete_clip(path, true, indexOnly);
     }
     if (!check.ok) {
-      if (check.error && check.error !== "clip not found") alert(check.error || "Delete failed");
+      if (check.refused) alert(check.message || "Can't delete yet");
+      else if (check.error && check.error !== "clip not found") alert(check.error || "Delete failed");
       return;
     }
     await load();

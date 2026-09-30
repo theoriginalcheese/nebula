@@ -129,6 +129,18 @@ class OBSClient:
             self._recv_forever()
         finally:
             self._identified.clear()
+            self._fail_pending()
+
+    def _fail_pending(self):
+        """Wake every call() still waiting: the socket is gone, no response
+        is coming. Without this each waiter sat out its full timeout (5s+)
+        before noticing, one after another, which is what a "frozen" stop
+        button looked like from the outside."""
+        with self._lock:
+            waiters = list(self._pending.values())
+            self._pending.clear()
+        for ev in waiters:
+            ev["event"].set()
 
     def _recv_forever(self):
         while not self._stop and self._ws:
@@ -162,9 +174,10 @@ class OBSClient:
                 # Runs on this receive thread - handlers must marshal.
                 handler = self.on_event
                 if handler:
+                    data = msg.get("d") or {}
                     try:
-                        handler(msg["d"].get("eventType"),
-                                msg["d"].get("eventData") or {})
+                        handler(data.get("eventType"),
+                                data.get("eventData") or {})
                     except Exception as exc:
                         self.log(f"[OBS] Event handler failed: {exc}")
 
@@ -188,17 +201,25 @@ class OBSClient:
         with self._lock:
             self._pending[request_id] = ev
 
-        self._ws.send(json.dumps(payload))
+        # The waiter is registered before send so a fast reply can't be
+        # missed - which means a failed send has to unregister it, or every
+        # dropped socket leaves one more entry in _pending forever.
+        try:
+            try:
+                self._ws.send(json.dumps(payload))
+            except Exception as exc:
+                raise OBSError(f"{request_type} not sent: {exc}") from exc
 
-        if not ev["event"].wait(timeout):
+            if not ev["event"].wait(timeout):
+                raise OBSError(f"Timed out waiting for response to {request_type}")
+        finally:
             with self._lock:
                 self._pending.pop(request_id, None)
-            raise OBSError(f"Timed out waiting for response to {request_type}")
-
-        with self._lock:
-            self._pending.pop(request_id, None)
 
         resp = ev["response"]
+        if resp is None:
+            # Woken by _fail_pending: the connection died while we waited.
+            raise OBSError(f"Connection to OBS lost while waiting for {request_type}")
         status = resp.get("requestStatus", {})
         if not status.get("result"):
             raise OBSError(

@@ -46,7 +46,14 @@ from . import discord_detect
 from . import session_detect
 from .audio_detect import AudioKeepAlive
 
-_INVALID_CHARS = re.compile(r'[<>:"/\\|?*]')
+_INVALID_CHARS = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
+# Device names Windows refuses as file/folder names regardless of extension
+# or case: CreateDirectory("CON") fails, "NUL.mkv" writes nowhere.
+_RESERVED_NAMES = frozenset(
+    {"CON", "PRN", "AUX", "NUL"}
+    | {f"COM{i}" for i in range(1, 10)}
+    | {f"LPT{i}" for i in range(1, 10)}
+)
 _UNSET = object()
 
 GAME_CAPTURE_INPUT_NAME = "Game Capture (Auto)"
@@ -63,7 +70,48 @@ SESSION_GATES = {
 
 
 def sanitize_folder_name(name):
-    return _INVALID_CHARS.sub("_", name).strip() or "Unknown"
+    """Turn a display name into exactly one folder name *inside* the
+    recording root.
+
+    Stripping the obviously-invalid characters is not enough: a name of
+    ``..`` (or ``.``) survives that and ``os.path.join(root, "..")`` is the
+    *parent* of the recording root - OBS would happily record to ``D:\\``.
+    Windows also silently drops trailing dots and spaces, so ``"Foo."`` and
+    ``"Foo"`` are the same folder, and reserved device names (``CON``,
+    ``NUL``, ``COM1``...) cannot be created at all. Every one of those maps
+    to a plain, single path segment here so the caller never has to think
+    about it.
+    """
+    cleaned = _INVALID_CHARS.sub("_", name or "").strip()
+    # Trailing dots/spaces are dropped by Win32; strip them ourselves so
+    # ".", "..", "..." and "Game ." cannot mean "a different directory".
+    cleaned = cleaned.rstrip(". ").strip()
+    if not cleaned:
+        return "Unknown"
+    if cleaned.split(".", 1)[0].upper() in _RESERVED_NAMES:
+        # Win32 checks the stem before the first dot, so "CON.mkv" is as
+        # reserved as "CON"; a leading underscore changes the stem itself.
+        cleaned = "_" + cleaned
+    return cleaned
+
+
+def game_folder_under(root, display_name):
+    """``root/<sanitised display_name>``, guaranteed to stay under ``root``.
+
+    ``sanitize_folder_name`` already makes escape impossible; this is the
+    belt to its braces for the one call that hands OBS a record directory.
+    If the joined path somehow lands outside the root, fall back to the
+    ``Unknown`` folder rather than record anywhere else on the drive.
+    """
+    root_abs = os.path.abspath(root)
+    folder = os.path.join(root, sanitize_folder_name(display_name))
+    try:
+        contained = os.path.commonpath([root_abs, os.path.abspath(folder)]) == root_abs
+    except ValueError:  # different drives - definitely not under root
+        contained = False
+    if not contained:
+        return os.path.join(root, "Unknown")
+    return folder
 
 
 def encode_obs_window_id(title, cls, exe):
@@ -699,7 +747,7 @@ class Monitor:
         # cannot live in games.json - that file syncs across machines and a
         # path does not. See obsauto/app_icons.py.
         app_icons.remember(exe_path)
-        folder = os.path.join(self.config["recording_root"], sanitize_folder_name(display_name))
+        folder = game_folder_under(self.config["recording_root"], display_name)
         return (pid, basename, display_name, folder)
 
     def _current_target_still_running(self):

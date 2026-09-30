@@ -3761,13 +3761,14 @@ class AppWindow:
             if field.kind != "choice":
                 widget.delete(0, "end")
                 widget.insert(0, settings_spec.render(field, old))
-            self._log(f"[Manual] {field.label}: {error} — kept {old!r}")
+            self._log(f"[Manual] {field.label}: {error} — kept "
+                      f"{settings_spec.log_value(field, old)}")
             return
         if value == old:
             return
         self.config[key] = value
         self._save_settings()
-        self._log(f"[Manual] {key} = {value!r}")
+        self._log(f"[Manual] {key} = {settings_spec.log_value(field, value)}")
         self._settings_apply_live(key, value)
 
     def _settings_apply_live(self, key, value):

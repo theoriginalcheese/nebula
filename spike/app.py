@@ -51,6 +51,8 @@ from obsauto.gamesync import GameSync, MultiGameSync, NasGameSync
 from obsauto.clip_catalog import ClipCatalog
 from obsauto.offload import Offloader
 from obsauto.paths import RESOURCE_DIR
+from obsauto import fsprobe
+from obsauto import recycle
 from obsauto import thumbs
 from obsauto import steam_scanner
 from obsauto import classifier as classifier_module
@@ -362,6 +364,15 @@ class Api:
         the static tokens via gen_tokens.py; the layout maths (blob counts,
         size fractions, alphas, motion cycles) comes through here as JSON.
         """
+        try:
+            return self._build_config()
+        except Exception as exc:
+            import traceback
+            log_to_file("[UI] config call failed: %s\n%s" % (
+                exc, traceback.format_exc()))
+            raise
+
+    def _build_config(self):
         bg = dict(dv.BACKGROUND)
         bg["motion"] = dict(dv.BACKGROUND_MOTION_UNUSED)
         return {
@@ -650,6 +661,14 @@ class Api:
                     "moonlight": {}, "tailscale": {}, "blurb": "",
                 }),
             }
+        except Exception as exc:
+            # Section faults are swallowed by part(). Anything that still
+            # escapes used to die inside pywebview's bridge logger, which
+            # pythonw never shows — the page just sat on "data stuck".
+            import traceback
+            log_to_file("[UI] snapshot call failed: %s\n%s" % (
+                exc, traceback.format_exc()))
+            raise
         finally:
             ms = (time.perf_counter() - t0) * 1000.0
             if ms >= 750:
@@ -1524,7 +1543,7 @@ class Api:
         self.cfg[key] = value
         save_config(self.cfg)
         self._settings_saved_at = time.time()
-        self._api_log("[Manual] %s = %r" % (key, value))
+        self._api_log("[Manual] %s = %s" % (key, settings_spec.log_value(field, value)))
         # Hotkeys that claim live apply: rebind through the host when we can.
         if (self._host and key in (
                 "toggle_hotkey", "toggle_hotkey_scancode",
@@ -2175,6 +2194,24 @@ class Api:
                 ) % clip["name"],
             }
 
+        # "Not in the queue" is not the same as "safely on the NAS": the queue
+        # file can be empty because it was never queued (offload was off at
+        # the time), or because a previous run lost it. With offloading on,
+        # the local copy only goes once the indexed NAS copy is actually
+        # there and the same size. Never probed unbounded on this thread.
+        offload_on = bool(offloader and offloader.enabled)
+        nas_proof = None
+        if local_path and os.path.isfile(local_path):
+            nas_proof = self._nas_copy_proof(local_path, nas_path)
+            if offload_on and not nas_proof["ok"]:
+                return {
+                    "ok": False,
+                    "refused": True,
+                    "message": "%s: %s\n\nNebula won't delete a clip that has "
+                               "no verified second copy." % (
+                                   clip["name"], nas_proof["reason"]),
+                }
+
         # Remote-only: never auto-delete NAS.
         if location == "remote" and not local_path and not cache_path:
             if not confirm:
@@ -2206,7 +2243,36 @@ class Api:
             self._api_log("[Manual] Removed from index (NAS untouched): %s" % rel)
             return {"ok": True, "removed": "index", "nas_deleted": False}
 
+        # How the local file would go, decided before asking so the confirm
+        # text tells the truth. Recycle Bin whenever the volume has one; a
+        # hard delete only when a verified NAS copy exists (that is the
+        # copy-verify-then-delete rule, same as the offloader's move mode);
+        # otherwise refuse - Nebula has no third option that isn't "destroy
+        # the only copy".
+        via = None
+        if local_path and os.path.isfile(local_path):
+            if recycle.recyclable(local_path):
+                via = "recycle"
+            elif nas_proof and nas_proof["ok"]:
+                via = "remove"
+            else:
+                return {
+                    "ok": False,
+                    "refused": True,
+                    "message": (
+                        "%s is on a drive with no Recycle Bin and has no "
+                        "verified NAS copy.\n\nNebula won't permanently delete "
+                        "the only copy of a recording."
+                    ) % clip["name"],
+                }
+
         if not confirm:
+            if via == "recycle":
+                how = "The local file goes to the Recycle Bin"
+            elif via == "remove":
+                how = "The local file is deleted (its NAS copy is verified)"
+            else:
+                how = "Only Nebula's cached copy is removed"
             return {
                 "ok": False,
                 "need_confirm": True,
@@ -2214,14 +2280,21 @@ class Api:
                 "rel": rel,
                 "size_label": _format_bytes(clip["size"]),
                 "location": location,
+                "via": via,
+                "message": "Delete local copy of %s?\n\n%s · %s. The NAS copy "
+                           "(if any) is left alone." % (
+                               rel, _format_bytes(clip["size"]), how),
             }
 
         deleted_local = False
-        if local_path and os.path.isfile(local_path):
+        if via:
             try:
-                os.remove(local_path)
+                if via == "recycle":
+                    recycle.to_recycle_bin(local_path)
+                else:
+                    os.remove(local_path)
                 deleted_local = True
-            except OSError as exc:
+            except (OSError, recycle.RecycleError) as exc:
                 self._api_log("[Manual] Couldn't delete %s: %s" % (
                     clip["name"], exc))
                 return {"ok": False, "error": str(exc)}
@@ -2255,12 +2328,41 @@ class Api:
             self._clips_scanned_at = 0.0
             self._ensure_clips_scan(force=True)
 
-        self._api_log("[Manual] Deleted local/cache %s (NAS untouched)" % rel)
+        what = {"recycle": "Recycled local", "remove": "Deleted local"}.get(
+            via, "Evicted cache for")
+        self._api_log("[Manual] %s %s (NAS untouched)" % (what, rel))
         return {
             "ok": True,
             "deleted_local": deleted_local,
+            "via": via,
             "nas_deleted": False,
         }
+
+    def _nas_copy_proof(self, local_path, nas_path):
+        """Is there a verified second copy of ``local_path`` on the NAS?
+
+        ``{"ok": bool, "reason": str}``. Proof means: the index names a NAS
+        path, that file answers within the probe timeout, and its size
+        matches the local file. Anything less - no index entry, NAS not
+        answering, size differs - is a reason to refuse, spelled out so the
+        user knows which one it was.
+        """
+        if not nas_path:
+            return {"ok": False,
+                    "reason": "no NAS copy is recorded for this clip"}
+        try:
+            local_size = os.path.getsize(local_path)
+        except OSError as exc:
+            return {"ok": False, "reason": "can't read the local file (%s)" % exc}
+        remote_size = fsprobe.filesize_within(nas_path)
+        if remote_size is None:
+            return {"ok": False,
+                    "reason": "the NAS copy isn't reachable right now"}
+        if remote_size != local_size:
+            return {"ok": False,
+                    "reason": "the NAS copy is a different size (%s vs %s)" % (
+                        _format_bytes(remote_size), _format_bytes(local_size))}
+        return {"ok": True, "reason": ""}
 
     # --- Games (frame 2d) ----------------------------------------------
 
@@ -2337,7 +2439,10 @@ class Api:
         if not new_name:
             return {"ok": False, "error": "empty display name"}
         from obsauto.monitor import sanitize_folder_name
-        if not sanitize_folder_name(new_name):
+        # The sanitiser never returns empty - it returns "Unknown" for names
+        # that cannot be a folder ("..", ".", "???"). A rename that would
+        # silently file every future clip under Unknown is not a rename.
+        if sanitize_folder_name(new_name) == "Unknown" and new_name != "Unknown":
             return {"ok": False, "error": "name is not a usable folder name"}
 
         snap = self._classifier.snapshot()

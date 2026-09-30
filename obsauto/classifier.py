@@ -11,6 +11,7 @@ import os
 import threading
 
 from . import steam_scanner
+from .atomic_json import write_json_atomic
 from .paths import APP_DIR
 
 DATA_FILE = os.path.join(APP_DIR, "games.json")
@@ -165,8 +166,11 @@ class Classifier:
         on_disk.setdefault("non_games", {})
         on_disk = self._heal(on_disk)
         self._data = merge_classifications(on_disk, self._data)
-        with open(DATA_FILE, "w", encoding="utf-8") as f:
-            json.dump(self._data, f, indent=2, sort_keys=True)
+        # Write-then-rename: a crash (or a OneDrive sync grabbing the file)
+        # mid-write must never leave games.json truncated - the next load
+        # would read that as "no classifications" and every game would need
+        # re-teaching.
+        write_json_atomic(DATA_FILE, self._data, indent=2, sort_keys=True)
         try:
             self.on_saved(self._data)
         except Exception as exc:

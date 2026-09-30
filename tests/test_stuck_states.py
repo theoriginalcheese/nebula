@@ -116,6 +116,98 @@ def test_a_bad_frame_does_not_strand_the_client():
           c.connected is False)
 
 
+# --- 2b. a call() cannot leak a waiter or wait out a dead socket ----------
+
+class BrokenSendSocket:
+    def send(self, raw):
+        raise OSError("socket closed")
+
+
+class SilentSocket:
+    """Accepts sends, answers nothing; recv blocks until told to stop."""
+
+    def __init__(self):
+        self.closed = threading.Event()
+
+    def send(self, raw):
+        pass
+
+    def recv(self):
+        self.closed.wait(5.0)
+        raise OSError("closed")
+
+
+def _bare_client(sock):
+    c = obs_client.OBSClient.__new__(obs_client.OBSClient)
+    c._stop = False
+    c._lock = threading.Lock()
+    c._pending = {}
+    c._identified = threading.Event()
+    c._identified.set()
+    c.on_event = None
+    c.on_log = lambda msg: None
+    c._ws = sock
+    return c
+
+
+def test_call_never_leaks_a_waiter():
+    # A send that raises used to leave its entry in _pending forever, and the
+    # raw socket error escaped instead of an OBSError.
+    c = _bare_client(BrokenSendSocket())
+    try:
+        c.call("StartRecord", timeout=1)
+        check("failed send raises", False, "no exception")
+    except obs_client.OBSError as exc:
+        check("failed send raises OBSError", "not sent" in str(exc), exc)
+    except Exception as exc:  # noqa: BLE001 - the test is about the type
+        check("failed send raises OBSError", False, repr(exc))
+    check("failed send leaves no pending waiter", c._pending == {}, c._pending)
+
+    # A socket that dies while a call is waiting: the waiter must be woken
+    # at once with an OBSError, not sit out the full timeout.
+    sock = SilentSocket()
+    c = _bare_client(sock)
+    t = threading.Thread(target=c._recv_loop, daemon=True)
+    t.start()
+    outcome = {}
+
+    def caller():
+        t0 = time.monotonic()
+        try:
+            c.call("StopRecord", timeout=4)
+            outcome["result"] = "returned"
+        except obs_client.OBSError as exc:
+            outcome["result"] = str(exc)
+        outcome["elapsed"] = time.monotonic() - t0
+
+    ct = threading.Thread(target=caller, daemon=True)
+    ct.start()
+    time.sleep(0.2)
+    check("waiter is registered while the call is in flight",
+          len(c._pending) == 1, c._pending)
+    sock.closed.set()          # the socket dies now
+    ct.join(timeout=3)
+    check("dead socket wakes the waiter early",
+          outcome.get("elapsed", 99) < 2.0, outcome)
+    check("and it fails as an OBSError, not a timeout",
+          "lost" in str(outcome.get("result", "")), outcome)
+    check("no waiter left behind", c._pending == {}, c._pending)
+
+    # An event frame with no "d" is dropped, not fatal to the receive thread.
+    sock2 = DeadSocket([json.dumps({"op": 5}), json.dumps({"op": 5, "d": None})])
+    c2 = _bare_client(sock2)
+    seen = []
+    c2.on_event = lambda et, data: seen.append((et, data))
+    t2 = threading.Thread(target=c2._recv_loop, daemon=True)
+    t2.start()
+    time.sleep(0.2)
+    check("a bodiless event frame is survived", t2.is_alive())
+    check("and handed to the handler as an empty event",
+          seen == [(None, {}), (None, {})], seen)
+    sock2.closed.set()
+    t2.join(timeout=3)
+
+
 # --- 3. a save heals what it merges with -----------------------------------
 
 def test_save_heals_the_disk_copy():

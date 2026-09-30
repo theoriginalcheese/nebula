@@ -386,6 +386,19 @@ def render(field, value):
     return str(value)
 
 
+def log_value(field, value):
+    """What a *log line* may say about a stored value.
+
+    The activity feed is written to nebula.log on disk and shown in the UI,
+    so a secret field (OBS password, GitHub token) must never reach it -
+    ``%r`` of the value would put the plaintext in both. Secrets log only
+    whether they are set; everything else logs its repr as before.
+    """
+    if field.kind == "secret":
+        return "(set)" if value else "(blank)"
+    return repr(value)
+
+
 def parse_all(raw_values):
     """Parse a {key: text} mapping. Returns (values, errors), where `errors` is
     [(field, message)] and `values` holds only the keys that parsed cleanly, so

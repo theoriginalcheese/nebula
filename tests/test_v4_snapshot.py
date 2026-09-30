@@ -202,11 +202,42 @@ def test_start_menu_shortcut_is_not_dev():
     check("explicit dev still available", "--dev" in dev and "--show" in dev)
 
 
+def test_set_setting_never_logs_secrets():
+    """The activity log is nebula.log on disk; a password or token must not
+    land in it when the user edits the field in Settings."""
+    import spike.app as app_module
+    work = tempfile.mkdtemp(prefix="nebula-snap-")
+    api = _stub_api(work, os.path.join(work, "rec"))
+    api._gamesync = None
+    api._settings_saved_at = None
+    logs = []
+    api._api_log = logs.append
+    saved = []
+    real_save = app_module.save_config
+    app_module.save_config = lambda cfg, *a, **k: saved.append(dict(cfg))
+    try:
+        secret = "hunter2-very-secret-9f8e7d"
+        out = api.set_setting("obs_password", secret)
+        check("secret set_setting ok", out.get("ok") is True, out)
+        check("secret written to config", api.cfg.get("obs_password") == secret and saved)
+        check("secret commit logged", any("obs_password" in m for m in logs), logs)
+        check("secret plaintext not logged", not any(secret in m for m in logs), logs)
+        tok = "ghp_0123456789abcdef"
+        api.set_setting("github_token", tok)
+        check("token plaintext not logged", not any(tok in m for m in logs), logs)
+        api.set_setting("obs_port", "4460")
+        check("non-secret still logs its value",
+              any("obs_port = 4460" in m for m in logs), logs)
+    finally:
+        app_module.save_config = real_save
+
+
 if __name__ == "__main__":
     test_clips_panel_skips_nas_isdir()
     test_snapshot_isolates_section_faults()
     test_hero_survives_host_without_preview()
     test_start_menu_shortcut_is_not_dev()
+    test_set_setting_never_logs_secrets()
     print("\n%d passed, %d failed" % (len(PASS), len(FAIL)))
     if FAIL:
         print("FAILED:", ", ".join(FAIL))

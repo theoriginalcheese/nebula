@@ -31,7 +31,6 @@ Config keys (absent/blank root = feature off, a pure no-op):
 from __future__ import annotations
 
 import hashlib
-import json
 import os
 import shlex
 import shutil
@@ -41,6 +40,7 @@ import time
 
 from . import tailscale as ts
 from . import teracopy as tc
+from .atomic_json import read_json, write_json_atomic
 from .fsprobe import forget as _fsprobe_forget
 from .fsprobe import isdir_within
 from .silent_proc import run_kwargs
@@ -52,6 +52,7 @@ _FRESH_CLIP_S = 60.0      # skip files still being written (mtime too new)
 _VIDEO_EXTS = (".mkv", ".mp4", ".mov", ".flv", ".ts", ".m4v")
 _DEFAULT_INTERVAL_H = 24
 _SSH_HASH_TIMEOUT = 600   # large clips hashed on-NAS; generous wall clock
+_MAX_DEST_ALIASES = 50    # "name (2).mkv" ... before giving up on a folder
 _PATH_PROBE_TTL = 30.0    # how long a LAN/remote choice sticks
 
 
@@ -513,54 +514,107 @@ class Offloader:
                 parts.append(month)
         return os.path.join(*parts), game_folder
 
+    def _dest_candidates(self, src, dest_dir):
+        """The names ``src`` may sit under in ``dest_dir``, in the order the
+        worker tries them: ``clip.mkv``, ``clip (2).mkv``, ``clip (3).mkv``...
+
+        Aliases exist because two different recordings can share a basename
+        (a recovered clip, a manual rename, OBS restarted within the same
+        second). The worker never overwrites a same-named file whose bytes
+        differ - see ``_pick_dest`` - so the scan has to look at the same
+        alias list or it would re-queue every clip that landed under one.
+        """
+        base, ext = os.path.splitext(os.path.basename(src))
+        for n in range(1, _MAX_DEST_ALIASES + 1):
+            name = base + ext if n == 1 else "%s (%d)%s" % (base, n, ext)
+            yield os.path.join(dest_dir, name)
+
+    def _pick_dest(self, src, dest_dir):
+        """Where ``src`` lands in ``dest_dir`` - never on top of other footage.
+
+        Returns ``(dest, present)``. ``present`` is True when a byte-identical
+        copy already sits at ``dest`` (nothing to copy, just finalise). A
+        same-named file with *different* content is somebody else's
+        recording, so the walk moves on to the next alias instead of
+        replacing it. ``(None, False)`` when every alias is taken by a
+        divergent file; the caller keeps the local copy and says so.
+        """
+        for dest in self._dest_candidates(src, dest_dir):
+            if not os.path.exists(dest):
+                return dest, False
+            if self._same_file(src, dest):
+                return dest, True
+        return None, False
+
     def _dest_present(self, path, game):
-        """True when a same-sized file already sits at the NAS destination."""
+        """True when a same-sized file already sits at a NAS destination alias.
+
+        Size-only on purpose: this is the periodic scan deciding what to
+        queue, not the worker deciding what to delete. The walk stops at the
+        first alias that does not exist, because the worker fills them in
+        order - a gap means nothing beyond it is ours.
+        """
         dest_dir, _ = self._dest_dir_for(path, game)
-        dest = os.path.join(dest_dir, os.path.basename(path))
         try:
-            if not os.path.isfile(dest):
-                return False
-            return os.path.getsize(path) == os.path.getsize(dest)
+            size = os.path.getsize(path)
         except OSError:
             return False
+        for dest in self._dest_candidates(path, dest_dir):
+            try:
+                if not os.path.isfile(dest):
+                    return False
+                if os.path.getsize(dest) == size:
+                    return True
+            except OSError:
+                return False
+        return False
 
     # ---- persistence ----
+    # The queue is the gate behind manual delete (pending_paths): a clip in
+    # it has no verified second copy yet. So this file must never come back
+    # empty because a save was interrupted - write-then-rename, and a corrupt
+    # file is quarantined and logged rather than read as "nothing pending".
     def _load_queue(self):
+        items = read_json(self._queue_file, [], log=self._log,
+                          label="offload queue")
+        if not isinstance(items, list):
+            items = []
         try:
-            with open(self._queue_file, "r", encoding="utf-8") as f:
-                items = json.load(f)
             with self._lock:
                 # Drop entries whose source has since vanished (already handled).
-                self._queue = [i for i in items if i.get("path") and os.path.exists(i["path"])]
+                self._queue = [
+                    i for i in items
+                    if isinstance(i, dict) and i.get("path")
+                    and os.path.exists(i["path"])]
                 self._save_queue()
-        except (OSError, ValueError):
+        except OSError:
             pass
 
     def _save_queue(self):
         try:
-            with open(self._queue_file, "w", encoding="utf-8") as f:
-                json.dump(self._queue, f, indent=2)
-        except OSError:
-            pass
+            write_json_atomic(self._queue_file, self._queue)
+        except OSError as exc:
+            self._log(f"[Offload] Couldn't save queue: {exc}")
 
     def _load_state(self):
+        data = read_json(self._state_file, {}, log=self._log,
+                         label="offload state")
+        if not isinstance(data, dict):
+            return
         try:
-            with open(self._state_file, "r", encoding="utf-8") as f:
-                data = json.load(f)
             self._last_scan_at = float(data.get("last_scan_at") or 0)
             self._last_success_at = float(data.get("last_success_at") or 0)
             self._last_message = str(data.get("last_message") or "")
-        except (OSError, ValueError, TypeError):
+        except (ValueError, TypeError):
             pass
 
     def _save_state(self):
         try:
-            with open(self._state_file, "w", encoding="utf-8") as f:
-                json.dump({
-                    "last_scan_at": self._last_scan_at,
-                    "last_success_at": self._last_success_at,
-                    "last_message": self._last_message,
-                }, f, indent=2)
+            write_json_atomic(self._state_file, {
+                "last_scan_at": self._last_scan_at,
+                "last_success_at": self._last_success_at,
+                "last_message": self._last_message,
+            })
         except OSError:
             pass
 
@@ -733,18 +787,31 @@ class Offloader:
             self._log_unreachable(code)
             return False
         dest_dir, game_folder = self._dest_dir_for(src, item.get("game"))
-        dest = os.path.join(dest_dir, os.path.basename(src))
         try:
             os.makedirs(dest_dir, exist_ok=True)
         except OSError as exc:
             self._log(f"[Offload] Can't create {dest_dir}: {exc}")
             return False
 
-        # Already safely there from a previous run? Verify, then finish.
-        if os.path.exists(dest) and self._same_file(src, dest):
+        # A same-named file that is NOT this clip is footage we must not
+        # replace - the old `os.replace(part, dest)` would have destroyed it
+        # and then, in move mode, deleted the local original too. Pick a
+        # free alias instead; a byte-identical copy from a previous run is
+        # simply finalised.
+        dest, present = self._pick_dest(src, dest_dir)
+        if dest is None:
+            self._log(f"[Offload] {os.path.basename(src)}: every name in "
+                      f"{dest_dir} is taken by a different file - kept local, "
+                      "will retry.")
+            return False
+        if present:
             self._log(f"[Offload] Already on NAS, verified: {os.path.basename(src)}")
             return self._finalize(src, dest, game=game_folder,
                                   sha256=self._hash(src))
+        if os.path.basename(dest) != os.path.basename(src):
+            self._log(f"[Offload] {os.path.basename(src)} already exists on "
+                      f"the NAS with different content - keeping both, "
+                      f"copying as {os.path.basename(dest)}")
 
         part = dest + ".part"
         self._cleanup(part)
@@ -764,7 +831,15 @@ class Offloader:
             self._cleanup(part)
             return False
         try:
-            os.replace(part, dest)  # atomic rename over any stale dest
+            # `dest` was free when picked; the rename is atomic, and anything
+            # that appeared there since is (by construction) not our bytes -
+            # so refuse rather than replace, and let the retry re-pick.
+            if os.path.exists(dest):
+                self._log(f"[Offload] {os.path.basename(dest)} appeared on the "
+                          "NAS mid-copy - not overwriting, will retry.")
+                self._cleanup(part)
+                return False
+            os.replace(part, dest)
         except OSError as exc:
             self._log(f"[Offload] Rename failed ({os.path.basename(src)}): {exc}")
             self._cleanup(part)

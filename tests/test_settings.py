@@ -168,6 +168,24 @@ settle(120)
 widget, _field = app._settings_fields["obs_password"]
 check("password field is masked", widget.cget("show") == "*", widget.cget("show"))
 
+# ---- secrets never reach the activity log (which is also nebula.log on disk) ----
+logged = []
+_real_log = app._log
+app._log = lambda msg, *a, **k: (logged.append(str(msg)), _real_log(msg, *a, **k))
+SECRET = "hunter2-very-secret-9f8e7d"
+widget.delete(0, "end")
+widget.insert(0, SECRET)
+app._settings_commit("obs_password")
+app._log = _real_log
+check("password commit is logged", any("obs_password" in m for m in logged), logged)
+check("password plaintext never logged", not any(SECRET in m for m in logged), logged)
+check("password logged as (set)", any("obs_password = (set)" in m for m in logged), logged)
+check("password still saved", app.config["obs_password"] == SECRET)
+check("log_value hides secrets",
+      settings_spec.log_value(settings_spec.BY_KEY["github_token"], "ghp_abc") == "(set)"
+      and settings_spec.log_value(settings_spec.BY_KEY["github_token"], "") == "(blank)"
+      and settings_spec.log_value(settings_spec.BY_KEY["obs_port"], 4455) == "4455")
+
 # ---- never drop an unknown key ----
 last = saved[-1]
 check("unknown key survives the write", last.get("some_future_key") == "keep me",

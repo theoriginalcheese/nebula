@@ -135,11 +135,8 @@ Produces a single-file, windowed `dist/Nebula-v4.exe` — no separate Python ins
 run it. WebView2 ships with Windows 11 and with any recent Edge, so there is nothing else to
 install.
 
-The older Tk build is still buildable while v4 finishes settling:
-
-```bash
-pyinstaller nebula.spec
-```
+The older Tk build has been retired: `nebula.spec` now exits on purpose with a pointer to
+`nebula-v4.spec`, so there is exactly one build command.
 
 ⚠️ **The frozen build and a source run do not share data.** `APP_DIR` resolves next to the
 executable, so `dist/Nebula-v4.exe` reads `dist/config.json` while `python spike/app.py`
@@ -233,17 +230,19 @@ powershell -ExecutionPolicy Bypass -File scripts\update-from-github.ps1
 
 ## Tests
 
+The suite is a set of standalone scripts, one process each, run under a per-file watchdog.
+This is the same gate CI runs (`.github/workflows/ci.yml`):
+
 ```bash
-python tests/test_async_connect.py   # async OBS connect, error handling
-python tests/test_views.py           # nav views + tile-grid dashboard
-python tests/test_list_views.py      # Recordings/Games populate
-python tests/test_frame_pacing.py    # visible-window frame budget
-python tests/test_gamesync.py        # game-list sync (mocked GitHub API)
-python tests/test_offload.py         # NAS offload safety invariants
-python tests/stress_test.py          # integrated stress under adverse load
+ruff check .
+python tools/run_tests.py                # every tests/test_*.py, 150s watchdog per file
+python tools/run_tests.py -k offload     # substring filter
+python tests/test_offload_collision.py   # or run any one file directly
+python tests/stress_test.py              # integrated stress; nightly/manual in CI, not on push
 ```
 
-All need a desktop session (they create a hidden Tk window); none need OBS.
+Tests need a desktop session (some create hidden windows) and ffmpeg on PATH; none need OBS.
+`PYTHONUTF8=1` is forced by the runner because several checks print arrows cp1252 can't encode.
 
 ## Licence
 
