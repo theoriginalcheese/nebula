@@ -1,15 +1,16 @@
-/* Toast — capsule look (Tk design C / frame 2i), WebView surface.
-   Shape is squared to the window edge on purpose: DWM rounds the HWND (~8px).
-   Do not paint a page-level shell rim or core pill radius — either leaves a
-   grey rectangular enclosure (hairline border / wash in the corner gap).
-   Core fills the HWND flush; only the outer silhouette is DWM-limited.
-   Layout, size, dust and single-row copy match the Tk capsule gallery.
+/* Toast — recovered capsule (tools/_toast_demo, August 2026 gallery).
+   The HWND is clipped to a true pill in windows._clip_capsule (radius =
+   height / 2). Paint fills that region flush. A radius smaller than the
+   window, or a hairline in the corner gap, is the grey box Anthony rejected.
+   Nebula wash sits under two glass layers. Dust is a constellation across
+   the pill, not trapped in the icon chip.
 
-   Combo balanced standout (tools/_toast_demo/standout_combo.html):
-   - core opacity /.96 → /.98 (less see-through on a busy desktop)
+   Combo balanced standout (tools/_toast_demo/standout_combo.html was the
+   comparison page; that file is not in the repo):
+   - core opacity was pushed toward /.98 so the glass stays readable on a
+     busy desktop
    - luminous inset hairline at hairline-rgb /.075 (not a painted grey box)
-   - soft lift: pywebview shadow=True / DWM — a CSS outer drop would clip at
-     the HWND edge; growing a transparent bleed reintroduces the enclosure. */
+   - soft lift is the OS shadow — a CSS outer drop clips at the HWND edge */
 
 *, *::before, *::after { box-sizing: border-box; }
 
@@ -46,45 +47,40 @@ html, body {
   transition: none;
 }
 
-/* Prompt: taller HWND, stacked copy + two pill actions (Tk TOAST_PROMPT_*). */
+/* Prompt is the same 60px row as status. Buttons share that row. */
+.toast.is-prompt .toast-core {
+  flex-direction: row;
+  align-items: center;
+}
+
 .toast.is-prompt .toast-row {
-  flex: 0 0 auto;
-  align-items: flex-start;
-  padding: 18px 22px 0 14px;
+  flex: 1 1 auto;
+  min-width: 0;
+  /* 12px between the words and Record. text box stays 218px. */
+  padding-right: 12px;
 }
 
-.toast.is-prompt .toast-copy {
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 2px;
-  white-space: normal;
-  overflow: visible;
+.toast.is-prompt .toast-actions {
+  gap: 8px;
+  margin-right: 15px;
+  padding: 0;
 }
 
-.toast.is-prompt .toast-sep,
-.toast.is-prompt .toast-detail {
-  display: none !important;
-}
-
-.toast.is-prompt .toast-title {
-  line-height: 1.25;
-  overflow: visible;
-  text-overflow: clip;
-}
-
-.toast.is-prompt .toast-sub {
-  line-height: 1.3;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  max-width: 100%;
+.toast.is-prompt .toast-btn {
+  width: 72px;
+  height: 26px;
+  padding: 0;
+  border-radius: 13px;
 }
 
 .toast-actions {
+  position: relative;
+  z-index: 3;
   display: flex;
   flex: 0 0 auto;
-  gap: 10px;
-  padding: 14px 22px 16px 14px;
+  align-items: center;
+  gap: 8px;
+  padding: 0 18px 0 0;
 }
 
 .toast-actions[hidden] {
@@ -95,9 +91,9 @@ html, body {
   appearance: none;
   border: 0;
   margin: 0;
-  height: 30px;
-  min-width: 118px;
-  padding: 0 16px;
+  height: 26px;
+  min-width: 0;
+  padding: 0 14px;
   border-radius: 999px;
   font: inherit;
   font-size: 12px;
@@ -121,12 +117,15 @@ html, body {
 }
 
 .toast-btn:active {
-  transform: scale(var(--press-scale, 0.97));
+  transform: scale(0.98);
 }
 
 .toast-btn-primary {
   background: rgb(var(--accent-rgb) / .32);
   color: var(--text);
+  box-shadow:
+    inset 0 0 0 1px rgb(var(--hairline-rgb) / .09),
+    inset 0 1px 0 rgb(var(--hairline-rgb) / .06);
 }
 
 .toast-btn-primary:hover {
@@ -170,15 +169,64 @@ html, body {
 }
 
 .toast-shell {
+  position: relative;
   width: 100%;
   height: 100%;
-  /* No painted shell on this surface. A hairline wash + 3px pad read as a
-     grey rectangular enclosure around the capsule (desktop, not aurora).
-     Core fills the HWND; DWM supplies the only outer round. */
-  padding: 0;
-  border-radius: 0;
-  background: transparent;
+  /* 3px glass rim, same as TOAST_PAD. Safe only because the HWND is already
+     a capsule — this inset never sits inside a squared window. */
+  padding: 3px;
+  border-radius: 30px;
+  overflow: hidden;
+  background: rgb(var(--hairline-rgb) / .07);
+  box-shadow: inset 0 0 0 1px rgb(var(--hairline-rgb) / .10);
   border: 0;
+}
+
+.toast-nebula {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  overflow: hidden;
+  pointer-events: none;
+  background:
+    radial-gradient(120px 80px at 18% 40%, rgb(var(--accent-rgb) / .28), transparent 70%),
+    radial-gradient(160px 90px at 78% 70%, rgb(var(--ember-rgb) / .10), transparent 72%),
+    var(--ground-deep);
+}
+
+/* The row's wash lives on the core. These blobs are the older nebula. */
+.toast-nebula span {
+  display: none;
+}
+
+.toast-nebula span:nth-child(1) {
+  width: 90px;
+  height: 48px;
+  left: 8%;
+  top: -8px;
+  background: rgb(var(--accent-rgb) / .45);
+  animation: toast-nebula-drift 9s var(--ease) infinite;
+}
+.toast-nebula span:nth-child(2) {
+  width: 70px;
+  height: 40px;
+  right: 12%;
+  bottom: -12px;
+  background: rgb(var(--ember-rgb) / .22);
+  animation: toast-nebula-drift 11s var(--ease) infinite reverse;
+}
+.toast-nebula span:nth-child(3) {
+  width: 40px;
+  height: 24px;
+  left: 46%;
+  top: 8px;
+  background: rgb(var(--hairline-rgb) / .16);
+  animation: toast-nebula-drift 7s var(--ease) infinite;
+}
+
+@keyframes toast-nebula-drift {
+  0%, 100% { transform: translate3d(0, 0, 0); }
+  50% { transform: translate3d(6px, -2px, 0); }
 }
 
 .toast-core {
@@ -187,26 +235,37 @@ html, body {
   flex-direction: column;
   width: 100%;
   height: 100%;
-  /* Must stay 0: any core radius opens a dark gap inside the squared HWND
-     and reintroduces a framed look. DWM supplies the round. */
-  border-radius: 0;
-  background: rgb(var(--ground-rgb) / .98);
-  /* Luminous hairline — tinted light edge, not a solid grey stroke. */
-  box-shadow: inset 0 0 0 1px rgb(var(--hairline-rgb) / .075);
+  border-radius: 27px;
+  background:
+    radial-gradient(90% 180% at 0% 0%, rgb(var(--accent-rgb) / .09), transparent 60%),
+    radial-gradient(60% 160% at 100% 100%, rgb(64 48 150 / .22), transparent 70%), /* lint-allow: row corner wash, no token for this violet */
+    rgb(var(--ground-rgb) / .88);
+  box-shadow:
+    inset 0 0 0 1px rgb(var(--hairline-rgb) / .075),
+    inset 0 1px 0 rgb(var(--hairline-rgb) / .06);
   overflow: hidden;
+}
+
+.toast.is-ember .toast-core {
+  background:
+    radial-gradient(90% 180% at 0% 0%, rgb(var(--ember-rgb) / .07), transparent 60%),
+    radial-gradient(60% 160% at 100% 100%, rgb(64 48 150 / .22), transparent 70%), /* lint-allow: row corner wash, no token for this violet */
+    rgb(var(--ground-rgb) / .88);
 }
 
 /* Single baseline: chip · title · middot · sub · detail (Tk capsule row). */
 .toast-row {
+  position: relative;
+  z-index: 3;
   flex: 1;
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
   min-width: 0;
   min-height: 0;
-  /* Clear the capsule curve / DWM round — matches TOAST_TEXT_INSET spirit.
-     A few px bottom pad keeps descenders ("g", "y") above the drain. */
-  padding: 0 22px 6px 14px;
+  /* Shell is inset 3px, so 13px here lands the chip at 16px on the pill
+     and 12px of gap lands the words at 56px. Right pad keeps textW at 302. */
+  padding: 0 23px 0 13px;
 }
 
 .toast-chip-wrap {
@@ -224,46 +283,52 @@ html, body {
   border-radius: 50%;
   display: grid;
   place-items: center;
-  background: rgb(var(--accent-rgb) / .14);
-  box-shadow: 0 0 14px rgb(var(--accent-rgb) / .28);
+  background: rgb(var(--accent-rgb) / .16);
+  box-shadow:
+    0 0 0 5px rgb(var(--accent-rgb) / .07),
+    0 0 16px rgb(var(--accent-rgb) / .34),
+    inset 0 0 0 1px rgb(var(--accent-rgb) / .28);
 }
 
 .toast.is-ember .toast-chip {
-  background: rgb(var(--ember-rgb) / .14);
-  box-shadow: 0 0 14px rgb(var(--ember-rgb) / .32);
+  background: rgb(var(--ember-rgb) / .16);
+  box-shadow:
+    0 0 0 5px rgb(var(--ember-rgb) / .07),
+    0 0 16px rgb(var(--ember-rgb) / .38),
+    inset 0 0 0 1px rgb(var(--ember-rgb) / .30);
 }
 
 .toast-icon {
   font-family: "Segoe Fluent Icons", sans-serif;
-  font-size: 13px;
+  font-size: 14px;
   line-height: 1;
-  color: var(--accent);
+  color: var(--accent-text);
 }
 
 .toast.is-ember .toast-icon {
   color: var(--ember);
 }
 
-/* Soft dust constellation — transform + opacity only. */
+/* Dust sits in the inset core. seedDust places each speck from the row file. */
 .toast-dust {
   position: absolute;
   inset: 0;
-  z-index: 0;
+  z-index: 1;
   pointer-events: none;
+  overflow: hidden;
 }
 
 .toast-dust span {
   position: absolute;
-  left: 50%;
-  top: 50%;
   border-radius: 50%;
-  background: var(--accent);
-  opacity: 0.4;
+  background: var(--accent-text);
+  box-shadow: 0 0 4px rgb(var(--accent-rgb) / .9);
   transform: translate(-50%, -50%);
 }
 
 .toast.is-ember .toast-dust span {
-  background: var(--ember);
+  background: color-mix(in srgb, var(--ember) 69%, white);
+  box-shadow: 0 0 4px rgb(var(--ember-rgb) / .9);
 }
 
 .toast-dust[data-style="burst"] span {
@@ -286,29 +351,30 @@ html, body {
 }
 
 @keyframes toast-dust-burst {
-  0%, 100% { transform: translate(-50%, -50%) scale(1); opacity: var(--dust-a, .4); }
-  50% { transform: translate(calc(-50% + var(--dust-dx) * 1.35), calc(-50% + var(--dust-dy) * 1.35)) scale(1.15); opacity: calc(var(--dust-a, .4) * .55); }
+  0%, 100% { transform: translate(-50%, -50%) scale(.9); opacity: calc(var(--dust-a, .4) * .6); }
+  50% { transform: translate(calc(-50% + var(--dust-dx) * .5), calc(-50% + var(--dust-dy) * .5)) scale(1.15); opacity: var(--dust-a, .4); }
 }
 @keyframes toast-dust-sink {
   0%, 100% { transform: translate(-50%, -50%); opacity: var(--dust-a, .4); }
-  50% { transform: translate(calc(-50% + var(--dust-dx) * .4), calc(-50% + var(--dust-dy) * .4 + 4px)); opacity: calc(var(--dust-a, .4) * .7); }
+  50% { transform: translate(calc(-50% - var(--dust-dx) * .3), calc(-50% + 5px)); opacity: calc(var(--dust-a, .4) * .6); }
 }
 @keyframes toast-dust-drift {
   0%, 100% { transform: translate(-50%, -50%); opacity: var(--dust-a, .4); }
-  50% { transform: translate(calc(-50% + var(--dust-dx) * .55 + 3px), calc(-50% + var(--dust-dy) * .35)); opacity: calc(var(--dust-a, .4) * .85); }
+  50% { transform: translate(calc(-50% + var(--dust-dx) * .5 + 4px), calc(-50% + var(--dust-dy) * .2)); opacity: calc(var(--dust-a, .4) * .85); }
 }
 @keyframes toast-dust-rise {
-  0%, 100% { transform: translate(-50%, -50%); opacity: var(--dust-a, .4); }
-  50% { transform: translate(calc(-50% + var(--dust-dx) * .3), calc(-50% + var(--dust-dy) * .3 - 5px)); opacity: calc(var(--dust-a, .4) * 1.1); }
+  0%, 100% { transform: translate(-50%, -50%); opacity: calc(var(--dust-a, .4) * .6); }
+  50% { transform: translate(-50%, calc(-50% - 6px)); opacity: var(--dust-a, .4); }
 }
 @keyframes toast-dust-scatter {
-  0%, 100% { transform: translate(-50%, -50%); opacity: var(--dust-a, .4); }
-  25% { transform: translate(calc(-50% + var(--dust-dx) * .9), calc(-50% + var(--dust-dy) * .2)); }
-  75% { transform: translate(calc(-50% + var(--dust-dx) * .2), calc(-50% + var(--dust-dy) * .9)); opacity: calc(var(--dust-a, .4) * .5); }
+  0%, 100% { transform: translate(-50%, -50%); }
+  25% { transform: translate(calc(-50% + 2px), calc(-50% - 1px)); }
+  50% { transform: translate(calc(-50% - 1px), calc(-50% + 2px)); }
+  75% { transform: translate(calc(-50% + 1px), calc(-50% + 1px)); }
 }
 @keyframes toast-dust-orbit {
-  0% { transform: translate(-50%, -50%) rotate(0deg) translate(var(--dust-orbit, 6px), 0) rotate(0deg); opacity: var(--dust-a, .4); }
-  100% { transform: translate(-50%, -50%) rotate(360deg) translate(var(--dust-orbit, 6px), 0) rotate(-360deg); opacity: var(--dust-a, .4); }
+  0% { transform: translate(-50%, -50%) rotate(0deg) translate(var(--dust-orbit, 3px), 0) rotate(0deg); }
+  100% { transform: translate(-50%, -50%) rotate(360deg) translate(var(--dust-orbit, 3px), 0) rotate(-360deg); }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -330,32 +396,31 @@ html.asleep .toast-drain {
   min-width: 0;
   display: flex;
   align-items: baseline;
-  gap: 8px;
+  gap: 7px;
   white-space: nowrap;
   overflow: hidden;
 }
 
 .toast-title {
-  flex: 0 1 auto;
-  min-width: 0;
+  flex: none;
   font-size: 14px;
   font-weight: 500;
-  line-height: 1.2;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  line-height: 18px;
 }
 
 .toast-sep {
   flex: 0 0 auto;
   color: var(--text-eyebrow);
   font-size: 14px;
-  font-weight: 500;
+  font-weight: 400;
+  line-height: 18px;
 }
 
 .toast-sub {
   flex: 0 1 auto;
   min-width: 0;
-  font-size: var(--t-meta-size);
+  font-size: 13px;
+  line-height: 18px;
   color: var(--text-secondary);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -364,19 +429,25 @@ html.asleep .toast-drain {
 .toast-detail {
   flex: 0 0 auto;
   font-family: var(--font-mono);
-  font-size: var(--t-mono-size);
-  color: var(--text-tertiary);
+  margin-left: auto;
+  padding-left: 6px;
+  font-size: 11.5px;
+  line-height: 18px;
+  color: var(--text-secondary);
   font-variant-numeric: tabular-nums;
 }
 
 .toast-track {
   position: absolute;
-  left: 22px;
-  right: 22px;
-  bottom: 7px;
+  z-index: 4;
+  /* Core is inset 3px, so 21/2 here is 24px inset and 5px off the pill edge. */
+  left: 21px;
+  right: 21px;
+  bottom: 2px;
+  --rule-fade: 40px;
   height: var(--toast-drain-h);
   background: rgb(var(--hairline-rgb) / var(--hairline-a));
-  border-radius: var(--r-control);
+  border-radius: 2px;
   overflow: hidden;
   -webkit-mask-image: linear-gradient(90deg, transparent 0, #000 var(--rule-fade), #000 calc(100% - var(--rule-fade)), transparent 100%);  /* lint-allow: #000 in a mask is an alpha stencil, not a colour - it never paints */
   mask-image: linear-gradient(90deg, transparent 0, #000 var(--rule-fade), #000 calc(100% - var(--rule-fade)), transparent 100%);  /* lint-allow: as above */
@@ -397,4 +468,6 @@ html.asleep .toast-drain {
 
 @media (prefers-reduced-motion: reduce) {
   .toast-drain { will-change: auto; }
+  .toast-nebula span,
+  .toast-dust span { animation-play-state: paused; }
 }

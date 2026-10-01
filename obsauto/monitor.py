@@ -32,6 +32,7 @@ import psutil
 from . import app_icons
 from . import profiles
 from . import session_log
+from .classifier import resolve_capture
 
 try:
     import win32gui
@@ -423,7 +424,8 @@ class Monitor:
         self.on_unknown_app = on_unknown_app or (lambda *a, **k: None)
         self._running = False
         self._thread = None
-        self._recording_target = None  # (pid, basename, display_name, folder, window_id) or None
+        self._recording_target = None  # (pid, basename, display_name, folder) or None
+        self._applied_capture = None   # record | buffer | both for that target
         self._pending_target = _UNSET
         self._pending_count = 0
         self._recording_started_at = None
@@ -818,6 +820,66 @@ class Monitor:
         name = self._recording_target[2] if self._recording_target else "the game"
         self.log("[Monitor] Still paused - waiting for %s to be in front again." % name)
 
+    def _capture_mode(self, basename):
+        """record, buffer, or both. Missing data means recording."""
+        override = None
+        getter = getattr(self.classifier, "snapshot", None)
+        snap = getter() if callable(getter) else None
+        if isinstance(snap, dict):
+            entry = (snap.get("games") or {}).get((basename or "").lower())
+            if isinstance(entry, dict):
+                override = entry.get("capture")
+        return resolve_capture(override, self.config.get("default_capture_mode"))
+
+    @staticmethod
+    def _mode_records(mode):
+        return mode in ("record", "both")
+
+    def _nothing_recording(self):
+        """True when OBS is not in a session we started.
+
+        A buffer-only game still sets ``_recording_target`` so we stay locked
+        on it. That must not count as a live recording, or hold-off and the
+        reopen cooldown never see a gap to act in.
+        """
+        return (self._recording_target is None
+                or self._applied_capture == "buffer")
+
+    def _auto_start_blocked(self, target):
+        """'hold' or 'cooldown' when this target must not StartRecord."""
+        if target is None or self._capture_mode(target[1]) == "buffer":
+            return None
+        if not self._nothing_recording():
+            return None
+        if self._hold_off:
+            return "hold"
+        if self._reopen_cooldown_active(target[1]):
+            return "cooldown"
+        return None
+
+    def _note_capture_change(self, target):
+        """Same game, capture mode edited.
+
+        True when the caller should leave the recording alone (state updated,
+        or a hold-off prompt raised). False when a full stop/start is required
+        because whether we record at all has changed.
+        """
+        mode_now = self._capture_mode(target[1])
+        if mode_now == self._applied_capture:
+            return True
+        if self._mode_records(mode_now) == self._mode_records(self._applied_capture):
+            self._applied_capture = mode_now
+            self.on_state(game=target[2], folder=target[3],
+                          basename=target[1], capture=mode_now)
+            return True
+        if (self._mode_records(mode_now) and self._hold_off
+                and not self._mode_records(self._applied_capture)):
+            self._maybe_prompt_hold_off(target)
+            self.on_state(game=target[2], folder=None,
+                          basename=target[1], capture=mode_now)
+            return True
+        return False
+
     def _recording_gate_open(self, basename):
         """For session-gated apps (Moonlight), recording should only start/
         continue while a session is actually live - not just because the app
@@ -1025,7 +1087,10 @@ class Monitor:
         except OBSError as e:
             self.log(f"[OBS] Live retarget directory failed: {e}")
         self._recording_target = target
-        self.on_state(game=display_name, folder=folder)
+        mode = self._capture_mode(basename)
+        self._applied_capture = mode
+        self.on_state(game=display_name, folder=folder,
+                      basename=basename, capture=mode)
         self.log(
             f"[OBS] Held recording across game switch (Discord call): "
             f"{prev_name} -> {display_name}"
@@ -1047,7 +1112,8 @@ class Monitor:
             self._apply_target_locked(target, epoch, hold_recording=hold_recording)
 
     def _apply_target_locked(self, target, epoch, *, hold_recording=False):
-        if target == self._recording_target:
+        mode = self._capture_mode(target[1]) if target is not None else None
+        if target == self._recording_target and mode == self._applied_capture:
             return
 
         if (hold_recording and target is not None
@@ -1081,12 +1147,23 @@ class Monitor:
         if target is not None:
             _, _, display_name, folder = target
             os.makedirs(folder, exist_ok=True)
+            exe = os.path.basename(target[1] or "").lower()
+
+            if mode == "buffer":
+                self._recording_started_at = None
+                self._auto_paused = False
+                self._auto_pause_reason = None
+                self.log("[Monitor] %s uses the replay buffer — "
+                         "not starting a recording." % display_name)
+                self.on_state(game=display_name, folder=folder,
+                              basename=exe, capture="buffer")
+                self._recording_target = target
+                self._applied_capture = "buffer"
+                return
 
             # 7d's apply sequence: the profile goes on *before* StartRecord.
-            # "Never apply mid-recording" is satisfied by construction here -
-            # the previous recording was stopped above, and the new one hasn't
+            # The previous recording was stopped above, and the new one hasn't
             # started yet, which is the one safe window there is.
-            exe = os.path.basename(target[1] or "").lower()
             game_profile = profiles.for_game(self.classifier, exe)
             if game_profile:
                 profiles.apply(self.obs, game_profile, is_recording=False,
@@ -1122,7 +1199,8 @@ class Monitor:
             if started:
                 self._recording_started_at = time.time()
                 self.log(f"[OBS] Recording started: {display_name} -> {folder}")
-                self.on_state(game=display_name, folder=folder)
+                self.on_state(game=display_name, folder=folder,
+                              basename=exe, capture=mode)
                 self.on_notify("start", display_name)
                 if exe == self._reopen_cooldown_basename:
                     self.clear_reopen_cooldown()
@@ -1141,9 +1219,10 @@ class Monitor:
                     self.log(f"[OBS] Giving up on start after retries: {last_error}")
                 target = None
         else:
-            self.on_state(game=None, folder=None)
+            self.on_state(game=None, folder=None, basename=None, capture=None)
 
         self._recording_target = target
+        self._applied_capture = mode if target is not None else None
 
     # A target change only takes effect once it's been seen this many
     # consecutive polls in a row. Closing a game (especially Unity ones with
@@ -1345,6 +1424,9 @@ class Monitor:
                 self._refresh_hold_off()
 
                 if target == self._recording_target:
+                    if (target is not None and obs_ready
+                            and not self._note_capture_change(target)):
+                        self._apply_target(target)
                     self._pending_target = _UNSET
                     self._pending_count = 0
                 else:
@@ -1354,23 +1436,25 @@ class Monitor:
                         self._pending_target = target
                         self._pending_count = 1
                     if self._pending_count >= self.DEBOUNCE_TICKS:
-                        if (self._hold_off and target is not None
-                                and self._recording_target is None):
+                        blocked = self._auto_start_blocked(target)
+                        if blocked == "hold":
                             # Manual stop is sticky: never auto-StartRecord.
                             # Prompt for a different game immediately, or the
                             # same game after HOLDOFF_SAME_GAME_SECONDS.
                             self._maybe_prompt_hold_off(target)
                             self.on_state(game=target[2], folder=None,
-                                          idle=should_pause)
+                                          idle=should_pause,
+                                          basename=target[1],
+                                          capture=self._capture_mode(target[1]))
                             self._pending_target = _UNSET
                             self._pending_count = 0
-                        elif (target is not None
-                                and self._recording_target is None
-                                and self._reopen_cooldown_active(target[1])):
+                        elif blocked == "cooldown":
                             # Natural close quiet window: same game stays quiet;
-                            # other games fall through to _apply_target above.
+                            # other games fall through to _apply_target.
                             self.on_state(game=target[2], folder=None,
-                                          idle=should_pause)
+                                          idle=should_pause,
+                                          basename=target[1],
+                                          capture=self._capture_mode(target[1]))
                             self._pending_target = _UNSET
                             self._pending_count = 0
                         else:
@@ -1382,8 +1466,10 @@ class Monitor:
                             elif target is not None:
                                 # Debounce is satisfied but OBS is still
                                 # booting — show the game and retry next tick.
-                                self.on_state(game=target[2], folder=None,
-                                              idle=should_pause)
+                                self.on_state(
+                                    game=target[2], folder=None,
+                                    idle=should_pause, basename=target[1],
+                                    capture=self._capture_mode(target[1]))
             except Exception as e:  # keep the loop alive no matter what
                 self.log(f"[Monitor] Error: {e}")
             time.sleep(self.config["poll_interval_seconds"])

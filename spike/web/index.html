@@ -407,6 +407,16 @@
   </div>
 </div>
 
+<!-- Corner update prompt. Not the toast slot: that one drains on its own. -->
+<aside class="update-prompt" id="update-prompt" hidden>
+  <div class="update-prompt-copy">
+    <div class="update-prompt-title" id="update-prompt-title">Update available</div>
+    <div class="update-prompt-sub" id="update-prompt-sub"></div>
+  </div>
+  <button class="pill primary no-drag" id="update-prompt-go" type="button">Update</button>
+  <button class="update-prompt-x no-drag" id="update-prompt-dismiss" type="button" aria-label="Dismiss">&#xE711;</button>
+</aside>
+
 <!-- 7e command palette — modal over the chrome, not a second window -->
 <div class="palette-backdrop is-hidden" id="palette-backdrop" hidden aria-hidden="true">
   <div class="palette card" id="palette" role="dialog" aria-modal="true" aria-label="Command palette">

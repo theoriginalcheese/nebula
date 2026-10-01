@@ -287,6 +287,10 @@ class NebulaHost:
         self._tray_elapsed = ""
         self._tray_game = None
         self._current_game = None
+        self._capture_mode = None
+        self._replay_sync_lock = threading.Lock()
+        self._replay_sync_running = False
+        self._replay_want = None
         self._obs_version = ""
         self._handshake_ms = None
         self._video_label = ""
@@ -1089,6 +1093,7 @@ class NebulaHost:
             self._monitoring_paused = False
         self.monitor.start()
         self._log("[Monitor] Auto-started.")
+        self._sync_replay_arming()
         self.refresh_tray_icon()
         self._poll_now()
 
@@ -1124,6 +1129,11 @@ class NebulaHost:
                 self._current_game = kwargs["game"]
                 if kwargs["game"]:
                     self._tray_game = kwargs["game"]
+                if "capture" in kwargs:
+                    self._capture_mode = kwargs.get("capture")
+                elif not kwargs["game"]:
+                    self._capture_mode = None
+                self._sync_replay_arming()
             self.refresh_tray_icon()
         self.call_soon(apply)
 
@@ -1499,6 +1509,7 @@ class NebulaHost:
         with self._state_lock:
             self._monitoring_paused = True
         self._log("[Monitor] Monitoring paused - OBS stays connected.")
+        self._sync_replay_arming()
         self.refresh_tray_icon()
         self._poll_now()
 
@@ -1510,6 +1521,7 @@ class NebulaHost:
             self.monitor.start()
             self._monitoring_on = True
             self._log("[Monitor] Monitoring resumed.")
+            self._sync_replay_arming()
             self.refresh_tray_icon()
             self._poll_now()
         else:
@@ -1552,6 +1564,12 @@ class NebulaHost:
             self._log("[Replay] Disabled in config - not attaching.")
             return self.replay
 
+        if self.obs:
+            # OBS announces the saved path later, on ReplayBufferSaved.
+            # Without this hook the hotkey asks OBS to write a file and
+            # Nebula never moves it into the game folder.
+            self.obs.on_event = self.replay.handle_event
+
         seconds = self.replay.seconds
         est = replay_mod.ram_estimate_mb(self._bitrate_mbps() or 8.0, seconds)
         if self.config.get("replay_arm_with_monitoring"):
@@ -1562,6 +1580,73 @@ class NebulaHost:
                       "Arm it from the tray or press the replay hotkey."
                       % est)
         return self.replay
+
+    def _sync_replay_arming(self):
+        """Arm or disarm from monitoring, the detected game, and its capture mode.
+
+        A game set to buffer or both always arms while it is the current game.
+        Record-only games follow the existing switches: arm with monitoring,
+        and stay disarmed off a game when Games only is on.
+        """
+        replay = self.replay
+        game = self._current_game
+        capture = self._capture_mode
+        if not replay or not replay.enabled:
+            if capture in ("buffer", "both") and game:
+                self._log("[Replay] %s is set to the buffer, but instant "
+                          "replay is off in Settings." % game)
+            return
+        replay.set_game(game)
+        connected = bool(self.obs and self.obs.connected)
+        monitoring = bool(self._monitoring_on)
+        want = monitoring and connected
+        if self.config.get("replay_only_for_games", True):
+            want = want and bool(game)
+        if not self.config.get("replay_arm_with_monitoring", True):
+            want = want and bool(game)
+        if capture in ("buffer", "both") and game and monitoring and connected:
+            want = True
+
+        def work():
+            while True:
+                with self._replay_sync_lock:
+                    want_now = self._replay_want
+                    game_now = self._replay_want_game
+                    capture_now = self._replay_want_capture
+                replay.set_game(game_now)
+                if want_now == replay.armed:
+                    with self._replay_sync_lock:
+                        if (want_now == self._replay_want
+                                and game_now == self._replay_want_game
+                                and want_now == replay.armed):
+                            self._replay_sync_running = False
+                            return
+                    continue
+                if want_now:
+                    ok = replay.arm(game_now)
+                    if (not ok and replay.unavailable
+                            and capture_now in ("buffer", "both")):
+                        replay.enable_in_obs()
+                else:
+                    replay.disarm()
+                with self._replay_sync_lock:
+                    # Arm failed and nothing newer arrived: stop, don't spin.
+                    # A later state change calls this again.
+                    if (self._replay_want == want_now
+                            and replay.armed != want_now):
+                        self._replay_sync_running = False
+                        return
+
+        with self._replay_sync_lock:
+            self._replay_want = want
+            self._replay_want_game = game
+            self._replay_want_capture = capture
+            if self._replay_sync_running:
+                return
+            if want == replay.armed:
+                return
+            self._replay_sync_running = True
+        threading.Thread(target=work, daemon=True).start()
 
     def toggle_replay_arm(self):
         """Arm or disarm on demand - what makes this a side feature."""

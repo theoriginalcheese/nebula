@@ -65,8 +65,9 @@ GROUPS = (
     ("hotkey", "Hotkey",
      "One global key toggles monitoring from anywhere, even mid-game."),
     ("gamesync", "Game list sync",
-     "Classifications live in a private GitHub repo so a game you sort on one "
-     "machine is known on the others. Blank repo or token = local only."),
+     "Every install pulls the same games and non-games list from GitHub on "
+     "launch. Upload sends this PC's list there (names only, no clips). A "
+     "private repo and a NAS are optional extras."),
     ("offload", "NAS offload",
      "Finished clips are copied to the NAS and byte-verified before anything "
      "local is touched. A daily scan (when the NAS is online) and Sync now "
@@ -107,6 +108,12 @@ FIELDS = (
     # ---- Recording ----
     Field("recording_root", "Recording root", "path", "recording",
           hint="Per-game folders are created in here."),
+    Field("default_capture_mode", "When a game launches", "choice", "recording",
+          choices=("record", "buffer", "both"),
+          hint="The default for games you haven't set individually. "
+               "record starts a clip. buffer only arms the replay buffer "
+               "(save it with the replay key). both does both. "
+               "Change one game from its row in Games."),
     Field("idle_timeout_seconds", "Idle timeout", "int", "recording",
           minimum=1, maximum=3600,
           hint="Seconds of no input before recording auto-pauses. The "
@@ -204,7 +211,12 @@ FIELDS = (
           hint="File path within that repo."),
     Field("github_token", "GitHub token", "secret", "gamesync",
           hint="Needs repo scope. Stays in this machine's config.json \u2014 "
-               "never committed, never carried in the synced games.json."),
+               "never committed, never carried in the synced games.json. "
+               "Required only for Upload."),
+    Field("shared_games_url", "Shared list", "text", "gamesync",
+          hint="Where installs pull the shared games and non-games from. "
+               "The default is a file on GitHub, not this PC. Blank turns "
+               "the pull off."),
 
     # ---- NAS offload ----
     Field("nas_offload_root", "NAS root", "path", "offload",

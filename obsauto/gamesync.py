@@ -25,6 +25,10 @@ Config keys (all optional; absent = feature off):
 import base64
 import json
 import os
+import re
+import urllib.error
+import urllib.parse
+import urllib.request
 
 from .classifier import merge_classifications
 
@@ -51,6 +55,88 @@ def _req():
 API_ROOT = "https://api.github.com"
 _TIMEOUT = 15
 
+# Public read of the shared classification file. Not this PC: GitHub hosts it.
+# Write still needs a token, and only happens when someone clicks Upload.
+DEFAULT_SHARED_REPO = "theoriginalcheese/nebula"
+DEFAULT_SHARED_PATH = "data/classifications.json"
+# Not main: an upload is a commit, and a commit on main would make every
+# source checkout think Nebula itself had an update.
+DEFAULT_SHARED_BRANCH = "shared-games"
+DEFAULT_SHARED_URL = (
+    "https://raw.githubusercontent.com/theoriginalcheese/nebula/"
+    "shared-games/data/classifications.json"
+)
+_PUBLIC_MAX_BYTES = 1_500_000
+_EXE_NAME = re.compile(r"^[a-z0-9][a-z0-9 ._\-]{0,120}\.exe$")
+
+
+def parse_public_list(raw):
+    """Keep only exe basename → display name, and exe basename → ignored.
+
+    A shared file is fetched from the internet. Anything that isn't that
+    shape is dropped rather than merged into the local list.
+    """
+    try:
+        data = json.loads(raw)
+    except (TypeError, json.JSONDecodeError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    games_in = data.get("games") or {}
+    non_in = data.get("non_games") or {}
+    if not isinstance(games_in, dict) or not isinstance(non_in, dict):
+        return None
+    games = {}
+    for key, info in games_in.items():
+        name = str(key or "").strip().lower()
+        if not _EXE_NAME.match(name):
+            continue
+        if isinstance(info, dict):
+            label = str(info.get("display_name") or "").strip()
+        else:
+            label = str(info or "").strip()
+        if not label or len(label) > 80:
+            continue
+        games[name] = {"display_name": label, "source": "shared"}
+    non_games = {}
+    for key in non_in:
+        name = str(key or "").strip().lower()
+        if _EXE_NAME.match(name) and name not in games:
+            non_games[name] = True
+    return {"games": games, "non_games": non_games}
+
+
+def names_only(data):
+    """The public file is exe names and display names. Nothing else.
+
+    Profiles, Steam app ids and whatever else a local games.json carries
+    stay on this PC.
+    """
+    parsed = parse_public_list(json.dumps(data if isinstance(data, dict) else {}))
+    if not parsed:
+        return {"games": {}, "non_games": {}}
+    games = {
+        name: {"display_name": info["display_name"]}
+        for name, info in parsed["games"].items()
+    }
+    return {"games": games, "non_games": parsed["non_games"]}
+
+
+def fetch_public_list(url, timeout=_TIMEOUT):
+    """GET a shared classification file. None on any failure. Never raises."""
+    url = (url or "").strip()
+    if not url.startswith("https://"):
+        return None
+    req = urllib.request.Request(url, headers={"User-Agent": "Nebula"})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            raw = resp.read(_PUBLIC_MAX_BYTES + 1)
+    except (urllib.error.URLError, TimeoutError, OSError, ValueError):
+        return None
+    if len(raw) > _PUBLIC_MAX_BYTES:
+        return None
+    return parse_public_list(raw.decode("utf-8", errors="replace"))
+
 
 class GameSync:
     def __init__(self, config, on_log=None):
@@ -71,6 +157,7 @@ class GameSync:
         self.repo = (config.get("github_gamedata_repo") or "").strip()
         self.token = (config.get("github_token") or "").strip()
         self.path = (config.get("github_gamedata_path") or "games.json").strip()
+        self.branch = (config.get("github_gamedata_branch") or "").strip()
         # Remember the blob sha of the file we last saw, so a push knows which
         # version it's updating (the contents API needs it to replace a file).
         self._sha = None
@@ -100,8 +187,52 @@ class GameSync:
             "X-GitHub-Api-Version": "2022-11-28",
         }
 
-    def _url(self):
-        return f"{API_ROOT}/repos/{self.repo}/contents/{self.path}"
+    def _url(self, ref=True):
+        url = f"{API_ROOT}/repos/{self.repo}/contents/{self.path}"
+        if ref and self.branch:
+            url += "?ref=%s" % urllib.parse.quote(self.branch)
+        return url
+
+    def ensure_branch(self):
+        """Create ``self.branch`` from main when it does not exist yet.
+
+        False when that fails. True when there is no branch to worry about,
+        or the branch is already there.
+        """
+        if not self.branch or not self.enabled:
+            return not self.branch
+        req = _req()
+        ref_url = "%s/repos/%s/git/ref/heads/%s" % (API_ROOT, self.repo, self.branch)
+        try:
+            resp = req.get(ref_url, headers=self._headers(), timeout=_TIMEOUT)
+            if resp.status_code == 200:
+                return True
+            if resp.status_code != 404:
+                self._last_error = "couldn't read branch %s" % self.branch
+                return False
+            main = req.get(
+                "%s/repos/%s/git/ref/heads/main" % (API_ROOT, self.repo),
+                headers=self._headers(), timeout=_TIMEOUT)
+            if main.status_code != 200:
+                self._last_error = "couldn't read main"
+                return False
+            sha = ((main.json() or {}).get("object") or {}).get("sha")
+            if not sha:
+                self._last_error = "main has no commit"
+                return False
+            created = req.post(
+                "%s/repos/%s/git/refs" % (API_ROOT, self.repo),
+                headers=self._headers(),
+                json={"ref": "refs/heads/%s" % self.branch, "sha": sha},
+                timeout=_TIMEOUT)
+            if created.status_code in (201, 422):
+                return True
+            self._last_error = "couldn't create branch %s" % self.branch
+            return False
+        except Exception as exc:
+            self._last_error = str(exc)
+            self._log("[Sync] Branch setup failed: %s" % exc)
+            return False
 
     # ---- read ----
     def fetch(self):
@@ -170,8 +301,10 @@ class GameSync:
             }
             if self._sha:
                 params["sha"] = self._sha
+            if self.branch:
+                params["branch"] = self.branch
             try:
-                resp = _req().put(self._url(), headers=self._headers(),
+                resp = _req().put(self._url(ref=False), headers=self._headers(),
                                   json=params, timeout=_TIMEOUT)
                 if resp.status_code == 409:
                     continue  # stale sha; loop to re-fetch + re-merge

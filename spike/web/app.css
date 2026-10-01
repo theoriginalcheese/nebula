@@ -758,6 +758,46 @@ html, body {
 }
 .dash-toast-undo:hover { background: rgb(var(--accent-rgb) / .24); }
 
+.update-prompt {
+  position: fixed;
+  right: var(--content-pad);
+  bottom: var(--content-pad);
+  z-index: 12;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  max-width: 420px;
+  padding: 10px 10px 10px 14px;
+  border-radius: var(--r-control);
+  border: 1px solid rgb(var(--hairline-rgb) / var(--shell-border-a));
+  background: rgb(var(--raised-rgb) / var(--chrome-a));
+  color: var(--text);
+}
+.update-prompt[hidden] { display: none; }
+.update-prompt-copy { min-width: 0; flex: 1; }
+.update-prompt-title {
+  font-size: var(--t-row-size);
+  font-weight: 600;
+}
+.update-prompt-sub {
+  margin-top: 2px;
+  font-size: var(--t-row-small-size);
+  color: var(--text-eyebrow);
+  line-height: 1.35;
+}
+.update-prompt-x {
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: var(--r-control);
+  background: transparent;
+  color: var(--text-eyebrow);
+  font-family: "Segoe Fluent Icons", "Segoe MDL2 Assets", sans-serif;
+  font-size: 12px;
+  cursor: pointer;
+}
+.update-prompt-x:hover { color: var(--text); background: rgb(var(--hairline-rgb) / .35); }
+
 .visually-hidden {
   position: absolute;
   width: 1px; height: 1px;
@@ -1816,10 +1856,18 @@ html, body {
 .grow-row {
   display: grid;
   grid-template-columns: 28px 1fr auto;
-  align-items: center; gap: 10px;
-  height: 40px; padding: 0 8px;
+  align-items: center;
+  gap: 10px;
+  height: 40px;
+  padding: 0 8px;
   border-radius: var(--r-control);
   transition: background var(--hover-ms) var(--ease);
+}
+.grow-row.has-capture {
+  grid-template-columns: 28px 1fr auto auto;
+}
+.grow-row .grow-capture {
+  width: 168px;
 }
 .grow-row:hover { background: rgb(var(--hairline-rgb) / .05); }
 /* The square is the fallback, not the icon. When app_icons.py has something to

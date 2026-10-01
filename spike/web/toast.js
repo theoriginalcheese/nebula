@@ -1,13 +1,13 @@
 /* Toast — one slot, one tick chain, replace in place (frame 2i).
-   Status: single-row copy + tinted dust. Prompt: stacked copy + actions. */
+   Status and prompt share one 60px row. Prompt is only wider, for the buttons. */
 
 const $ = (id) => document.getElementById(id);
 
 const DEFAULT_CFG = {
   w: 384,
   h: 60,
-  prompt_w: 448,
-  prompt_h: 136,
+  prompt_w: 456,
+  prompt_h: 60,
   drain_h: 2,
   life_ms: 4000,
   prompt_life_ms: 30000,
@@ -79,33 +79,46 @@ function setDrain(fraction) {
   );
 }
 
+function dustSeat(content) {
+  // Seats from Nebula Toast Row, in the 3px-inset core.
+  // Status 348 / .7, stop (meta) 372 / .3, prompt 34 / .5.
+  const event = content.event || "";
+  const prompt = Boolean(content.prompt) || (content.actions && content.actions.length);
+  if (prompt || event === "prompt") return { cx: 34, k: 0.5 };
+  if (event === "stop") return { cx: 372, k: 0.3 };
+  return { cx: 348, k: 0.7 };
+}
+
 function seedDust(content) {
   const host = $("dust");
   if (!host) return;
   host.innerHTML = "";
   const style = content.dust_style || "drift";
-  const amp = typeof content.dust_amp === "number" ? content.dust_amp : 1;
   const anchor = content.dust_anchor || "left";
   host.dataset.style = style;
   host.dataset.anchor = anchor;
 
+  const seat = dustSeat(content);
+  const mirror = -1;
   const specs = (state.cfg && state.cfg.dust) || [];
-  const ox = anchor === "right" ? 8 : 0;
   specs.forEach((spec, i) => {
     const [dx, dy, r, a] = spec;
     const el = document.createElement("span");
-    const size = Math.max(1.5, r * 2);
+    const size = Math.max(1.5, r * 1.6);
+    const x = seat.cx + dx * seat.k * mirror;
+    const y = 30 + dy * 0.7;
     // lint-allow: speck size is set once when the toast is seeded, then never
     // written again — motion is transform/opacity on the same nodes.
     el.style.width = size + "px";
     el.style.height = size + "px";
-    el.style.setProperty("--dust-dx", (dx * amp) + "px");
-    el.style.setProperty("--dust-dy", (dy * amp) + "px");
-    el.style.setProperty("--dust-a", String(Math.max(0.12, Math.min(1, a * amp))));
-    el.style.setProperty("--dust-orbit", (4 + (i % 3) * 2) + "px");
-    el.style.marginLeft = (dx * amp + ox) + "px";
-    el.style.marginTop = (dy * amp) + "px";
-    el.style.animationDelay = (-i * 0.17) + "s";
+    el.style.left = x + "px";
+    el.style.top = y + "px";
+    el.style.opacity = String(a);
+    el.style.setProperty("--dust-dx", (dx * mirror) + "px");
+    el.style.setProperty("--dust-dy", dy + "px");
+    el.style.setProperty("--dust-a", String(a));
+    el.style.setProperty("--dust-orbit", (3 + (i % 3) * 2) + "px");
+    el.style.animationDelay = (-i * 0.23) + "s";
     host.appendChild(el);
   });
   state.dustStyle = style;
@@ -124,7 +137,9 @@ function paintActions(actions) {
   list.forEach((entry, i) => {
     const btn = $("btn" + i);
     if (!btn) return;
-    const label = Array.isArray(entry) ? entry[0] : (entry && entry.label) || "";
+    const label = Array.isArray(entry)
+      ? entry[0]
+      : (typeof entry === "string" ? entry : (entry && entry.label) || "");
     btn.textContent = label || (i === 0 ? "Record" : "Not now");
     btn.hidden = !label;
   });
@@ -154,45 +169,21 @@ function paint(content) {
   const sepEl = $("sep");
   const detailEl = $("detail");
 
-  if (prompt) {
-    // Stacked: title over game name — no middot row (matches Tk prompt).
-    sepEl.hidden = true;
-    detailEl.hidden = true;
-    detailEl.textContent = "";
-    if (sub) {
-      subEl.textContent = sub;
-      subEl.hidden = false;
-    } else {
-      subEl.textContent = "";
-      subEl.hidden = true;
-    }
-  } else if (sub) {
+  if (sub) {
     subEl.textContent = sub;
     subEl.hidden = false;
     sepEl.hidden = false;
-    if (detail) {
-      detailEl.textContent = "·  " + detail;
-      detailEl.hidden = false;
-      if ((content.title || "").length > 22) {
-        subEl.hidden = true;
-        sepEl.hidden = true;
-        detailEl.textContent = detail;
-      }
-    } else {
-      detailEl.textContent = "";
-      detailEl.hidden = true;
-    }
   } else {
     subEl.textContent = "";
     subEl.hidden = true;
     sepEl.hidden = true;
-    if (detail) {
-      detailEl.textContent = detail;
-      detailEl.hidden = false;
-    } else {
-      detailEl.textContent = "";
-      detailEl.hidden = true;
-    }
+  }
+  if (detail) {
+    detailEl.textContent = detail;
+    detailEl.hidden = false;
+  } else {
+    detailEl.textContent = "";
+    detailEl.hidden = true;
   }
 
   paintActions(actions);
@@ -350,7 +341,7 @@ async function boot() {
     ensureCfg(cfg);
     applyTokens(state.cfg, false);
   } catch (err) {
-    failVisible("Toast config failed");
+    failVisible("Toast config failed: " + (err && (err.message || err) || ""));
     return;
   }
 

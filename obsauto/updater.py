@@ -204,6 +204,36 @@ def fetch_latest_release(repo=DEFAULT_REPO, token=None, timeout=15):
     }
 
 
+def offer_from_check(result, dismissed_tag=""):
+    """The corner prompt, or None when there is nothing worth showing.
+
+    A dirty checkout, or one with unpushed commits, is left alone: Load
+    latest would refuse, and a prompt that cannot finish is worse than no
+    prompt. The tag is origin/main, so dismissing this one still shows the
+    next commit GitHub gets.
+    """
+    if not isinstance(result, dict) or result.get("status") != "update":
+        return None
+    kind = result.get("kind") or "release"
+    if kind == "source":
+        if result.get("dirty") or (result.get("local_ahead") or 0) > 0:
+            return None
+        tag = "source:" + (result.get("remote_head") or "")
+        detail = result.get("message") or "Load the latest from GitHub."
+    else:
+        release = result.get("release") or {}
+        tag = (release.get("tag") or "").strip()
+        detail = result.get("message") or "A newer build is on GitHub."
+    if not tag or tag == (dismissed_tag or ""):
+        return None
+    return {
+        "tag": tag,
+        "kind": kind,
+        "title": "Update available",
+        "detail": detail,
+    }
+
+
 def check_for_update(repo=DEFAULT_REPO, token=None, local_version=__version__):
     """Compare this install to GitHub.
 
@@ -385,7 +415,9 @@ def check_source_sync(root=None, timeout=90):
         err = (fetch.stderr or fetch.stdout or "fetch failed").strip()
         raise RuntimeError(err)
     remote = "origin/%s" % SYNC_BRANCH
-    ahead = _ahead_count(root, "HEAD", remote) if _rev_parse(root, remote) else 0
+    remote_head = _rev_parse(root, remote)
+    ahead = _ahead_count(root, "HEAD", remote) if remote_head else 0
+    local_ahead = _ahead_count(root, remote, "HEAD") if remote_head else 0
     dirty = bool(_porcelain(root))
     local_label = display_version()
     if ahead > 0:
@@ -407,7 +439,9 @@ def check_source_sync(root=None, timeout=90):
         "message": message,
         "kind": "source",
         "ahead": ahead,
+        "local_ahead": local_ahead,
         "head": _rev_parse(root, "HEAD"),
+        "remote_head": remote_head,
         "dirty": dirty,
     }
 

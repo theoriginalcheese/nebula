@@ -418,17 +418,15 @@ TOAST_OUT_MS = 320
 # Capsule silhouette (design C): pill radius = height / 2. Width tuned so a
 # title + middot + game name fit without wrapping.
 TOAST_W, TOAST_H = 384, 60
-# Prompt toasts: same capsule family as status — chip + stacked title/game
-# with the two action pills on the RIGHT (fills the strip; no tall empty
-# dialog). Height stays near TOAST_H so it does not read as a second UI.
-TOAST_PROMPT_W, TOAST_PROMPT_H = 420, 68
+# Prompt uses the same row as status (PREFS-TOAST-LAYOUT 2026-10-01).
+# T-ROW is the format. Every tall prompt composition was noped as chunky.
+# Height matches TOAST_H. Width only grows so Record / Not now fit on that
+# same row, with the same chip, type, and insets. The 404×116 still is
+# history in design/toast-canonical/ — do not bring that height back.
+TOAST_PROMPT_W, TOAST_PROMPT_H = 456, 60
 TOAST_PAD = 3                        # shell → core inset (two-layer card)
 # Keep text clear of the capsule's curved ends (radius ≈ H/2).
-TOAST_TEXT_INSET = 36
-TOAST_PROMPT_BTN_H = 26
-TOAST_PROMPT_BTN_GAP = 8
-TOAST_PROMPT_PRIMARY_W = 96
-TOAST_PROMPT_SECONDARY_W = 96
+TOAST_TEXT_INSET = 32
 # Chromakey for true pill corners on the frameless toplevel (not in the
 # Nebula Deep palette, so it never punches holes in the glass).
 TOAST_KEY = "#00FF01"
@@ -442,14 +440,16 @@ TOAST_TINTS = {
 TOAST_PROMPT_LIFE_MS = 30000
 # Soft dust near the icon chip - (dx, dy, radius_px, base_alpha) relative to
 # the chip centre. Animated on the toast surface only (own toplevel; free).
+# Specks from Nebula Toast Row. (dx, dy, radius, alpha). The row places
+# them with mirror -1 around cx 348 (status), 372 (stop), or 34 (prompt).
 TOAST_DUST = (
-    (20, -12, 2.2, 0.78),
-    (30, -5, 1.5, 0.48),
-    (17, 15, 1.8, 0.58),
-    (-11, -17, 1.4, 0.42),
-    (38, 11, 1.2, 0.36),
-    (7, -19, 1.1, 0.32),
-    (26, 16, 1.0, 0.28),
+    (20, -10, 2.2, 0.78),
+    (30, -4, 1.5, 0.48),
+    (16, 9, 1.8, 0.58),
+    (-10, -12, 1.4, 0.42),
+    (36, 8, 1.2, 0.36),
+    (6, -14, 1.1, 0.32),
+    (26, 12, 1.0, 0.28),
 )
 # Event-flavoured motion for the dust. Each show also draws a fresh random
 # seed so the same event never repeats the identical dance.
@@ -459,18 +459,19 @@ TOAST_DUST_STYLE = {
     "pause": "drift",      # slow lateral float
     "resume": "rise",      # lift and brighten
     "error": "scatter",    # jittery, uneven
-    "prompt": "orbit",     # calm circular wander
+    "prompt": "orbit",     # calm circular wander, kept off the buttons
 }
 # Which end of the capsule the constellation lives on. Action flavours hug
 # the icon; calmer ones float at the trailing end so the toast feels alive
-# in more than one place.
+# in more than one place. Prompt buttons own the trailing end, so orbit
+# stays on the chip with the other left-hand styles.
 TOAST_DUST_ANCHOR = {
     "burst": "left",
     "sink": "left",
     "rise": "left",
     "scatter": "left",
     "drift": "right",
-    "orbit": "right",
+    "orbit": "left",
 }
 
 # ---------------------------------------------------------------------------

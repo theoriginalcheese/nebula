@@ -22,6 +22,10 @@ DEFAULTS = {
     "obs_port": 4455,
     "obs_password": "",
     "recording_root": default_recording_root(),
+    # What a game does on launch when that game has no choice of its own.
+    # record = a full clip (today's behaviour). buffer = replay buffer only.
+    # both = a full clip and the buffer.
+    "default_capture_mode": "record",
     "idle_timeout_seconds": 90,
     "poll_interval_seconds": 1,
     # Clips shorter than this get auto-deleted right after they finish -
@@ -87,6 +91,13 @@ DEFAULTS = {
     "github_token": "",
     "github_gamedata_repo": "",   # "owner/name", e.g. "you/nebula-gamedata"
     "github_gamedata_path": "games.json",
+    # Public classification list every install pulls on launch. Hosted on
+    # GitHub, not on this PC. Blank turns the pull off. Upload is a separate
+    # button and needs github_token.
+    "shared_games_url": (
+        "https://raw.githubusercontent.com/theoriginalcheese/nebula/"
+        "shared-games/data/classifications.json"
+    ),
     # When nas_offload_root is set, also keep games.json on the NAS
     # ({root}/.nebula/games.json) so Alien + Strix share classifications
     # without a GitHub token. GitHub sync above remains optional.

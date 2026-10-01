@@ -1,0 +1,349 @@
+{
+  "games": {
+    "7 billion humans.exe": {
+      "display_name": "7 Billion Humans",
+      "source": "shared"
+    },
+    "aces.exe": {
+      "display_name": "War Thunder",
+      "source": "shared"
+    },
+    "adventure pals.exe": {
+      "display_name": "The Adventure Pals",
+      "source": "shared"
+    },
+    "adventure-capitalist.exe": {
+      "display_name": "AdVenture Capitalist",
+      "source": "shared"
+    },
+    "aimbeast-win64-shipping.exe": {
+      "display_name": "Aimbeast",
+      "source": "shared"
+    },
+    "among us.exe": {
+      "display_name": "Among Us",
+      "source": "shared"
+    },
+    "astro-win64-shipping.exe": {
+      "display_name": "ASTRONEER",
+      "source": "shared"
+    },
+    "beamng.drive.x64.exe": {
+      "display_name": "BeamNG.drive",
+      "source": "shared"
+    },
+    "beat stickman.exe": {
+      "display_name": "Beat Stickman: Infinity Clones",
+      "source": "shared"
+    },
+    "besiege.exe": {
+      "display_name": "Besiege",
+      "source": "shared"
+    },
+    "bitburner.exe": {
+      "display_name": "Bitburner",
+      "source": "shared"
+    },
+    "bladeandsorcery.exe": {
+      "display_name": "Blade & Sorcery",
+      "source": "shared"
+    },
+    "bloonstd6.exe": {
+      "display_name": "Bloons TD 6",
+      "source": "shared"
+    },
+    "boneworks.exe": {
+      "display_name": "BONEWORKS",
+      "source": "shared"
+    },
+    "boringmangame.exe": {
+      "display_name": "Boring Man - Online Tactical Stickman Combat",
+      "source": "shared"
+    },
+    "budget cuts 2.exe": {
+      "display_name": "Budget Cuts 2: Mission Insolvency",
+      "source": "shared"
+    },
+    "budget cuts.exe": {
+      "display_name": "Budget Cuts",
+      "source": "shared"
+    },
+    "cheeserolling.exe": {
+      "display_name": "Cheese Rolling",
+      "source": "shared"
+    },
+    "clone drone in the danger zone.exe": {
+      "display_name": "Clone Drone in the Danger Zone",
+      "source": "shared"
+    },
+    "clustertruck.exe": {
+      "display_name": "Clustertruck",
+      "source": "shared"
+    },
+    "contractors_ue4_22_steam-win64-shipping.exe": {
+      "display_name": "Contractors VR",
+      "source": "shared"
+    },
+    "cs2.exe": {
+      "display_name": "Counter-Strike 2",
+      "source": "shared"
+    },
+    "doometernalx64vk.exe": {
+      "display_name": "DOOM Eternal",
+      "source": "shared"
+    },
+    "drop-win64-shipping.exe": {
+      "display_name": "Gravitas",
+      "source": "shared"
+    },
+    "factorygamesteam-win64-shipping.exe": {
+      "display_name": "Satisfactory",
+      "source": "shared"
+    },
+    "farmingsimulator2019game.exe": {
+      "display_name": "Farming Simulator 19",
+      "source": "shared"
+    },
+    "fpschess-win64-shipping.exe": {
+      "display_name": "FPS Chess",
+      "source": "shared"
+    },
+    "happy room.exe": {
+      "display_name": "Happy Room",
+      "source": "shared"
+    },
+    "hlvr.exe": {
+      "display_name": "Half-Life: Alyx",
+      "source": "shared"
+    },
+    "holy shit.exe": {
+      "display_name": "Holy Shit",
+      "source": "shared"
+    },
+    "knightfall.exe": {
+      "display_name": "Knightfall: A Daring Journey",
+      "source": "shared"
+    },
+    "learn to fly 3.exe": {
+      "display_name": "Learn to Fly 3",
+      "source": "shared"
+    },
+    "left4dead2.exe": {
+      "display_name": "Left 4 Dead 2",
+      "source": "shared"
+    },
+    "littlenightmares.exe": {
+      "display_name": "Little Nightmares",
+      "source": "shared"
+    },
+    "mise.exe": {
+      "display_name": "The Secret of Monkey Island: Special Edition",
+      "source": "shared"
+    },
+    "my friend pedro - blood bullets bananas.exe": {
+      "display_name": "My Friend Pedro",
+      "source": "shared"
+    },
+    "oldsins.exe": {
+      "display_name": "The Room 4: Old Sins",
+      "source": "shared"
+    },
+    "overcooked2.exe": {
+      "display_name": "Overcooked! 2",
+      "source": "shared"
+    },
+    "passpartout.exe": {
+      "display_name": "Passpartout: The Starving Artist",
+      "source": "shared"
+    },
+    "pavlov-win64-shipping.exe": {
+      "display_name": "Pavlov VR",
+      "source": "shared"
+    },
+    "payday2.exe": {
+      "display_name": "PAYDAY 2",
+      "source": "shared"
+    },
+    "pcbs.exe": {
+      "display_name": "PC Building Simulator",
+      "source": "shared"
+    },
+    "peak.exe": {
+      "display_name": "PEAK",
+      "source": "shared"
+    },
+    "phasmophobia.exe": {
+      "display_name": "Phasmophobia",
+      "source": "shared"
+    },
+    "placid plastic duck simulator.exe": {
+      "display_name": "Placid Plastic Duck Simulator",
+      "source": "shared"
+    },
+    "plagueincsc.exe": {
+      "display_name": "Plague Inc: Evolved",
+      "source": "shared"
+    },
+    "populationone.exe": {
+      "display_name": "POPULATION: ONE",
+      "source": "shared"
+    },
+    "portal2.exe": {
+      "display_name": "Portal 2",
+      "source": "shared"
+    },
+    "prisonbossvr64.exe": {
+      "display_name": "Prison Boss VR",
+      "source": "shared"
+    },
+    "raft.exe": {
+      "display_name": "Raft",
+      "source": "shared"
+    },
+    "rdr2.exe": {
+      "display_name": "Red Dead Redemption 2",
+      "source": "shared"
+    },
+    "scpsl.exe": {
+      "display_name": "SCP: Secret Laboratory",
+      "source": "shared"
+    },
+    "skate.exe": {
+      "display_name": "skate.",
+      "source": "shared"
+    },
+    "skyrimse.exe": {
+      "display_name": "The Elder Scrolls V: Skyrim Special Edition",
+      "source": "shared"
+    },
+    "slimerancher.exe": {
+      "display_name": "Slime Rancher",
+      "source": "shared"
+    },
+    "slimerancher2.exe": {
+      "display_name": "Slime Rancher 2",
+      "source": "shared"
+    },
+    "stardew valley.exe": {
+      "display_name": "Stardew Valley",
+      "source": "shared"
+    },
+    "stray-win64-shipping.exe": {
+      "display_name": "Stray",
+      "source": "shared"
+    },
+    "subnautica2-win64-shipping.exe": {
+      "display_name": "Subnautica 2",
+      "source": "shared"
+    },
+    "subnauticazero.exe": {
+      "display_name": "Subnautica: Below Zero",
+      "source": "shared"
+    },
+    "superliminalsteam.exe": {
+      "display_name": "Superliminal",
+      "source": "shared"
+    },
+    "terraria.exe": {
+      "display_name": "Terraria",
+      "source": "shared"
+    },
+    "the jackbox party pack 3.exe": {
+      "display_name": "The Jackbox Party Pack 3",
+      "source": "shared"
+    },
+    "theforest.exe": {
+      "display_name": "The Forest",
+      "source": "shared"
+    },
+    "tmforever.exe": {
+      "display_name": "TrackMania Nations Forever",
+      "source": "shared"
+    },
+    "tmodloader.exe": {
+      "display_name": "tModLoader",
+      "source": "shared"
+    },
+    "trackmania.exe": {
+      "display_name": "Trackmania",
+      "source": "shared"
+    },
+    "turmoil.exe": {
+      "display_name": "Turmoil",
+      "source": "shared"
+    },
+    "vrchat.exe": {
+      "display_name": "VRChat",
+      "source": "shared"
+    },
+    "youtuberslife.exe": {
+      "display_name": "YoutubersLife",
+      "source": "shared"
+    }
+  },
+  "non_games": {
+    "amddvr.exe": true,
+    "amdow.exe": true,
+    "applicationframehost.exe": true,
+    "armourycrate.exe": true,
+    "armourycrateservice.exe": true,
+    "aurasyncutility.exe": true,
+    "battle.net.exe": true,
+    "battlenethelper.exe": true,
+    "blender.exe": true,
+    "brave.exe": true,
+    "chrome.exe": true,
+    "cmd.exe": true,
+    "code.exe": true,
+    "createdump.exe": true,
+    "cursor.exe": true,
+    "discord.exe": true,
+    "discordcanary.exe": true,
+    "discordptb.exe": true,
+    "eossoverlay.exe": true,
+    "epicgameslauncher.exe": true,
+    "epicwebhelper.exe": true,
+    "explorer.exe": true,
+    "firefox.exe": true,
+    "goggalaxy.exe": true,
+    "goggalaxycommunication.exe": true,
+    "install.exe": true,
+    "installer.exe": true,
+    "msedge.exe": true,
+    "msedgewebview2.exe": true,
+    "msiafterburner.exe": true,
+    "nvcontainer.exe": true,
+    "nvidia share.exe": true,
+    "obs-studio.exe": true,
+    "obs32.exe": true,
+    "obs64.exe": true,
+    "opera.exe": true,
+    "powershell.exe": true,
+    "pwsh.exe": true,
+    "python.exe": true,
+    "pythonw.exe": true,
+    "radeonsoftware.exe": true,
+    "rtss.exe": true,
+    "searchhost.exe": true,
+    "shellexperiencehost.exe": true,
+    "steam.exe": true,
+    "steamservice.exe": true,
+    "steamwebhelper.exe": true,
+    "systemsettings.exe": true,
+    "taskmgr.exe": true,
+    "textinputhost.exe": true,
+    "unitycrashhandler32.exe": true,
+    "unitycrashhandler64.exe": true,
+    "vbsp.exe": true,
+    "vc_redist.x64.exe": true,
+    "vc_redist.x86.exe": true,
+    "vconsole2.exe": true,
+    "vrad.exe": true,
+    "vvis.exe": true,
+    "wallpaper32.exe": true,
+    "wallpaper64.exe": true,
+    "widgets.exe": true,
+    "widgetservice.exe": true,
+    "windowsterminal.exe": true
+  }
+}

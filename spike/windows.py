@@ -43,9 +43,9 @@ WEB = os.path.join(HERE, "web")
 TOAST_HTML = os.path.join(WEB, "toast.html")
 OVERLAY_HTML = os.path.join(WEB, "overlay.html")
 
-# Match the Tk capsule tokens (design C). Outer silhouette is still DWM's
-# ~8px round — WebView2 cannot do a true H/2 chromakey pill (FINDINGS.md) —
-# but width/height/layout/dust track obsauto/design_v3.py TOAST_*.
+# Match the Tk capsule tokens (design C). The HWND is clipped to a true pill
+# in _clip_capsule (corner diameter = height). Width, height, dust and copy
+# track obsauto/design_v3.py TOAST_*.
 TOAST_W, TOAST_H = dv.TOAST_W, dv.TOAST_H
 TOAST_PROMPT_W, TOAST_PROMPT_H = dv.TOAST_PROMPT_W, dv.TOAST_PROMPT_H
 
@@ -226,6 +226,45 @@ def _make_transparent(window, host=None):
         except Exception as exc:
             if host is not None and hasattr(host, "_log"):
                 host._log("[Windows] DWM chrome failed: %s" % exc)
+
+    _run_on_gui(host, apply)
+
+
+def _clip_capsule(window, host=None):
+    """Clip the toast HWND to a capsule (corner diameter = window height).
+
+    DWM ROUND only softens a rectangle by about 8px. That squared silhouette
+    is the toast Anthony rejected. A window region removes the corners, so
+    the page can fill a true pill without a grey frame in the gap.
+    """
+    def apply():
+        rgn = None
+        try:
+            hwnd = int(window.native.Handle.ToInt64())
+            rect = ctypes.wintypes.RECT()
+            if not ctypes.windll.user32.GetWindowRect(hwnd, ctypes.byref(rect)):
+                return
+            w = int(rect.right - rect.left)
+            h = int(rect.bottom - rect.top)
+            if w < 8 or h < 8:
+                return
+            # DONOTROUND — our region is the silhouette. DWM's 8px round
+            # would otherwise fight the capsule ends.
+            donot = ctypes.c_int(1)            # DWMWCP_DONOTROUND
+            ctypes.windll.dwmapi.DwmSetWindowAttribute(
+                hwnd, 33, ctypes.byref(donot), ctypes.sizeof(donot))
+            rgn = ctypes.windll.gdi32.CreateRoundRectRgn(0, 0, w + 1, h + 1, h, h)
+            if not rgn:
+                return
+            # SetWindowRgn takes ownership of the region.
+            if ctypes.windll.user32.SetWindowRgn(hwnd, rgn, True):
+                rgn = None
+        except Exception as exc:
+            if host is not None and hasattr(host, "_log"):
+                host._log("[Windows] capsule clip failed: %s" % exc)
+        finally:
+            if rgn:
+                ctypes.windll.gdi32.DeleteObject(rgn)
 
     _run_on_gui(host, apply)
 
@@ -883,10 +922,10 @@ class ToastController:
 
     def _on_ready(self):
         self._ready.set()
-        # Clip to the card's own corner radius, once the window exists at its
-        # final size. Without this the rectangular window shows around the
-        # rounded card as a coloured box.
+        # Clear the host border, then clip the HWND to a true capsule.
+        # Without the region the rectangular window shows around the pill.
         _make_transparent(self._window, self._host)
+        _clip_capsule(self._window, self._host)
         # Re-apply: create-time styles can be overwritten before the page loads.
         _hide_from_taskbar(self._window, self._log)
         # Place it here, unconditionally. _reposition() otherwise only runs
@@ -946,6 +985,7 @@ class ToastController:
                     _show_noactivate(self._window, self._log)
                     self._needs_appear = False
                     self._set_form_opacity(1.0)
+                    _clip_capsule(self._window, self._host)
 
                 _run_on_gui(self._host, reveal)
                 self._schedule_paint_check(gen)
@@ -971,6 +1011,7 @@ class ToastController:
                 self._window.height = h
         except Exception as exc:
             self._log("[Toast] resize failed: %s" % exc)
+        _clip_capsule(self._window, self._host)
 
     def _schedule_paint_check(self, generation):
         """Fail-visible: if the DOM never painted copy, force a rescue paint."""

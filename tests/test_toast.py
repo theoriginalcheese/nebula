@@ -147,6 +147,12 @@ check("capsule height matches the token", app.TOAST_H == dv.TOAST_H == 60,
       (app.TOAST_H, dv.TOAST_H))
 check("capsule width matches the token", app.TOAST_W == dv.TOAST_W == 384,
       (app.TOAST_W, dv.TOAST_W))
+check("prompt uses the same row height as status",
+      dv.TOAST_PROMPT_H == dv.TOAST_H == 60,
+      (dv.TOAST_PROMPT_H, dv.TOAST_H))
+check("prompt is only wider so the buttons fit that row",
+      dv.TOAST_PROMPT_W == 456 and dv.TOAST_PROMPT_W > dv.TOAST_W,
+      dv.TOAST_PROMPT_W)
 check("dust constellation is present",
       len(app._toast.get("dust") or []) == len(dv.TOAST_DUST),
       len(app._toast.get("dust") or []))
@@ -185,8 +191,8 @@ check("dust amplitude stays in the mid band",
 # Calmer styles live on the trailing end; action flavours hug the icon.
 check("drift anchors to the right end",
       dv.TOAST_DUST_ANCHOR["drift"] == "right")
-check("orbit anchors to the right end",
-      dv.TOAST_DUST_ANCHOR["orbit"] == "right")
+check("orbit stays on the chip, clear of the prompt buttons",
+      dv.TOAST_DUST_ANCHOR["orbit"] == "left")
 check("burst anchors to the icon end",
       dv.TOAST_DUST_ANCHOR["burst"] == "left")
 

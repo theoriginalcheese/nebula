@@ -16,6 +16,19 @@ from .paths import APP_DIR
 
 DATA_FILE = os.path.join(APP_DIR, "games.json")
 
+# What happens when that game is detected. Absent on an entry means "use
+# the config default" (recording, unless the user changed it).
+CAPTURE_MODES = ("record", "buffer", "both")
+
+
+def resolve_capture(override, default="record"):
+    """Per-game choice, or the default when the game has none."""
+    if default not in CAPTURE_MODES:
+        default = "record"
+    if override in CAPTURE_MODES:
+        return override
+    return default
+
 # Common background/launcher/utility processes we never want to prompt about.
 # Keeps the "ask me once" flow from firing on every browser tab or launcher.
 DENYLIST = {
@@ -56,6 +69,84 @@ INSTALLER_HELPER_PATTERNS = (
     "connectinstaller", "battleye", "easyanticheat", "_setup", "setup_",
     "uninst", "ggsetup", "gguninst",
 )
+
+# Well-known game executables. A local "not a game" decision still wins,
+# because classify() checks the saved list before this table. Filled only
+# with names that were checked, not guessed.
+# Basenames confirmed against installed Steam files on this machine.
+# Shared engine binaries (hl2.exe) and launcher/tool exes are left out.
+KNOWN_GAMES = {
+    "7 billion humans.exe": "7 Billion Humans",
+    "aces.exe": "War Thunder",
+    "adventure pals.exe": "The Adventure Pals",
+    "adventure-capitalist.exe": "AdVenture Capitalist",
+    "aimbeast-win64-shipping.exe": "Aimbeast",
+    "among us.exe": "Among Us",
+    "astro-win64-shipping.exe": "ASTRONEER",
+    "beamng.drive.x64.exe": "BeamNG.drive",
+    "beat stickman.exe": "Beat Stickman: Infinity Clones",
+    "besiege.exe": "Besiege",
+    "bitburner.exe": "Bitburner",
+    "bladeandsorcery.exe": "Blade & Sorcery",
+    "bloonstd6.exe": "Bloons TD 6",
+    "boneworks.exe": "BONEWORKS",
+    "boringmangame.exe": "Boring Man - Online Tactical Stickman Combat",
+    "budget cuts 2.exe": "Budget Cuts 2: Mission Insolvency",
+    "budget cuts.exe": "Budget Cuts",
+    "cheeserolling.exe": "Cheese Rolling",
+    "clone drone in the danger zone.exe": "Clone Drone in the Danger Zone",
+    "clustertruck.exe": "Clustertruck",
+    "contractors_ue4_22_steam-win64-shipping.exe": "Contractors VR",
+    "cs2.exe": "Counter-Strike 2",
+    "doometernalx64vk.exe": "DOOM Eternal",
+    "drop-win64-shipping.exe": "Gravitas",
+    "factorygamesteam-win64-shipping.exe": "Satisfactory",
+    "farmingsimulator2019game.exe": "Farming Simulator 19",
+    "fpschess-win64-shipping.exe": "FPS Chess",
+    "happy room.exe": "Happy Room",
+    "hlvr.exe": "Half-Life: Alyx",
+    "holy shit.exe": "Holy Shit",
+    "knightfall.exe": "Knightfall: A Daring Journey",
+    "learn to fly 3.exe": "Learn to Fly 3",
+    "left4dead2.exe": "Left 4 Dead 2",
+    "littlenightmares.exe": "Little Nightmares",
+    "mise.exe": "The Secret of Monkey Island: Special Edition",
+    "my friend pedro - blood bullets bananas.exe": "My Friend Pedro",
+    "oldsins.exe": "The Room 4: Old Sins",
+    "overcooked2.exe": "Overcooked! 2",
+    "passpartout.exe": "Passpartout: The Starving Artist",
+    "pavlov-win64-shipping.exe": "Pavlov VR",
+    "payday2.exe": "PAYDAY 2",
+    "pcbs.exe": "PC Building Simulator",
+    "peak.exe": "PEAK",
+    "phasmophobia.exe": "Phasmophobia",
+    "placid plastic duck simulator.exe": "Placid Plastic Duck Simulator",
+    "plagueincsc.exe": "Plague Inc: Evolved",
+    "populationone.exe": "POPULATION: ONE",
+    "portal2.exe": "Portal 2",
+    "prisonbossvr64.exe": "Prison Boss VR",
+    "raft.exe": "Raft",
+    "rdr2.exe": "Red Dead Redemption 2",
+    "scpsl.exe": "SCP: Secret Laboratory",
+    "skate.exe": "skate.",
+    "skyrimse.exe": "The Elder Scrolls V: Skyrim Special Edition",
+    "slimerancher.exe": "Slime Rancher",
+    "slimerancher2.exe": "Slime Rancher 2",
+    "stardew valley.exe": "Stardew Valley",
+    "stray-win64-shipping.exe": "Stray",
+    "subnautica2-win64-shipping.exe": "Subnautica 2",
+    "subnauticazero.exe": "Subnautica: Below Zero",
+    "superliminalsteam.exe": "Superliminal",
+    "terraria.exe": "Terraria",
+    "the jackbox party pack 3.exe": "The Jackbox Party Pack 3",
+    "theforest.exe": "The Forest",
+    "tmforever.exe": "TrackMania Nations Forever",
+    "tmodloader.exe": "tModLoader",
+    "trackmania.exe": "Trackmania",
+    "turmoil.exe": "Turmoil",
+    "vrchat.exe": "VRChat",
+    "youtuberslife.exe": "YoutubersLife",
+}
 
 
 def _looks_like_installer_helper(basename):
@@ -312,6 +403,9 @@ class Classifier:
                 return "game", self._data["games"][basename]["display_name"]
             if basename in self._data["non_games"]:
                 return "non_game", None
+        known = KNOWN_GAMES.get(basename)
+        if known:
+            return "game", known
         if not self._steam_index_loaded:
             return "unknown", None
         installdir = self._steam_installdir_for_path(exe_path)
@@ -332,6 +426,11 @@ class Classifier:
         if basename in DENYLIST or _looks_like_installer_helper(basename):
             self.mark_non_game(basename)
             return "non_game", None
+
+        known = KNOWN_GAMES.get(basename)
+        if known:
+            self.mark_game(basename, known, source="builtin")
+            return "game", known
 
         if exe_path:
             if not self._steam_index_loaded:
@@ -375,6 +474,26 @@ class Classifier:
             self._data["games"][basename] = entry
             self._save()
         self.log(f"[Classifier] {basename} renamed -> {display_name}")
+        return True
+
+    def set_capture(self, basename, mode):
+        """Remember record / buffer / both. None clears it back to the default."""
+        basename = (basename or "").lower()
+        if mode is not None and mode not in CAPTURE_MODES:
+            return False
+        with self._lock:
+            prev = self._data["games"].get(basename)
+            if not isinstance(prev, dict):
+                return False
+            entry = dict(prev)
+            if mode:
+                entry["capture"] = mode
+            else:
+                entry.pop("capture", None)
+            self._data["games"][basename] = entry
+            self._save()
+        label = mode or "default"
+        self.log(f"[Classifier] {basename} capture -> {label}")
         return True
 
     def mark_non_game(self, basename):

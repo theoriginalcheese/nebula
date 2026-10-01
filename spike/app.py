@@ -149,48 +149,77 @@ def _seed_nas_games_from_legacy(config, classifier, log):
 class _GameListSync:
     """Pull remote classifications at startup; debounce pushes on local save."""
 
-    def __init__(self, gamesync, classifier, log):
+    def __init__(self, gamesync, classifier, log, config=None):
         self._sync = gamesync
         self._classifier = classifier
         self._log = log
+        self._config = config or {}
         self._timer = None
         self._lock = threading.Lock()
 
-    def pull_at_startup(self):
-        if not self._sync.enabled:
-            self._log("[Sync] GitHub game-list sync is off "
-                      "(no repo or token) — using local games.json only.")
-            return
+    def _shared_url(self):
+        if "shared_games_url" in self._config:
+            return (self._config.get("shared_games_url") or "").strip()
+        from obsauto.gamesync import DEFAULT_SHARED_URL
+        return DEFAULT_SHARED_URL
 
+    def pull_at_startup(self):
         def worker():
-            remote = self._sync.fetch()
-            if remote is None:
-                self._log("[Sync] GitHub fetch failed — local games.json unchanged.")
-                return
-            added = self._classifier.absorb(remote)
-            n_games = len(remote.get("games") or {})
-            n_non = len(remote.get("non_games") or {})
-            if added:
-                self._log("[Sync] Pulled %d new classification(s) from GitHub "
-                          "(%d games, %d apps on remote)."
-                          % (added, n_games, n_non))
-            else:
-                self._log("[Sync] Game list matches GitHub "
-                          "(%d games, %d apps)." % (n_games, n_non))
-            merged = self._sync.push(self._classifier.snapshot())
-            if merged is None:
-                self._sync._last_ok = False
-                self._log("[Sync] GitHub push skipped or failed — "
-                          "will retry on the next local save.")
-                return
-            extra = self._classifier.absorb(merged)
-            self._sync._last_ok = True
-            if extra:
-                self._log("[Sync] Adopted %d extra classification(s) from the merge."
-                          % extra)
-            self._log("[Sync] Game list synced with GitHub.")
+            if self._sync.enabled:
+                self._pull_private()
+            try:
+                self._pull_shared()
+            except Exception as exc:
+                self._log("[Sync] Shared list skipped: %s" % exc)
 
         threading.Thread(target=worker, daemon=True).start()
+
+    def _pull_private(self):
+        remote = self._sync.fetch()
+        if remote is None:
+            self._log("[Sync] GitHub fetch failed — local games.json unchanged.")
+            return
+        added = self._classifier.absorb(remote)
+        n_games = len(remote.get("games") or {})
+        n_non = len(remote.get("non_games") or {})
+        if added:
+            self._log("[Sync] Pulled %d new classification(s) from GitHub "
+                      "(%d games, %d apps on remote)."
+                      % (added, n_games, n_non))
+        else:
+            self._log("[Sync] Game list matches GitHub "
+                      "(%d games, %d apps)." % (n_games, n_non))
+        merged = self._sync.push(self._classifier.snapshot())
+        if merged is None:
+            self._sync._last_ok = False
+            self._log("[Sync] GitHub push skipped or failed — "
+                      "will retry on the next local save.")
+            return
+        extra = self._classifier.absorb(merged)
+        self._sync._last_ok = True
+        if extra:
+            self._log("[Sync] Adopted %d extra classification(s) from the merge."
+                      % extra)
+        self._log("[Sync] Game list synced with GitHub.")
+
+    def _pull_shared(self):
+        from obsauto.gamesync import fetch_public_list
+        url = self._shared_url()
+        if not url:
+            return
+        remote = fetch_public_list(url)
+        if not remote:
+            self._log("[Sync] Shared game list unavailable — local list unchanged.")
+            return
+        added = self._classifier.absorb(remote)
+        n_games = len(remote.get("games") or {})
+        n_non = len(remote.get("non_games") or {})
+        if added:
+            self._log("[Sync] Pulled %d classification(s) from the shared list "
+                      "(%d games, %d non-games)." % (added, n_games, n_non))
+        else:
+            self._log("[Sync] Shared list matches this PC "
+                      "(%d games, %d non-games)." % (n_games, n_non))
 
     def on_saved(self, _data):
         if not self._sync.enabled:
@@ -318,6 +347,7 @@ class Api:
         self._classifier = Classifier(on_log=self._api_log)
         self._settings_saved_at = None
         self._update_pending = None
+        self._update_offer = None
         self._update_last_message = ""
         self._update_busy = False
         self._log_filter = "All"
@@ -680,6 +710,7 @@ class Api:
                 "remote": part("remote", self._remote, {
                     "moonlight": {}, "tailscale": {}, "blurb": "",
                 }),
+                "update_offer": self._update_offer_payload(),
             }
         except Exception as exc:
             # Section faults are swallowed by part(). Anything that still
@@ -1407,10 +1438,9 @@ class Api:
         }
 
     def _settings_sync_footer(self):
-        """NAS offload status for Settings → Offload (and gamesync note)."""
+        """NAS offload status, plus the shared-list note for Game list sync."""
         from obsauto import tailscale as ts
 
-        gamesync = getattr(self, "_gamesync", None)
         if self._host:
             st = self._host.offload_status()
         else:
@@ -1487,17 +1517,13 @@ class Api:
             rows.append({"label": "Last run", "value": st["message"]})
 
         gamesync_note = (
-            "Game list %s" % gamesync.status_label()
-            if gamesync and hasattr(gamesync, "status_label")
-            else (
-                "Game list synced with GitHub"
-                if gamesync and gamesync.enabled
-                else "Game list is local to this machine"))
+            "Pulls the shared GitHub list on launch. Upload sends this PC's "
+            "games and non-games (names only)."
+        )
 
         text = headline
         if reach_label and "Tailscale" not in "".join(r["label"] for r in rows):
             text = "%s  ·  %s" % (text, reach_label)
-        text = "%s  ·  %s" % (text, gamesync_note.lower())
 
         return {
             "text": text,
@@ -1646,6 +1672,92 @@ class Api:
             self._update_busy = False
         out["updates_footer"] = self._settings_updates_footer()
         return out
+
+    def _update_offer_payload(self):
+        offer = getattr(self, "_update_offer", None)
+        if not offer:
+            return None
+        dismissed = self.cfg.get("update_dismissed_tag") or ""
+        if offer.get("tag") and offer.get("tag") == dismissed:
+            return None
+        return offer
+
+    def dismiss_update(self, tag=""):
+        """Hide the corner prompt for this version until a newer one exists."""
+        tag = str(tag or "").strip()
+        if not tag and self._update_offer:
+            tag = self._update_offer.get("tag") or ""
+        if tag:
+            self.cfg["update_dismissed_tag"] = tag
+            save_config(self.cfg)
+        self._update_offer = None
+        return {"ok": True}
+
+    def upload_shared_games(self):
+        """Push this PC's games and non-games to the shared GitHub file.
+
+        Names only. Needs a token with repo scope, kept in local config.
+        """
+        from obsauto.gamesync import (
+            DEFAULT_SHARED_BRANCH, DEFAULT_SHARED_PATH, DEFAULT_SHARED_REPO,
+            DEFAULT_SHARED_URL, GameSync, names_only,
+        )
+
+        token = (self.cfg.get("github_token") or "").strip()
+        if not token:
+            return {
+                "ok": False,
+                "message": (
+                    "Add a GitHub token in this section first. It needs repo "
+                    "scope and stays on this PC."
+                ),
+            }
+        url = self.cfg.get("shared_games_url")
+        if url is None:
+            url = DEFAULT_SHARED_URL
+        url = str(url).strip()
+        if not url:
+            return {
+                "ok": False,
+                "message": "Shared list is turned off. Put the GitHub address back first.",
+            }
+        if url.rstrip("/") != DEFAULT_SHARED_URL.rstrip("/"):
+            return {
+                "ok": False,
+                "message": (
+                    "Upload writes the shared GitHub list. This Shared list "
+                    "address is somewhere else, so other PCs would not see it."
+                ),
+            }
+        payload = names_only(self._classifier.snapshot())
+        sync = GameSync(
+            {
+                "github_token": token,
+                "github_gamedata_repo": DEFAULT_SHARED_REPO,
+                "github_gamedata_path": DEFAULT_SHARED_PATH,
+                "github_gamedata_branch": DEFAULT_SHARED_BRANCH,
+            },
+            on_log=self._api_log,
+        )
+        try:
+            if not sync.ensure_branch():
+                return {
+                    "ok": False,
+                    "message": sync._last_error or "Couldn't open the shared list on GitHub.",
+                }
+            merged = sync.push(payload)
+        except Exception as exc:
+            merged = None
+            sync._last_error = str(exc)
+        if merged is None:
+            return {
+                "ok": False,
+                "message": sync._last_error or "Upload failed. The local list is unchanged.",
+            }
+        self._classifier.absorb(merged)
+        msg = "Uploaded names only. Other installs pick them up on their next launch."
+        self._api_log("[Sync] %s" % msg)
+        return {"ok": True, "message": msg}
 
     def apply_update(self):
         """Download the pending release and replace this packaged build.
@@ -2422,13 +2534,25 @@ class Api:
                 entry["appid"] = str(appid)
 
         games = []
+        default_capture = "record"
+        raw_default = (self.cfg.get("default_capture_mode") or "record").strip().lower()
+        if raw_default in ("record", "buffer", "both"):
+            default_capture = raw_default
         for name in sorted(by_name, key=str.lower):
             e = by_name[name]
+            capture = ""
+            for exe in e["exes"]:
+                info = games_raw.get(exe)
+                if isinstance(info, dict) and info.get("capture") in (
+                        "record", "buffer", "both"):
+                    capture = info["capture"]
+                    break
             games.append({
                 "name": name,
                 "exes": e["exes"],
                 "meta": e["appid"] or e["source"] or e["exes"][0],
                 "icon": app_icons.data_url(e["exes"][0], name),
+                "capture": capture,
             })
 
         keep = {p.lower() for p in self.cfg.get("keep_alive_audio_processes", [])}
@@ -2464,6 +2588,7 @@ class Api:
             "pending": pending,
             "games": games,
             "non_games": non_games,
+            "default_capture": default_capture,
             "foot_games": foot,
             "foot_non": "Right-click a row to move it back to Games.",
         }
@@ -2525,6 +2650,33 @@ class Api:
             return {"ok": False, "error": "empty"}
         display = (display_name or "").strip() or os.path.splitext(basename)[0]
         self._classifier.mark_game(basename, display, source="manual")
+        return {"ok": True, "games": self._games()}
+
+    def set_game_capture(self, basename, mode):
+        """Per-game launch behaviour. Blank mode follows the settings default."""
+        from obsauto.classifier import CAPTURE_MODES
+
+        mode = (mode or "").strip().lower()
+        if mode in ("", "default"):
+            stored = None
+        elif mode in CAPTURE_MODES:
+            stored = mode
+        else:
+            return {"ok": False, "error": "must be recording, buffer, or both"}
+        needle = (basename or "").strip().lower()
+        games = (self._classifier.snapshot().get("games") or {})
+        entry = games.get(needle)
+        if not isinstance(entry, dict):
+            return {"ok": False, "error": "not a game"}
+        name = (entry.get("display_name") or "").strip().lower()
+        targets = {needle}
+        if name:
+            for key, info in games.items():
+                if (isinstance(info, dict)
+                        and (info.get("display_name") or "").strip().lower() == name):
+                    targets.add(key)
+        for key in targets:
+            self._classifier.set_capture(key, stored)
         return {"ok": True, "games": self._games()}
 
     def rescan_steam(self):
@@ -3314,7 +3466,7 @@ def main():
     )
     offloader = Offloader(api.cfg, on_log=route)
     api._gamesync = gamesync
-    coordinator = _GameListSync(gamesync, api._classifier, route)
+    coordinator = _GameListSync(gamesync, api._classifier, route, api.cfg)
     api._classifier.on_saved = coordinator.on_saved
 
     host.attach_backend(api._classifier, offloader=offloader)
@@ -3373,6 +3525,21 @@ def main():
             host._log("[Setup] Waiting for first-run setup before monitoring.")
         else:
             host.autostart()
+
+        def _offer_update():
+            try:
+                from obsauto import updater as updater_mod
+                result = updater_mod.check_for_update(
+                    token=api.cfg.get("github_token") or None)
+                api._update_pending = result
+                api._update_offer = updater_mod.offer_from_check(
+                    result, api.cfg.get("update_dismissed_tag") or "")
+            except Exception as exc:
+                log_to_file("[Update] check skipped: %s" % exc)
+
+        timer = threading.Timer(8.0, _offer_update)
+        timer.daemon = True
+        timer.start()
 
         # Read-only tailnet surface for the iOS companion. Off unless
         # phone_agent_enabled is set, imported here so its stdlib HTTP stays

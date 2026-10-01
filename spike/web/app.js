@@ -1046,11 +1046,12 @@ function listboxLabelFor(host, value) {
   return hit ? hit.label : value;
 }
 
-function listboxHtml({ id, className, ariaLabel, options, value, profile, setting }) {
+function listboxHtml({ id, className, ariaLabel, options, value, profile, setting, capture }) {
   const selected = options.find((o) => o.value === value) || options[0];
   const attrs = [`data-listbox-options="${esc(JSON.stringify(options))}"`, `data-value="${esc(value)}"`];
   if (profile) attrs.push(`data-profile="${esc(profile)}"`);
   if (setting) attrs.push(`data-setting="${esc(setting)}"`);
+  if (capture) attrs.push(`data-capture="${esc(capture)}"`);
   return `<div class="listbox ${className || ""}" ${id ? `id="${esc(id)}"` : ""}
     ${ariaLabel ? `aria-label="${esc(ariaLabel)}"` : ""} ${attrs.join(" ")}>
     <button type="button" class="listbox-trigger no-drag" aria-haspopup="listbox" aria-expanded="false">
@@ -2098,14 +2099,30 @@ function renderGames(d) {
     glist.innerHTML = g.games.map((row) => {
       const basename = (row.exes && row.exes[0]) || "";
       const active = profileState.basename === basename;
+      const capDefault = g.default_capture || "record";
+      const capNames = { record: "Recording", buffer: "Buffer", both: "Both" };
+      const captureBox = listboxHtml({
+        className: "field-select grow-capture",
+        ariaLabel: "When this game launches",
+        capture: basename,
+        value: row.capture || "default",
+        options: [
+          { value: "default", label: "Default (" + (capNames[capDefault] || "Recording") + ")" },
+          { value: "record", label: "Recording" },
+          { value: "buffer", label: "Buffer" },
+          { value: "both", label: "Both" },
+        ],
+      });
       return `
-      <div class="grow-row ${active ? "is-selected" : ""}" data-game="${esc(row.name)}"
+      <div class="grow-row has-capture ${active ? "is-selected" : ""}" data-game="${esc(row.name)}"
            data-basename="${esc(basename)}">
         <span class="ico">${appIconImg(row)}</span>
         <span class="nm">${esc(row.name)}</span>
         <span class="meta">${esc(row.meta)}</span>
+        ${captureBox}
       </div>`;
     }).join("");
+    glist.querySelectorAll(".listbox").forEach(bindListboxValue);
   }
 
   const nlist = $("nongames-list");
@@ -2836,7 +2853,6 @@ function renderSettings(d) {
       <div class="offload-stat">
         <div class="offload-stat-head">${esc(sync.headline || sync.text || "")}</div>
         ${rows ? `<div class="offload-stat-rows">${rows}</div>` : ""}
-        ${sync.gamesync_note ? `<div class="offload-stat-note">${esc(sync.gamesync_note)}</div>` : ""}
       </div>
       <span class="settings-footer-actions">${actions.join("")}</span>`;
   } else if (settingsGroup === "gamesync" || settingsGroup === "remote") {
@@ -2847,7 +2863,9 @@ function renderSettings(d) {
       foot.innerHTML = `<span>Host and app are written on blur — then use Connect on Remote streaming.</span>`;
     } else {
       foot.classList.remove("is-hidden");
-      foot.innerHTML = `<span>${esc(sync.text || "")}</span>`;
+      const note = sync.gamesync_note || sync.text || "";
+      foot.innerHTML = `<span>${esc(note)}</span>`
+        + `<button class="pill primary no-drag" id="btn-upload-games" type="button">Upload new games</button>`;
     }
   } else if (settingsGroup === "updates") {
     const u = s.updates_footer || { text: "", kind: "source" };
@@ -2936,6 +2954,25 @@ function fieldHtml(f) {
 
 let loadPromise = null;
 
+function paintUpdatePrompt(d) {
+  const el = $("update-prompt");
+  if (!el) return;
+  const offer = d && d.update_offer;
+  if (!offer || !offer.tag) {
+    el.hidden = true;
+    return;
+  }
+  el.dataset.tag = offer.tag;
+  el.dataset.kind = offer.kind || "release";
+  const title = $("update-prompt-title");
+  const sub = $("update-prompt-sub");
+  const go = $("update-prompt-go");
+  if (title) title.textContent = offer.title || "Update available";
+  if (sub) sub.textContent = offer.detail || "";
+  if (go && !go.disabled) go.textContent = "Update";
+  el.hidden = false;
+}
+
 /* Single-flight snapshot fetch: concurrent callers share one in-flight
    promise instead of bouncing off a busy flag. A failed run surfaces via
    fail() and resolves with whatever the last good snapshot was, so fire-
@@ -2961,6 +2998,7 @@ function load() {
       try { renderMacropad(d); } catch (e) { fail("macropad", e); }
       try { renderRemote(d); } catch (e) { fail("remote", e); }
       try { renderSettings(d); } catch (e) { fail("settings", e); }
+      try { paintUpdatePrompt(d); } catch (e) { fail("update", e); }
       try { ensureSpots(); } catch (e) { fail("spots", e); }
       dataReady = true;
       return d;
@@ -3511,6 +3549,47 @@ document.addEventListener("keydown", (e) => {
 });
 
 document.addEventListener("click", async (e) => {
+  if (e.target.closest("#update-prompt-dismiss")) {
+    const el = $("update-prompt");
+    const tag = el ? el.dataset.tag : "";
+    el.hidden = true;
+    if (lastSnapshot) lastSnapshot.update_offer = null;
+    try { await window.pywebview.api.dismiss_update(tag); } catch (_) { /* keep it hidden */ }
+    return;
+  }
+  if (e.target.closest("#update-prompt-go")) {
+    const el = $("update-prompt");
+    const kind = el ? el.dataset.kind : "release";
+    const go = $("update-prompt-go");
+    const sub = $("update-prompt-sub");
+    if (go) { go.disabled = true; go.textContent = "Updating…"; }
+    try {
+      if (kind === "source") {
+        const loaded = await window.pywebview.api.load_source_update();
+        if (!loaded || !loaded.ok) {
+          if (sub) sub.textContent = (loaded && loaded.message) || "Couldn't load the update.";
+          if (go) { go.disabled = false; go.textContent = "Update"; }
+          return;
+        }
+        const restarted = await window.pywebview.api.restart_source_update();
+        if (!restarted || !restarted.ok) {
+          if (sub) sub.textContent = (restarted && restarted.message) || "Couldn't restart.";
+          if (go) { go.disabled = false; go.textContent = "Update"; }
+        }
+      } else {
+        const r = await window.pywebview.api.apply_update();
+        if (!r || !r.ok) {
+          if (sub) sub.textContent = (r && (r.message || r.error)) || "Couldn't install the update.";
+          if (go) { go.disabled = false; go.textContent = "Update"; }
+        }
+      }
+    } catch (err) {
+      if (sub) sub.textContent = String(err && err.message || err);
+      if (go) { go.disabled = false; go.textContent = "Update"; }
+    }
+    return;
+  }
+
   const lbOpt = e.target.closest(".listbox-option");
   if (lbOpt && listboxState.host) {
     selectListboxOption(lbOpt.dataset.listboxValue);
@@ -3556,7 +3635,7 @@ document.addEventListener("click", async (e) => {
   }
 
   const gameRow = e.target.closest(".grow-row[data-basename]");
-  if (gameRow) {
+  if (gameRow && !e.target.closest(".listbox")) {
     await selectGame(gameRow.dataset.basename, gameRow.dataset.game);
     return;
   }
@@ -3734,6 +3813,20 @@ document.addEventListener("click", async (e) => {
     return;
   }
 
+  if (e.target.closest("#btn-upload-games")) {
+    const btn = e.target.closest("#btn-upload-games");
+    const span = btn && btn.parentElement && btn.parentElement.querySelector("span");
+    if (btn) { btn.disabled = true; btn.textContent = "Uploading…"; }
+    try {
+      const r = await window.pywebview.api.upload_shared_games();
+      if (span && r && r.message) span.textContent = r.message;
+    } catch (err) {
+      if (span) span.textContent = String((err && err.message) || err);
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = "Upload new games"; }
+    }
+    return;
+  }
   if (e.target.closest("#btn-check-update")) {
     const btn = e.target.closest("#btn-check-update");
     if (btn) btn.disabled = true;
@@ -3886,6 +3979,17 @@ document.addEventListener("change", async (e) => {
   }
   if (lb.dataset.profile) {
     await commitProfile(lb.dataset.profile);
+    return;
+  }
+  if (lb.dataset.capture) {
+    const basename = lb.dataset.capture;
+    const r = await window.pywebview.api.set_game_capture(basename, lb.value);
+    if (r && r.games && lastSnapshot) {
+      lastSnapshot.games = r.games;
+      renderGames(lastSnapshot);
+    } else if (r && !r.ok) {
+      fail("games", r.error || "Couldn't save that");
+    }
     return;
   }
   if (lb.dataset.setting) {

@@ -6101,10 +6101,8 @@ class AppWindow:
         w = self.TOAST_PROMPT_W if prompt else self.TOAST_W
         h = self.TOAST_PROMPT_H if prompt else self.TOAST_H
         sw, sh = self._S(w), self._S(h)
-        # Standard toasts are true capsules (r = H/2). Prompt toasts are taller
-        # for stacked copy + actions — full H/2 there reads as a bulb. Soft
-        # squircle keeps the family resemblance without the peanut silhouette.
-        radius = sh // 2 if not prompt else self._S(dv.CARD_LAYERS["tray"][0])
+        # Same pill height for status and prompt. Radius is half of that.
+        radius = sh // 2
         key = dv.TOAST_KEY
 
         popup = ctk.CTkToplevel(self.root)
@@ -6158,29 +6156,25 @@ class AppWindow:
         self._keep_image(photo)
         canvas.create_image(0, 0, anchor="nw", image=photo)
 
-        # Prompt: same strip as status — chip + stacked copy, pills on the right.
-        if prompt:
-            cy = h / 2
-        else:
-            cy = h / 2
+        # One row, same vertical centre, whether or not there are buttons.
+        cy = h / 2
         chip_r = 14
-        chip_cx, chip_cy = (28, cy) if prompt else (28, cy)
+        # 28px chip, 16px from the left and the top. Centre is 30, 30.
+        chip_cx, chip_cy = 30, cy
         chip = canvas.create_oval(
             chip_cx - chip_r, chip_cy - chip_r,
             chip_cx + chip_r, chip_cy + chip_r,
             fill=ACCENT_TINT, outline="")
         icon = canvas.create_text(
             chip_cx, chip_cy, text="", fill=ACCENT, font=(ICON_FONT, -13))
-        title_y = (cy - 9) if prompt else cy
-        sub_y = (cy + 10) if prompt else cy
-        text_x = 54
+        text_x = 56
         title = canvas.create_text(
-            text_x, title_y, anchor="w", text="", fill=TEXT, font=dv.font(14, 500))
+            text_x, cy, anchor="w", text="", fill=TEXT, font=dv.font(14, 500))
         sep = canvas.create_text(
             text_x, cy, anchor="w", text="·", fill=FAINT, font=dv.font(14, 500),
             state="hidden")
         sub = canvas.create_text(
-            text_x, sub_y, anchor="w", text="", fill=MUTED, font=dv.type_font("meta"))
+            text_x, cy, anchor="w", text="", fill=MUTED, font=dv.type_font("meta"))
         detail = canvas.create_text(
             text_x, cy, anchor="w", text="", fill=FAINT,
             font=dv.font(12, mono=True), state="hidden")
@@ -6199,30 +6193,30 @@ class AppWindow:
             dust_base.append(alpha)
             dust_home.append((dx, dy, r))
 
-        # Action pills on the right — same strip as status, not a second row.
+        # Buttons sit on the same row as the words, trailing end, same
+        # centre line. A second row is what made the prompt look thick.
         btn_items = []
+        text_limit = w - dv.TOAST_TEXT_INSET
         if prompt:
-            bh = dv.TOAST_PROMPT_BTN_H
-            specs = [
-                ("Record", dv.TOAST_PROMPT_PRIMARY_W, True),
-                ("Not now", dv.TOAST_PROMPT_SECONDARY_W, False),
-            ]
-            total_bw = sum(bw for _l, bw, _p in specs) + dv.TOAST_PROMPT_BTN_GAP * (len(specs) - 1)
-            bx = w - dv.TOAST_TEXT_INSET - total_bw
-            by = (h - bh) / 2
+            bh = 26
+            gap = 8
+            # Record at x=286, Not now at x=366, both 72×26, top 17.
+            specs = [("Record", 72, True), ("Not now", 72, False)]
+            bx = 286
+            by = 17
+            text_limit = 274
             for i, (label, bw, primary) in enumerate(specs):
                 tag = f"toast_btn_{i}"
                 shell, core, text = self._toast_draw_action_pill(
                     canvas, bx, by, bw, bh, label, primary=primary, tag=tag)
                 btn_items.append({
                     "shell": shell, "core": core, "text": text, "tag": tag,
-                    "x": bx, "y": by, "w": bw, "h": bh, "primary": primary,
                 })
-                bx += bw + dv.TOAST_PROMPT_BTN_GAP
+                bx += bw + gap
 
         # 2px drain, inset, left-anchored (spec: scaleX 1→0, origin left).
-        track_x0, track_x1 = 22, w - 22
-        bar_y = h - 9
+        track_x0, track_x1 = 24, w - 24
+        bar_y = h - 7
         canvas.create_rectangle(
             track_x0, bar_y, track_x1, bar_y + dv.TOAST_DRAIN_H,
             fill=EDGE, outline="")
@@ -6238,7 +6232,7 @@ class AppWindow:
             "dust_style": "drift", "dust_phase": [], "dust_speed": 1.0,
             "dust_amp": 1.0, "dust_t0": time.time(),
             "track": (track_x0, track_x1, bar_y), "geom": (sw, sh, x, y_end),
-            "row_y": cy, "title_y": title_y, "sub_y": sub_y, "text_x": text_x,
+            "row_y": cy, "text_x": text_x, "text_limit": text_limit,
             "remaining": dv.TOAST_LIFE_MS, "life": dv.TOAST_LIFE_MS,
             "hovering": False, "ticking": False, "dismissing": False,
             "has_detail": False, "actions": [], "buttons": btn_items,
@@ -6284,11 +6278,9 @@ class AppWindow:
 
         Duration / size (detail) outranks the game name when space is tight —
         a stop toast that keeps "Helldivers 2" but drops "01:35 · 420 MB" is
-        the wrong trade. Prompt toasts use the stacked layout instead.
+        the wrong trade. A prompt uses this same row; the words stop
+        before the buttons.
         """
-        if toast.get("prompt"):
-            self._toast_layout_prompt(toast)
-            return
         canvas = toast["canvas"]
         x = toast["text_x"]
         y = toast["row_y"]
@@ -6296,7 +6288,7 @@ class AppWindow:
         detail_text = toast.get("detail_text") or ""
         # Keep text clear of the capsule's curved ends (radius ~ H/2).
         w = self.TOAST_PROMPT_W if toast.get("prompt") else self.TOAST_W
-        max_x = w - dv.TOAST_TEXT_INSET
+        max_x = toast.get("text_limit") or (w - dv.TOAST_TEXT_INSET)
 
         def _right(item):
             try:
@@ -6408,42 +6400,6 @@ class AppWindow:
             else:
                 _ellipsize(toast["detail"], detail_text, tx, max_x)
 
-    def _toast_layout_prompt(self, toast):
-        """Stacked title over game name — no middot collision, full game name."""
-        canvas = toast["canvas"]
-        x = toast["text_x"]
-        title_y = toast.get("title_y", toast["row_y"] - 9)
-        sub_y = toast.get("sub_y", toast["row_y"] + 12)
-        max_x = self.TOAST_PROMPT_W - dv.TOAST_TEXT_INSET
-
-        def _fit(item, text, left, y, limit):
-            if not text:
-                canvas.itemconfigure(item, text="", state="hidden")
-                return
-            candidate = text
-            while True:
-                shown = (candidate if candidate == text
-                         else (candidate.rstrip() + "…"))
-                canvas.itemconfigure(item, text=shown, state="normal")
-                canvas.coords(item, left, y)
-                try:
-                    bbox = canvas.bbox(item)
-                    right = (bbox[2] / self.scale) if bbox else left
-                except Exception:
-                    right = left
-                if right <= limit or len(candidate) <= 1:
-                    if right > limit:
-                        canvas.itemconfigure(item, text="", state="hidden")
-                    return
-                candidate = candidate[:-1]
-
-        canvas.itemconfigure(toast["sep"], state="hidden")
-        canvas.itemconfigure(toast["detail"], text="", state="hidden")
-        title_text = canvas.itemcget(toast["title"], "text") or ""
-        sub_text = canvas.itemcget(toast["sub"], "text") or ""
-        _fit(toast["title"], title_text, x, title_y, max_x)
-        _fit(toast["sub"], sub_text, x, sub_y, max_x)
-
     def _toast_apply(self, toast, content):
         canvas = toast["canvas"]
         tint = content["tint"]
@@ -6515,15 +6471,20 @@ class AppWindow:
             random.uniform(0.7, 0.9) if random.random() < 0.2 else 1.0
             for _ in range(n)
         ]
-        w = self.TOAST_PROMPT_W if toast.get("prompt") else self.TOAST_W
-        cy = toast.get("row_y") or (self.TOAST_H / 2)
-        if anchor == "right":
-            # Fan inward from the trailing end so dots stay inside the pill.
-            toast["dust_origin"] = (w - 28, cy)
-            toast["dust_mirror"] = -1.0
+        # Same seats as Nebula Toast Row. Canvas is the outer pill; the
+        # design measures dust inside the 3px glass inset.
+        if toast.get("prompt") or event == "prompt":
+            cx, k = 34.0, 0.5
+        elif event == "stop":
+            cx, k = 372.0, 0.3
         else:
-            toast["dust_origin"] = (24, cy)
-            toast["dust_mirror"] = 1.0
+            cx, k = 348.0, 0.7
+        toast["dust_origin"] = (3.0 + cx, 33.0)
+        toast["dust_mirror"] = 1.0
+        toast["dust_home"] = [
+            (dx * k * -1.0, dy * 0.7, max(1.5, r * 1.6) / 2.0)
+            for dx, dy, r, _alpha in dv.TOAST_DUST
+        ]
 
     def _toast_animate_dust(self, toast, force=False):
         """Nebula dust — quieter motion, left or right by style.

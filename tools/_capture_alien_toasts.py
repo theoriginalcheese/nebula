@@ -1,4 +1,9 @@
-"""Capture spike (v4) toast states on Alien-PC into PNGs.
+"""REDUNDANT destination. Writes the rejected recapture in tools/_toast_demo_alien/.
+
+Do not treat those PNGs as the toast. The confirmed set is tools/_toast_demo/
+and the backup in design/toast-canonical/.
+
+Capture spike (v4) toast states on Alien-PC into PNGs.
 
 Run on Alien from the source checkout:
 
