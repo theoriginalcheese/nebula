@@ -427,7 +427,11 @@ html.asleep .toast-drain {
 }
 
 .toast-detail {
-  flex: 0 0 auto;
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-family: var(--font-mono);
   margin-left: auto;
   padding-left: 6px;

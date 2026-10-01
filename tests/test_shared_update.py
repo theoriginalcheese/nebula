@@ -10,7 +10,10 @@ import tempfile
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from obsauto import classifier as classifier_mod
-from obsauto.gamesync import fetch_public_list, names_only, parse_public_list
+from obsauto.gamesync import (
+    fetch_public_list, names_only, parse_public_list, shared_upload_overlay,
+)
+from obsauto.classifier import merge_classifications
 from obsauto.updater import offer_from_check
 
 results = []
@@ -89,6 +92,19 @@ check("upload shape is names only",
       and stripped["non_games"] == {"chrome.exe": True}
       and "profile" not in json.dumps(stripped))
 
+remote_games = {"games": {"foo.exe": {"display_name": "Foo"}}, "non_games": {}}
+overlay = shared_upload_overlay({
+    "games": {"bar.exe": {"display_name": "Bar"}},
+    "non_games": {"foo.exe": True, "chrome.exe": True},
+}, remote_games)
+check("upload keeps a local non-game that the list does not call a game",
+      overlay["non_games"] == {"chrome.exe": True})
+merged = merge_classifications(remote_games, overlay)
+check("upload does not demote someone else's game",
+      "foo.exe" in merged["games"] and "foo.exe" not in merged["non_games"])
+check("upload still adds this PC's game",
+      merged["games"]["bar.exe"]["display_name"] == "Bar")
+
 old = classifier_mod.DATA_FILE
 tmp = tempfile.mkdtemp()
 classifier_mod.DATA_FILE = os.path.join(tmp, "games.json")
@@ -100,6 +116,12 @@ try:
     clf.mark_non_game("terraria.exe")
     kind2, _name2 = clf.classify("", "Terraria.exe")
     check("a local not-a-game wins over the builtin list", kind2 == "non_game", kind2)
+    clf.absorb({
+        "games": {"terraria.exe": {"display_name": "Terraria", "source": "shared"}},
+        "non_games": {},
+    })
+    kind3, _name3 = clf.classify("", "Terraria.exe")
+    check("a local not-a-game survives the public pull", kind3 == "non_game", kind3)
 finally:
     classifier_mod.DATA_FILE = old
 

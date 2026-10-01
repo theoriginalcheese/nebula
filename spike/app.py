@@ -1647,7 +1647,7 @@ class Api:
         try:
             result = updater_mod.check_for_update(
                 token=self.cfg.get("github_token") or None)
-            self._update_pending = result
+            self._remember_update(result)
             rel = result.get("release") or {}
             tag = rel.get("tag") or rel.get("version") or "?"
             msg = result.get("message") or ""
@@ -1672,6 +1672,14 @@ class Api:
             self._update_busy = False
         out["updates_footer"] = self._settings_updates_footer()
         return out
+
+    def _remember_update(self, result):
+        """Store a check and rebuild the corner prompt from the same result."""
+        from obsauto import updater as updater_mod
+
+        self._update_pending = result
+        self._update_offer = updater_mod.offer_from_check(
+            result, self.cfg.get("update_dismissed_tag") or "")
 
     def _update_offer_payload(self):
         offer = getattr(self, "_update_offer", None)
@@ -1745,7 +1753,7 @@ class Api:
                     "ok": False,
                     "message": sync._last_error or "Couldn't open the shared list on GitHub.",
                 }
-            merged = sync.push(payload)
+            merged = sync.push(payload, protect_remote_games=True)
         except Exception as exc:
             merged = None
             sync._last_error = str(exc)
@@ -3527,14 +3535,23 @@ def main():
             host.autostart()
 
         def _offer_update():
+            # Packaged builds only. A source checkout offers after auto-sync
+            # so two git fetches don't fight over the ref lock.
             try:
                 from obsauto import updater as updater_mod
-                result = updater_mod.check_for_update(
-                    token=api.cfg.get("github_token") or None)
-                api._update_pending = result
-                api._update_offer = updater_mod.offer_from_check(
-                    result, api.cfg.get("update_dismissed_tag") or "")
+                if not updater_mod.is_frozen():
+                    return
+                if api._update_busy:
+                    return
+                api._update_busy = True
+                try:
+                    result = updater_mod.check_for_update(
+                        token=api.cfg.get("github_token") or None)
+                    api._remember_update(result)
+                finally:
+                    api._update_busy = False
             except Exception as exc:
+                api._update_busy = False
                 log_to_file("[Update] check skipped: %s" % exc)
 
         timer = threading.Timer(8.0, _offer_update)
@@ -3570,6 +3587,12 @@ def main():
                 api._update_busy = True
                 try:
                     result = updater_mod.sync_source_checkout()
+                    try:
+                        checked = updater_mod.check_for_update(
+                            token=api.cfg.get("github_token") or None)
+                        api._remember_update(checked)
+                    except Exception as exc:
+                        host._log("[Update] offer check skipped: %s" % exc)
                 finally:
                     api._update_busy = False
                 msg = (result.get("message") or "").strip()

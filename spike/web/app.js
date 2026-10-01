@@ -2953,22 +2953,25 @@ function fieldHtml(f) {
 }
 
 let loadPromise = null;
+let updatePromptError = "";
 
 function paintUpdatePrompt(d) {
   const el = $("update-prompt");
   if (!el) return;
   const offer = d && d.update_offer;
   if (!offer || !offer.tag) {
+    updatePromptError = "";
     el.hidden = true;
     return;
   }
+  if (el.dataset.tag && el.dataset.tag !== offer.tag) updatePromptError = "";
   el.dataset.tag = offer.tag;
   el.dataset.kind = offer.kind || "release";
   const title = $("update-prompt-title");
   const sub = $("update-prompt-sub");
   const go = $("update-prompt-go");
   if (title) title.textContent = offer.title || "Update available";
-  if (sub) sub.textContent = offer.detail || "";
+  if (sub) sub.textContent = updatePromptError || offer.detail || "";
   if (go && !go.disabled) go.textContent = "Update";
   el.hidden = false;
 }
@@ -3562,30 +3565,32 @@ document.addEventListener("click", async (e) => {
     const kind = el ? el.dataset.kind : "release";
     const go = $("update-prompt-go");
     const sub = $("update-prompt-sub");
+    updatePromptError = "";
     if (go) { go.disabled = true; go.textContent = "Updating…"; }
+    const failUpdate = (message) => {
+      updatePromptError = message;
+      if (sub) sub.textContent = updatePromptError;
+      if (go) { go.disabled = false; go.textContent = "Update"; }
+    };
     try {
       if (kind === "source") {
         const loaded = await window.pywebview.api.load_source_update();
         if (!loaded || !loaded.ok) {
-          if (sub) sub.textContent = (loaded && loaded.message) || "Couldn't load the update.";
-          if (go) { go.disabled = false; go.textContent = "Update"; }
+          failUpdate((loaded && loaded.message) || "Couldn't load the update.");
           return;
         }
         const restarted = await window.pywebview.api.restart_source_update();
         if (!restarted || !restarted.ok) {
-          if (sub) sub.textContent = (restarted && restarted.message) || "Couldn't restart.";
-          if (go) { go.disabled = false; go.textContent = "Update"; }
+          failUpdate((restarted && restarted.message) || "Couldn't restart.");
         }
       } else {
         const r = await window.pywebview.api.apply_update();
         if (!r || !r.ok) {
-          if (sub) sub.textContent = (r && (r.message || r.error)) || "Couldn't install the update.";
-          if (go) { go.disabled = false; go.textContent = "Update"; }
+          failUpdate((r && (r.message || r.error)) || "Couldn't install the update.");
         }
       }
     } catch (err) {
-      if (sub) sub.textContent = String(err && err.message || err);
-      if (go) { go.disabled = false; go.textContent = "Update"; }
+      failUpdate(String(err && err.message || err));
     }
     return;
   }

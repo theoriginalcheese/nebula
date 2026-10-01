@@ -177,8 +177,9 @@ def test_prompt_actions_resize():
         # First replace only creates; ready drains pending via _push.
         ctl._on_ready()
         time.sleep(0.08)
-        check("prompt resize uses prompt height",
-              any(h == nw_mod.TOAST_PROMPT_H for _w, h in resized), resized)
+        check("prompt resize uses prompt width",
+              any(w == nw_mod.TOAST_PROMPT_W and h == nw_mod.TOAST_PROMPT_H
+                  for w, h in resized), resized)
         check("prompt payload marks prompt",
               any('"prompt": true' in j or '"prompt":true' in j
                   for j in created[0].js),

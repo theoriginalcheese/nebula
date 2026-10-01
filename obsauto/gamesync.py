@@ -122,6 +122,24 @@ def names_only(data):
     return {"games": games, "non_games": parsed["non_games"]}
 
 
+def shared_upload_overlay(local, remote):
+    """Names to merge onto the public list.
+
+    A non-game on this PC must not knock a game off the shared list.
+    Auto-filed ignores would otherwise demote a game someone else
+    uploaded. Games this PC knows are still added, and they still win
+    over a shared non-game.
+    """
+    local = names_only(local)
+    remote_games = set((remote or {}).get("games") or {})
+    local["non_games"] = {
+        key: value
+        for key, value in (local.get("non_games") or {}).items()
+        if key not in remote_games
+    }
+    return local
+
+
 def fetch_public_list(url, timeout=_TIMEOUT):
     """GET a shared classification file. None on any failure. Never raises."""
     url = (url or "").strip()
@@ -265,11 +283,16 @@ class GameSync:
             return None
 
     # ---- write ----
-    def push(self, local_data):
+    def push(self, local_data, *, protect_remote_games=False):
         """Merge `local_data` into the remote list and write it back. Returns
         the merged dict (so the caller can adopt it locally) or None on failure.
         The GET-merge-PUT means a concurrent classification on another device
-        survives instead of being overwritten."""
+        survives instead of being overwritten.
+
+        ``protect_remote_games`` is for the public list: this PC's non-games
+        are dropped where the remote already has a game, and that decision is
+        remade against each fetch so a game added mid-upload still survives.
+        """
         if not self.enabled:
             return None
         # Fetch-merge-PUT in a loop. Each PUT is tagged with the exact sha we
@@ -290,7 +313,10 @@ class GameSync:
             # remote still has it in - otherwise the remote copy would undo a
             # reclassification on the very next pull. Additions made on other
             # machines still survive; that's the whole point of merging.
-            merged = merge_classifications(remote, local_data)
+            overlay = local_data
+            if protect_remote_games:
+                overlay = shared_upload_overlay(local_data, remote)
+            merged = merge_classifications(remote, overlay)
             # Remote already has everything - no empty commit.
             if merged == remote and self._sha is not None:
                 return merged

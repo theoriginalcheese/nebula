@@ -243,6 +243,11 @@ function tick() {
     state.remaining -= 50;
   }
   if (state.remaining <= 0 && !state.dismissing) {
+    // Drop the chain before the fade. A replace in the next few hundred
+    // milliseconds must be able to start a new one; otherwise the fade
+    // timer exits, ticking stays true, and the toast never expires.
+    state.ticking = false;
+    state.tickHandle = null;
     fadeOut();
     return;
   }
