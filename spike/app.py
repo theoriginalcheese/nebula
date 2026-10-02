@@ -1612,12 +1612,19 @@ class Api:
         if (self._host and key in (
                 "toggle_hotkey", "toggle_hotkey_scancode",
                 "replay_hotkey", "replay_hotkey_scancode",
-                "palette_hotkey")):
+                "palette_hotkey", "replay_udp_port")):
             try:
-                self._host.start_replay()
+                # Rebind the keys only. start_replay() built a new
+                # ReplayBuffer at armed=False while OBS's buffer kept
+                # running, and nothing would disarm it after that.
                 self._host.start_hotkeys()
             except Exception as exc:
                 self._api_log("[Manual] Couldn't rebind after %s: %s" % (key, exc))
+        if self._host and key in ("obs_host", "obs_port", "obs_password"):
+            try:
+                self._host.apply_obs_endpoint()
+            except Exception as exc:
+                self._api_log("[Manual] Couldn't apply %s: %s" % (key, exc))
         if key.startswith("nas_offload") and self._host and getattr(
                 self._host, "offloader", None):
             try:

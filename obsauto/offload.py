@@ -122,6 +122,9 @@ class Offloader:
         self._queue_file = os.path.join(APP_DIR, "offload_queue.json")
         self._state_file = os.path.join(APP_DIR, "offload_state.json")
         self._queue = []            # list of {"path":..., "game":...}
+        # False until a read of the queue file succeeds. Saves are refused
+        # until then, so a lock at startup cannot be written back as [].
+        self._queue_loaded = False
         self._lock = threading.Lock()
         self._wake = threading.Event()
         self._stop = False
@@ -292,6 +295,13 @@ class Offloader:
     # ---- public: enqueue a finished clip ----
     def queue(self, path, game):
         if not self.enabled or not path:
+            return
+        if not self._queue_loaded:
+            self._load_queue()
+        if not self._queue_loaded:
+            self._log("[Offload] Not queueing %s — the queue file couldn't "
+                      "be read, so it was left as it is."
+                      % os.path.basename(path))
             return
         # Persist the local game-folder name so NAS layout matches disk.
         folder = _game_folder_for(path, game, self.recording_root)
@@ -575,8 +585,14 @@ class Offloader:
     # empty because a save was interrupted - write-then-rename, and a corrupt
     # file is quarantined and logged rather than read as "nothing pending".
     def _load_queue(self):
-        items = read_json(self._queue_file, [], log=self._log,
-                          label="offload queue")
+        try:
+            items = read_json(self._queue_file, [], log=self._log,
+                              label="offload queue")
+        except OSError:
+            # Locked or unreadable. Leave both memory and disk alone.
+            # _save_queue refuses to write until a later read succeeds.
+            self._queue_loaded = False
+            return
         if not isinstance(items, list):
             items = []
         try:
@@ -586,19 +602,27 @@ class Offloader:
                     i for i in items
                     if isinstance(i, dict) and i.get("path")
                     and os.path.exists(i["path"])]
+                self._queue_loaded = True
                 self._save_queue()
         except OSError:
-            pass
+            self._queue_loaded = False
 
     def _save_queue(self):
+        if not self._queue_loaded:
+            self._log("[Offload] Not saving the queue — the existing file "
+                      "couldn't be read.")
+            return
         try:
             write_json_atomic(self._queue_file, self._queue)
         except OSError as exc:
             self._log(f"[Offload] Couldn't save queue: {exc}")
 
     def _load_state(self):
-        data = read_json(self._state_file, {}, log=self._log,
-                         label="offload state")
+        try:
+            data = read_json(self._state_file, {}, log=self._log,
+                             label="offload state")
+        except OSError:
+            return
         if not isinstance(data, dict):
             return
         try:

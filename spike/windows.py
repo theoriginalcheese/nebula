@@ -809,6 +809,12 @@ class ToastController:
         self._renderer_asleep = asleep
 
     def suspend_if_hidden(self):
+        # The watch thread and the toast's own reveal both used to
+        # check-then-set _renderer_asleep. Posting onto the GUI thread
+        # serialises them with _replace_gui.
+        _run_on_gui(self._host, self._suspend_if_hidden_gui, wait=False)
+
+    def _suspend_if_hidden_gui(self):
         if not self._showing:
             self._set_renderer_sleep(True)
 
@@ -823,18 +829,24 @@ class ToastController:
         # JS only needs labels; callbacks stay in Python.
         content["actions"] = [label for label, _cb in action_list]
         content["prompt"] = bool(action_list) or event == "prompt"
-        self._action_callbacks = [cb for _label, cb in action_list]
-        self._on_timeout = on_timeout
+        callbacks = [cb for _label, cb in action_list]
+        timeout_cb = on_timeout
         # Posted, not blocking. The first toast of a session is the one that
         # builds the window, and doing that inside a synchronous Invoke pins
         # the GUI thread for the whole of WebView2's construction - the app
         # goes "not responding" until it finishes. Every later toast only
         # mutates the existing window and would be fine either way, but the
         # first one is exactly the case being reported. See _run_on_gui.
-        _run_on_gui(self._host, lambda: self._replace_gui(content), wait=False)
+        # Callbacks are applied in _replace_gui, with the generation bump.
+        # Setting them here let a fade that was already in its last tick
+        # clear the new prompt's buttons before the replace landed.
+        _run_on_gui(self._host, lambda: self._replace_gui(
+            content, callbacks, timeout_cb), wait=False)
 
-    def _replace_gui(self, content):
+    def _replace_gui(self, content, callbacks=None, timeout_cb=None):
         self._generation += 1
+        self._action_callbacks = list(callbacks or [])
+        self._on_timeout = timeout_cb
         self._showing = True
         self._fading = False
         self._fade_dir = 0
@@ -1166,14 +1178,18 @@ class ToastController:
         # Capture generation at expire request time. A newer replace must win —
         # destroying/hiding mid-replace left a blank HWND zombie (opacity 0,
         # no tick chain) that --toast-demo kept on screen forever.
-        gen = self._generation
-        timeout_cb = self._on_timeout
-        self._on_timeout = None
-        self._action_callbacks = []
+        self._expire_if_current(self._generation)
 
+    def _expire_if_current(self, gen):
         def expire():
             if gen != self._generation:
                 return
+            # Only the generation that started this fade may clear the
+            # buttons. Doing it before the check wiped a prompt that had
+            # already replaced this toast.
+            timeout_cb = self._on_timeout
+            self._on_timeout = None
+            self._action_callbacks = []
             self._showing = False
             self._fading = False
             self._fade_dir = 0

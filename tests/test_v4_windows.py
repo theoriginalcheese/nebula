@@ -257,6 +257,30 @@ def test_expire_does_not_clobber_newer_replace():
         nw_mod.webview.create_window = old_create
 
 
+def test_stale_expire_keeps_prompt_actions():
+    """A fade that already started must not clear the next prompt's buttons."""
+    created, fake_create = with_fake_webview()
+    old_create = nw_mod.webview.create_window
+    nw_mod.webview.create_window = fake_create
+    hits = []
+    try:
+        host = StubHost()
+        ctl = nw_mod.ToastController(host)
+        ctl._ready.set()
+        ctl.replace("prompt", "Game", actions=[("Record", lambda: hits.append("ok"))])
+        time.sleep(0.05)
+        check("prompt stored its action", len(ctl._action_callbacks) == 1,
+              ctl._action_callbacks)
+        ctl._expire_if_current(ctl._generation - 1)
+        check("stale expire leaves the action", len(ctl._action_callbacks) == 1,
+              ctl._action_callbacks)
+        ctl._on_action(0)
+        time.sleep(0.05)
+        check("the action still runs", hits == ["ok"], hits)
+    finally:
+        nw_mod.webview.create_window = old_create
+
+
 def test_reclaim_orphans():
     """Foreign toast/overlay HWNDs get WM_CLOSE; same-PID windows are kept."""
     import ctypes
@@ -370,6 +394,7 @@ if __name__ == "__main__":
     test_prompt_actions_resize()
     test_expired_hides_keeps_slot()
     test_expire_does_not_clobber_newer_replace()
+    test_stale_expire_keeps_prompt_actions()
     test_reclaim_orphans()
     test_reclaim_dead_pid()
     test_liveness_teardown()

@@ -396,13 +396,20 @@ class NasGameSync:
             with open(path, "r", encoding="utf-8") as fh:
                 data = json.load(fh)
             if not isinstance(data, dict):
-                return {"games": {}, "non_games": {}}
-            data.setdefault("games", {})
-            data.setdefault("non_games", {})
-            if not isinstance(data["games"], dict):
+                self._log("[Sync] NAS game list has an unexpected shape — "
+                          "not treating it as empty")
+                return None
+            if "games" not in data:
                 data["games"] = {}
-            if not isinstance(data["non_games"], dict):
+            if "non_games" not in data:
                 data["non_games"] = {}
+            if (not isinstance(data["games"], dict)
+                    or not isinstance(data["non_games"], dict)):
+                # A list or a string here used to be replaced with {} and
+                # then written back, which is the empty-remote clobber.
+                self._log("[Sync] NAS game list has an unexpected shape — "
+                          "not treating it as empty")
+                return None
             return data
         except Exception as exc:
             self._log("[Sync] NAS game list read failed: %s" % exc)

@@ -40,6 +40,7 @@ import threading
 import time
 
 from . import paths as paths_mod
+from .atomic_json import read_json
 from .fsprobe import isdir_within
 
 _CHUNK = 4 * 1024 * 1024
@@ -212,28 +213,53 @@ class ClipCatalog:
         return self.nas_reachable(None)
 
     # ---- persistence ----------------------------------------------------
+    def _parse_index(self, data) -> dict:
+        entries = {}
+        raw = data.get("entries") if isinstance(data, dict) else data
+        if isinstance(raw, list):
+            for item in raw:
+                if not isinstance(item, dict):
+                    continue
+                rel = _safe_rel(item.get("rel") or "")
+                if rel:
+                    entries[rel] = self._normalise_entry(item, rel)
+        elif isinstance(raw, dict):
+            for rel, item in raw.items():
+                safe = _safe_rel(rel)
+                if safe and isinstance(item, dict):
+                    entries[safe] = self._normalise_entry(item, safe)
+        return entries
+
+    def _read_index_entries(self):
+        """On-disk entries, ``{}`` when the file is missing, ``None`` when it
+        could not be read. ``None`` means "do not save" — an unreadable index
+        is not an empty one."""
+        try:
+            data = read_json(self._index_path, {}, log=self._log,
+                             label="clip index")
+        except OSError as exc:
+            self._log("[Clips] Couldn't read the clip index (%s) — "
+                      "leaving it untouched." % exc)
+            return None
+        if not isinstance(data, (dict, list)):
+            return {}
+        return self._parse_index(data)
+
     def _ensure_loaded(self):
         if self._loaded:
             return
         with self._lock:
             if self._loaded:
                 return
-            try:
-                with open(self._index_path, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                entries = data.get("entries") if isinstance(data, dict) else data
-                if isinstance(entries, list):
-                    for item in entries:
-                        rel = _safe_rel(item.get("rel") or "")
-                        if rel:
-                            self._entries[rel] = self._normalise_entry(item, rel)
-                elif isinstance(entries, dict):
-                    for rel, item in entries.items():
-                        safe = _safe_rel(rel)
-                        if safe and isinstance(item, dict):
-                            self._entries[safe] = self._normalise_entry(item, safe)
-            except (OSError, ValueError, TypeError):
-                self._entries = {}
+            entries = self._read_index_entries()
+            if entries is None:
+                return
+            # Keep anything upserted while an earlier read was refused.
+            if self._entries:
+                merged = dict(entries)
+                merged.update(self._entries)
+                entries = merged
+            self._entries = entries
             self._loaded = True
 
     @staticmethod
@@ -250,14 +276,35 @@ class ClipCatalog:
             "offloaded_at": float(item.get("offloaded_at") or 0),
         }
 
-    def _save(self):
+    def _save(self, forget=()):
+        """Write the index. Disk entries this instance has never seen are kept.
+
+        The offloader builds a fresh catalog per finalise, and the app keeps
+        a long-lived one. Whichever saved last used to replace the whole file
+        with its own memory, so a clip the other instance had just indexed
+        disappeared. ``forget`` is how a delete still sticks: those keys are
+        dropped after the union, instead of being read back off disk.
+        """
+        if not self._loaded:
+            self._log("[Clips] Not saving the index — the current file "
+                      "couldn't be read.")
+            return
+        disk = self._read_index_entries()
+        if disk is None:
+            self._log("[Clips] Not saving the index — couldn't re-read it.")
+            return
+        combined = dict(disk)
+        combined.update(self._entries)
+        for rel in forget:
+            combined.pop(rel, None)
+        self._entries = combined
         try:
             os.makedirs(self._app_dir, exist_ok=True)
             tmp = self._index_path + ".tmp"
             payload = {
                 "version": 1,
                 "entries": sorted(
-                    self._entries.values(), key=lambda e: e["rel"].lower()),
+                    combined.values(), key=lambda e: e["rel"].lower()),
             }
             with open(tmp, "w", encoding="utf-8") as f:
                 json.dump(payload, f, indent=2)
@@ -303,7 +350,10 @@ class ClipCatalog:
     def record_offload(self, src, dest, game="", sha256="", size=None,
                        mtime=None):
         """Called from Offloader._finalize after a verified NAS copy."""
-        name = os.path.basename(src or dest or "")
+        # Key on the name that actually landed. A collision rename writes
+        # "clip (2).mkv" while the source is still "clip.mkv"; keying on the
+        # source makes the second recording replace the first in the index.
+        name = os.path.basename(dest or src or "")
         if not name:
             return None
         folder = (game or "").strip()
@@ -353,7 +403,7 @@ class ClipCatalog:
             if rel not in self._entries:
                 return False
             del self._entries[rel]
-            self._save()
+            self._save(forget=(rel,))
             return True
 
     # ---- cache ----------------------------------------------------------

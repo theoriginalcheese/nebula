@@ -13,9 +13,11 @@ Two rules, one place:
 * **Never write the live file directly.** Serialise to ``<path>.tmp``, fsync,
   then ``os.replace`` - the reader sees the old file or the new one, never a
   fragment.
-* **Never silently treat a corrupt file as empty.** ``read_json`` moves an
-  unparseable file aside to ``<path>.corrupt`` and reports it, so the next
-  save starts clean and a human can still recover what was there.
+* **Never silently treat a corrupt or unreadable file as empty.** ``read_json``
+  moves an unparseable file aside to ``<path>.corrupt`` and reports it, so the
+  next save starts clean and a human can still recover what was there. A file
+  that is present but cannot be read (locked, permissions) is not empty: that
+  raises, so a caller cannot persist the default over the real queue.
 """
 
 from __future__ import annotations
@@ -51,10 +53,11 @@ def read_json(path, default, log=None, label=None):
     """Load ``path``; on corrupt JSON quarantine it and return ``default``.
 
     A missing file is the normal first-run case and returns ``default``
-    quietly. An unreadable-but-present file is logged (via ``log``) and moved
-    to ``<path>.corrupt`` so the next ``write_json_atomic`` does not keep
-    re-failing on top of it. Other ``OSError`` (locked, permissions) returns
-    ``default`` without touching the file.
+    quietly. An unparseable file is logged (via ``log``) and moved to
+    ``<path>.corrupt`` so the next ``write_json_atomic`` does not keep
+    re-failing on top of it. Any other ``OSError`` (locked, permissions)
+    is logged and re-raised: the file is still there, and returning
+    ``default`` is what let a locked offload queue get saved back as empty.
     """
     try:
         with open(path, "r", encoding="utf-8") as f:
@@ -71,5 +74,9 @@ def read_json(path, default, log=None, label=None):
         except OSError:
             pass
         return default
-    except OSError:
-        return default
+    except OSError as exc:
+        name = label or os.path.basename(path)
+        if log:
+            log("[State] %s could not be read (%s) - left in place, not "
+                "treated as empty" % (name, exc))
+        raise

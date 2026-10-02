@@ -431,6 +431,7 @@ class Monitor:
         self._recording_started_at = None
         self._last_reconnect_attempt = 0.0
         self._was_disconnected = False
+        self._reconcile_pending = False
         self._auto_paused = False
         # Manual-stop hold-off: suppress auto StartRecord until the user
         # confirms via toast, starts recording manually, or the held games exit.
@@ -1287,6 +1288,26 @@ class Monitor:
         self._last_start_fail_logged_at = now
         self.log(message)
 
+    def _reconcile_after_reconnect(self):
+        """Keep the target when OBS is still recording; drop it when it isn't.
+
+        A status call that fails leaves the target alone. Clearing on a
+        transient error is the same bug as clearing on the disconnect.
+        """
+        try:
+            active = bool(self.obs.get_record_status().get("outputActive"))
+        except Exception:
+            # Ask again on the next tick. Clearing here, on a transient
+            # error, splits a recording that is still running.
+            self._reconcile_pending = True
+            return
+        self._reconcile_pending = False
+        if active:
+            return
+        self._recording_target = None
+        self._auto_paused = False
+        self._applied_capture = None
+
     def _maybe_reconnect(self):
         """If OBS crashes/closes mid-session, the websocket recv loop
         detects it and self.obs.connected goes False - but nothing
@@ -1295,13 +1316,19 @@ class Monitor:
         if self.obs.connected:
             if self._was_disconnected:
                 self._was_disconnected = False
+                self._reconcile_pending = True
                 self.on_connection_change(True)
                 self.log("[OBS] Connection restored.")
+            if self._reconcile_pending:
+                self._reconcile_after_reconnect()
             return True
 
         if not self._was_disconnected:
             self._was_disconnected = True
-            self._recording_target = None  # OBS lost whatever it was doing; don't assume state
+            # A dropped websocket is not evidence OBS stopped recording.
+            # Clearing the target here made the next tick stop-and-restart
+            # a recording that was still running, or — if the game had
+            # closed — leave OBS recording with nothing tracking it.
             self.on_connection_change(False)
             self.log("[OBS] Connection lost - will keep trying to reconnect.")
 

@@ -173,11 +173,21 @@ def merge_classifications(base, overlay):
     wins outright and is dropped from the opposite bucket. Additions made
     elsewhere still survive, which is the property the merge existed for.
     """
-    games = {**base.get("games", {}), **overlay.get("games", {})}
-    non_games = {**base.get("non_games", {}), **overlay.get("non_games", {})}
-    for key in overlay.get("games", {}):
+    overlay_games = dict(overlay.get("games") or {})
+    overlay_non = dict(overlay.get("non_games") or {})
+    # A key sitting in both overlay buckets is damage from the old union
+    # merge, not two opinions. Treating it as both makes the two strips
+    # below cancel: games removes it from non_games, then non_games removes
+    # it from games, and the exe vanishes from the list entirely.
+    # games wins, same rule as Classifier._heal.
+    for key in list(overlay_non):
+        if key in overlay_games:
+            overlay_non.pop(key, None)
+    games = {**(base.get("games") or {}), **overlay_games}
+    non_games = {**(base.get("non_games") or {}), **overlay_non}
+    for key in overlay_games:
         non_games.pop(key, None)
-    for key in overlay.get("non_games", {}):
+    for key in overlay_non:
         games.pop(key, None)
     return {"games": games, "non_games": non_games}
 
@@ -285,15 +295,18 @@ class Classifier:
             return 0
         with self._lock:
             known = set(self._data.get("games", {})) | set(self._data.get("non_games", {}))
-            self._data = merge_classifications(external, self._data)
+            self._data = self._heal(merge_classifications(external, self._data))
             # Count keys this machine had never seen, not the change in total.
             # A remote reclassification moves an entry between buckets and
             # leaves the total identical, and a local one shrinks it - both
             # would otherwise report a nonsense "pulled N".
             merged = set(self._data["games"]) | set(self._data["non_games"])
             added = len(merged - known)
-        if merged != known:
-            self._save()
+            # Save while the lock is held, same as mark_game. on_saved only
+            # schedules a push; it must not call back into the classifier
+            # synchronously or this would deadlock.
+            if merged != known:
+                self._save()
         return added
 
     # ---- Steam index (lazy, refreshed on demand) ----

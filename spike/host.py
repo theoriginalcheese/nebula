@@ -1695,8 +1695,50 @@ class NebulaHost:
                           self.open_palette)
         # Local UDP trigger shares the hotkey's save path. Off unless a port
         # is configured; started here so its lifetime matches the hotkeys'.
+        # Rebinding a hotkey calls this again. The previous socket is still
+        # bound, so a second start fails and then quit() stops the new
+        # (unbound) trigger and leaves the old one listening.
+        old_trigger = getattr(self, "_udp_trigger", None)
+        if old_trigger is not None:
+            try:
+                old_trigger.stop()
+            except Exception:
+                pass
+            self._udp_trigger = None
         if cfg.get("replay_udp_port"):
             from .udp_trigger import UdpTrigger
             self._udp_trigger = UdpTrigger(self._save_replay, on_log=self._log)
             self._udp_trigger.start(cfg.get("replay_udp_port"))
         return self.hotkeys
+
+    def apply_obs_endpoint(self):
+        """Point the live client at the saved host, port and password.
+
+        ``OBSClient`` copies those at construction. Saving them in Settings
+        used to update the log line and leave ``connect()`` on the old port.
+        """
+        obs = getattr(self, "obs", None)
+        if obs is None:
+            return
+        obs.host = self.config.get("obs_host") or "localhost"
+        try:
+            obs.port = int(self.config.get("obs_port") or 4455)
+        except (TypeError, ValueError):
+            obs.port = 4455
+        obs.password = self.config.get("obs_password") or ""
+        try:
+            obs.disconnect()
+        except Exception:
+            pass
+        # A forced autostart clears a deliberate monitoring pause, and it
+        # races the monitor's own reconnect (two connect() calls, one socket).
+        # If the monitor is already looping, disconnect is enough: the next
+        # tick dials the host and port we just wrote onto the client.
+        if self._monitoring_paused:
+            self._log("[OBS] Saved the connection settings. They apply "
+                      "when monitoring resumes.")
+            return
+        if self.monitor is not None and getattr(self.monitor, "_running", False):
+            self._log("[OBS] Saved the connection settings — reconnecting.")
+            return
+        self.call_soon(lambda: self.autostart(force=True))

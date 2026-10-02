@@ -151,6 +151,18 @@ def spans(rows=None, now=None):
             current = {"game": row.get("game") or "Unknown", "start": ts,
                        "end": None, "live": True, "gaps": [], "marks": [],
                        "path": None, "size": None, "_idle": None}
+        elif kind == "rec_stop" and row.get("replay"):
+            # A replay save is its own clip. While a recording is open it must
+            # not close that span — the real rec_stop is still coming, and
+            # closing here made the ribbon end the session at the replay and
+            # then count the same time again when the recording actually stopped.
+            if current is None:
+                duration = float(row.get("duration") or 0)
+                out.append({"game": row.get("game") or "Unknown",
+                            "start": ts - duration, "end": ts, "live": False,
+                            "gaps": [], "marks": [], "path": row.get("path"),
+                            "size": row.get("size")})
+            continue
         elif kind == "rec_stop":
             if current is None:
                 duration = float(row.get("duration") or 0)
@@ -243,6 +255,14 @@ def today():
             started = row.get("ts")
             live_gaps = 0.0
             idle_since = None
+        elif kind == "rec_stop" and row.get("replay") and started is not None:
+            # Inside a recording that is still going. Count the file, but not
+            # its duration: that time is already in the live wall clock, and
+            # clearing `started` here made the Recorded tile show only the
+            # replay's length.
+            clips += 1
+            bytes_written += int(row.get("size") or 0)
+            continue
         elif kind == "rec_stop":
             started = None
             live_gaps = 0.0

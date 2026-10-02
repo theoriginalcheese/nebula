@@ -332,8 +332,28 @@ class ReplayBuffer:
                 self.on_state(active)
 
     def target_dir(self, game=None):
-        root = self.config.get("recording_root", "")
-        return os.path.join(root, game or self._game or "Unsorted", self.subfolder)
+        # Recordings go through game_folder_under, which sanitises the name
+        # and refuses to leave the root. A raw join filed "Honkai: Star Rail"
+        # as a path Windows rejects, and filed ".." in the parent of the root.
+        # The subfolder is free text in Settings, so it gets the same treatment.
+        from .monitor import game_folder_under, sanitize_folder_name
+        root = (self.config.get("recording_root") or "").strip()
+        if not root:
+            return None
+        name = game or self._game or "Unsorted"
+        sub = sanitize_folder_name(self.subfolder)
+        if not sub or sub == "Unknown":
+            sub = "Replays"
+        folder = os.path.join(game_folder_under(root, name), sub)
+        root_abs = os.path.abspath(root)
+        try:
+            contained = os.path.commonpath(
+                [root_abs, os.path.abspath(folder)]) == root_abs
+        except ValueError:
+            contained = False
+        if not contained:
+            folder = os.path.join(game_folder_under(root, name), "Replays")
+        return folder
 
     def _file(self, source):
         """Move OBS's output into <recording_root>/<Game>/Replays/.
@@ -347,6 +367,9 @@ class ReplayBuffer:
             return None
         game = self._game or "Unsorted"
         folder = self.target_dir(game)
+        if not folder:
+            self.log("[Replay] No recording root set — left the file where OBS wrote it.")
+            return None
         stamp = time.strftime("%Y-%m-%d %H-%M-%S")
         target = os.path.join(folder, stamp + os.path.splitext(source)[1])
         try:
