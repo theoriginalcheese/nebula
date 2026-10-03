@@ -1,0 +1,570 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Nebula</title>
+<style>
+  /* LOCKED 2026-10-03. Anthony signed this dialog off.
+     Do not restyle it, retune the motion, or change the copy.
+     design/update-window/LOCKED.txt */
+  /* Values are the inline styles and keyframes in
+     design/update-window/Nebula Update Window.dc.html.
+     This page is only the update window. */
+  html, body {
+    margin: 0;
+    width: 440px;
+    height: 188px;
+    overflow: hidden;
+    background: radial-gradient(140% 120% at 50% 0%, #100D1C 0%, #0A0812 62%);
+  }
+  @keyframes uw-drift-a {
+    from { transform: translate3d(0, 0, 0) scale(1); }
+    to { transform: translate3d(6%, 4%, 0) scale(1.14); }
+  }
+  @keyframes uw-drift-b {
+    from { transform: translate3d(0, 0, 0) scale(1.08); }
+    to { transform: translate3d(-7%, -3%, 0) scale(1); }
+  }
+  @keyframes uw-drift-c {
+    from { transform: translate3d(0, 0, 0); }
+    to { transform: translate3d(-4%, 6%, 0) scale(1.1); }
+  }
+  @keyframes uw-wind {
+    0% { transform: translate3d(0, 0, 0); }
+    100% { transform: translate3d(-24px, -50%, 0); }
+  }
+  @keyframes uw-twinkle {
+    0%, 100% { opacity: calc(var(--o) * .25); }
+    50% { opacity: var(--o); }
+  }
+  @keyframes uw-band {
+    0% { transform: translate3d(-140%, 0, 0) rotate(-18deg); }
+    100% { transform: translate3d(240%, 0, 0) rotate(-18deg); }
+  }
+  @keyframes uw-breathe {
+    0%, 100% { opacity: .55; transform: scale(1); }
+    50% { opacity: 1; transform: scale(1.06); }
+  }
+  @keyframes uw-orbit {
+    to { transform: rotate(336deg); }
+  }
+  @keyframes uw-sweep {
+    0% { transform: translateX(-100%); }
+    100% { transform: translateX(260%); }
+  }
+  @keyframes uw-dot {
+    0%, 100% { opacity: .95; transform: scale(1); }
+    50% { opacity: .35; transform: scale(.8); }
+  }
+  @keyframes uw-in {
+    from { opacity: 0; transform: translateY(4px); }
+    to { opacity: 1; transform: none; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    * { animation-play-state: paused !important; }
+  }
+  /* Screenshot frame only (?frame=1). The packaged window is the 440×188 dialog. */
+  html.frame, html.frame body {
+    width: 100%;
+    height: 100%;
+    min-height: 100vh;
+    overflow: visible;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  html.frame .win {
+    transform: scale(2);
+    transform-origin: center center;
+  }
+  /* The 2x frame is a screenshot scale. The leave is scale(.97) on top of it,
+     same as the design wrapper, and must not replace the frame scale. */
+  html.frame .win.is-gone {
+    transform: translateY(6px) scale(1.94);
+  }
+
+  .win {
+    box-sizing: border-box;
+    width: 440px;
+    height: 188px;
+    padding: 5px;
+    border-radius: 22px;
+    background: rgba(245, 243, 255, 0.035);
+    box-shadow:
+      inset 0 0 0 1px rgba(245, 243, 255, 0.06),
+      0 18px 40px -18px rgb(0 0 0 / .7);
+    backdrop-filter: blur(18px);
+    -webkit-backdrop-filter: blur(18px);
+    opacity: 1;
+    transform: none;
+    transition:
+      opacity 700ms cubic-bezier(.32, .72, 0, 1),
+      transform 700ms cubic-bezier(.32, .72, 0, 1);
+    font-family: "Segoe UI Variable Text", "Segoe UI Variable", "Segoe UI", system-ui, sans-serif;
+    color: #F5F3FF;
+  }
+  .win.is-gone {
+    opacity: 0;
+    transform: scale(.97) translateY(6px);
+  }
+  .core {
+    position: relative;
+    isolation: isolate;
+    width: 100%;
+    height: 100%;
+    border-radius: 17px;
+    background: #181428;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+  }
+  .aurora, .fade, .band {
+    position: absolute;
+    pointer-events: none;
+  }
+  .aurora {
+    inset: 0;
+    background:
+      radial-gradient(60% 90% at 78% 22%, rgb(139 124 246 / .20), transparent 72%),
+      radial-gradient(62% 95% at 24% 92%, rgb(64 46 160 / .30), transparent 72%),
+      radial-gradient(34% 50% at 96% 96%, rgb(255 92 122 / .06), transparent 72%);
+  }
+  .band {
+    display: none;
+    top: -40%;
+    left: 0;
+    width: 30%;
+    height: 180%;
+    background: linear-gradient(90deg, transparent, rgb(139 124 246 / .08) 50%, transparent);
+    animation: uw-band 16s cubic-bezier(.45, 0, .55, 1) infinite;
+  }
+  .win[data-stage="waiting"] .band,
+  .win[data-stage="replacing"] .band,
+  .win[data-stage="starting"] .band {
+    display: block;
+  }
+  .dust {
+    position: absolute;
+    border-radius: 50%;
+    background: #F5F3FF;
+    pointer-events: none;
+  }
+  .fade {
+    inset: 0;
+    background: linear-gradient(90deg, rgb(24 20 40 / .55) 0%, rgb(24 20 40 / .15) 55%, transparent 100%);
+  }
+  .head, .body {
+    position: relative;
+    z-index: 1;
+  }
+  .head {
+    flex: 0 0 32px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 8px 0 14px;
+  }
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 11.5px;
+    color: #9A93C4;
+  }
+  .mark {
+    position: relative;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: radial-gradient(closest-side, rgb(139 124 246 / .32), transparent 70%);
+  }
+  .win[data-stage="failed"] .mark {
+    background: radial-gradient(closest-side, rgb(255 92 122 / .25), transparent 70%);
+  }
+  .orbit {
+    position: absolute;
+    inset: 0;
+    animation: uw-orbit 2.4s linear infinite;
+    animation-play-state: paused;
+  }
+  .win[data-stage="waiting"] .orbit,
+  .win[data-stage="replacing"] .orbit,
+  .win[data-stage="starting"] .orbit {
+    animation-play-state: running;
+  }
+  .ring {
+    position: absolute;
+    inset: 3px 0;
+    border-radius: 50%;
+    border: 1px solid #B9AEF9;
+    transform: rotate(-24deg);
+  }
+  .win[data-stage="failed"] .ring {
+    border-color: #FF5C7A;
+  }
+  .planet {
+    position: absolute;
+    left: 0;
+    top: 5px;
+    width: 3px;
+    height: 3px;
+    border-radius: 50%;
+    background: #B9AEF9;
+    box-shadow: 0 0 4px #B9AEF9;
+  }
+  .win[data-stage="failed"] .planet {
+    background: #FF5C7A;
+    box-shadow: 0 0 4px #FF5C7A;
+  }
+  .nucleus {
+    position: absolute;
+    left: 5px;
+    top: 5px;
+    width: 4px;
+    height: 4px;
+    border-radius: 50%;
+    background: #F5F3FF;
+  }
+  .close {
+    width: 26px;
+    height: 22px;
+    display: grid;
+    place-items: center;
+    border: 0;
+    padding: 0;
+    border-radius: 7px;
+    background: transparent;
+    font-family: inherit;
+    font-size: 10px;
+    line-height: 1;
+    color: #9A93C4;
+    cursor: pointer;
+  }
+  .close:hover {
+    background: rgb(245 243 255 / .07);
+    color: #F5F3FF;
+  }
+  .body {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    padding: 0 20px 14px;
+  }
+  .title {
+    font-size: 15px;
+    font-weight: 500;
+  }
+  .bar {
+    margin-top: 12px;
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 4px;
+  }
+  .seg {
+    position: relative;
+    height: 4px;
+    border-radius: 2px;
+    overflow: hidden;
+    background: rgb(245 243 255 / .08);
+    box-shadow: none;
+    transition:
+      background 600ms cubic-bezier(.32, .72, 0, 1),
+      box-shadow 600ms cubic-bezier(.32, .72, 0, 1);
+  }
+  .sweep {
+    display: none;
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    width: 40%;
+    background: linear-gradient(90deg, transparent, #8B7CF6 45%, #B9AEF9 55%, transparent);
+    animation: uw-sweep 1.6s cubic-bezier(.45, 0, .55, 1) infinite;
+  }
+  .win[data-stage="replacing"] .seg:nth-child(1),
+  .win[data-stage="starting"] .seg:nth-child(-n+2),
+  .win[data-stage="done"] .seg {
+    background: #8B7CF6;
+    box-shadow: 0 0 8px rgb(139 124 246 / .55);
+  }
+  .win[data-stage="waiting"] .seg:nth-child(1),
+  .win[data-stage="replacing"] .seg:nth-child(2),
+  .win[data-stage="starting"] .seg:nth-child(3) {
+    background: rgb(139 124 246 / .22);
+    box-shadow: none;
+  }
+  .win[data-stage="waiting"] .seg:nth-child(1) .sweep,
+  .win[data-stage="replacing"] .seg:nth-child(2) .sweep,
+  .win[data-stage="starting"] .seg:nth-child(3) .sweep {
+    display: block;
+  }
+  .win[data-stage="failed"] .seg {
+    background: rgb(255 92 122 / .45);
+    box-shadow: none;
+  }
+  .win[data-stage="cancelled"] .seg {
+    background: rgb(245 243 255 / .08);
+    box-shadow: none;
+  }
+  .row {
+    margin-top: 12px;
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+  }
+  .live {
+    min-width: 0;
+    padding-top: 7px;
+  }
+  .status-line {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+  }
+  .dot {
+    display: block;
+    flex: 0 0 auto;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: #8B7CF6;
+    box-shadow: 0 0 6px #8B7CF6;
+    animation: uw-dot 1.9s cubic-bezier(.32, .72, 0, 1) infinite;
+    animation-play-state: paused;
+  }
+  .win[data-stage="waiting"] .dot,
+  .win[data-stage="replacing"] .dot,
+  .win[data-stage="starting"] .dot {
+    animation-play-state: running;
+  }
+  .win[data-stage="cancelled"] .dot {
+    background: #8B84B8;
+    box-shadow: 0 0 6px #8B84B8;
+  }
+  .win[data-stage="failed"] .dot {
+    background: #FF5C7A;
+    box-shadow: 0 0 6px #FF5C7A;
+  }
+  .status {
+    font-size: 12.5px;
+    color: #9A93C4;
+    white-space: nowrap;
+    animation: uw-in 420ms cubic-bezier(.32, .72, 0, 1) both;
+  }
+  .win[data-stage="done"] .status,
+  .win[data-stage="failed"] .status {
+    color: #F5F3FF;
+  }
+  .sub {
+    display: none;
+    margin-top: 2px;
+    margin-left: 13px;
+    font-size: 11.5px;
+    color: #9A93C4;
+    animation: uw-in 420ms cubic-bezier(.32, .72, 0, 1) 120ms both;
+  }
+  .win[data-stage="failed"] .sub,
+  .win[data-stage="cancelled"] .sub {
+    display: block;
+  }
+  .act {
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    height: 30px;
+    padding: 0 14px;
+    border-radius: 999px;
+    border: 1px solid rgb(245 243 255 / .12);
+    background: transparent;
+    font-family: inherit;
+    font-size: 12px;
+    color: #F5F3FF;
+    outline: 2px solid #8B7CF6;
+    outline-offset: 2px;
+    cursor: pointer;
+    opacity: 1;
+    visibility: visible;
+    transition:
+      opacity 500ms cubic-bezier(.32, .72, 0, 1),
+      background 500ms cubic-bezier(.32, .72, 0, 1);
+  }
+  .act:hover:not(:disabled) {
+    background: rgb(245 243 255 / .06);
+  }
+  .act:disabled {
+    cursor: pointer;
+  }
+  .win[data-stage="replacing"] .act,
+  .win[data-stage="starting"] .act {
+    opacity: .45;
+  }
+  .win[data-stage="done"] .act {
+    visibility: hidden;
+  }
+</style>
+</head>
+<body>
+  <div class="win" id="win" data-stage="waiting" role="dialog" aria-label="Updating Nebula">
+    <div class="core">
+      <div class="aurora" aria-hidden="true"></div>
+      <div class="band" aria-hidden="true"></div>
+      <div id="dust" aria-hidden="true"></div>
+      <div class="fade" aria-hidden="true"></div>
+      <div class="head">
+        <div class="brand">
+          <span class="mark" aria-hidden="true">
+            <span class="orbit">
+              <span class="ring"></span>
+              <span class="planet"></span>
+            </span>
+            <span class="nucleus"></span>
+          </span>
+          <span>Nebula</span>
+        </div>
+        <button type="button" class="close" id="close" aria-label="Close">✕</button>
+      </div>
+      <div class="body">
+        <div class="title">Updating Nebula…</div>
+        <div class="bar" aria-hidden="true">
+          <div class="seg"><div class="sweep"></div></div>
+          <div class="seg"><div class="sweep"></div></div>
+          <div class="seg"><div class="sweep"></div></div>
+        </div>
+        <div class="row">
+          <div class="live" aria-live="polite">
+            <div class="status-line">
+              <i class="dot" aria-hidden="true"></i>
+              <span class="status" id="status">Waiting for Nebula to close…</span>
+            </div>
+            <div class="sub" id="sub">The installed copy was not changed.</div>
+          </div>
+          <button type="button" class="act" id="act">Cancel</button>
+        </div>
+      </div>
+    </div>
+  </div>
+<script>
+(function () {
+  var COPY = {
+    waiting: "Waiting for Nebula to close…",
+    replacing: "Replacing Nebula.exe…",
+    starting: "Starting Nebula…",
+    done: "Updated. Opening Nebula…",
+    failed: "Couldn’t replace Nebula.exe.",
+    cancelled: "Update cancelled."
+  };
+  var LOCKED = { replacing: 1, starting: 1 };
+  var win = document.getElementById("win");
+  var statusEl = document.getElementById("status");
+  var subEl = document.getElementById("sub");
+  var act = document.getElementById("act");
+
+  function dustField() {
+    var seed = 17;
+    var r = function () {
+      seed = (seed * 16807) % 2147483647;
+      return seed / 2147483647;
+    };
+    var host = document.getElementById("dust");
+    var i;
+    for (i = 0; i < 30; i++) {
+      var x = r() * 100;
+      var y = r() * 100;
+      var big = r() < 0.16;
+      var o = (0.25 + r() * 0.55).toFixed(2);
+      var k1 = r();
+      var k3 = r();
+      var dot = document.createElement("i");
+      dot.className = "dust";
+      dot.style.left = x + "%";
+      dot.style.top = y + "%";
+      dot.style.width = (big ? 2.2 : 1.3) + "px";
+      dot.style.height = (big ? 2.2 : 1.3) + "px";
+      dot.style.setProperty("--o", o);
+      dot.style.boxShadow = big ? "0 0 4px rgb(245 243 255 / .6)" : "none";
+      dot.style.animation = "uw-twinkle " + (3 + k3 * 4).toFixed(1)
+        + "s ease-in-out " + (-k1 * 6).toFixed(1) + "s infinite";
+      host.appendChild(dot);
+    }
+  }
+
+  function restart(el) {
+    el.style.animation = "none";
+    void el.offsetWidth;
+    el.style.animation = "";
+  }
+
+  function setStage(stage) {
+    if (stage === "gone") {
+      win.classList.add("is-gone");
+      return;
+    }
+    if (!COPY[stage] || win.getAttribute("data-stage") === stage) {
+      win.classList.remove("is-gone");
+      return;
+    }
+    win.classList.remove("is-gone");
+    win.setAttribute("data-stage", stage);
+    statusEl.textContent = COPY[stage];
+    restart(statusEl);
+    if (stage === "failed" || stage === "cancelled") {
+      restart(subEl);
+    }
+    act.textContent = (stage === "failed" || stage === "cancelled") ? "Close" : "Cancel";
+    act.disabled = !!LOCKED[stage] || stage === "done";
+  }
+
+  function onAction() {
+    var stage = win.getAttribute("data-stage");
+    var api = window.pywebview && window.pywebview.api;
+    if (stage === "waiting") {
+      setStage("cancelled");
+      if (api && api.request_cancel) api.request_cancel();
+      return;
+    }
+    if ((stage === "failed" || stage === "cancelled") && api && api.request_close) {
+      api.request_close();
+    }
+  }
+
+  document.getElementById("act").addEventListener("click", onAction);
+  document.getElementById("close").addEventListener("click", onAction);
+  dustField();
+
+  window.nebulaUpdate = {
+    setStage: setStage,
+    seek: function (ms) {
+      document.getAnimations().forEach(function (anim) {
+        anim.currentTime = ms;
+        anim.pause();
+      });
+    }
+  };
+
+  var params = new URLSearchParams(
+    (location.hash && location.hash.slice(1)) || location.search.slice(1));
+  var held = params.get("stage");
+  if (params.get("frame") === "1") document.documentElement.classList.add("frame");
+  if (held === "gone") {
+    setStage("done");
+    setStage("gone");
+  } else if (held) {
+    setStage(held);
+  }
+
+  function connect() {
+    if (held) return;
+    var api = window.pywebview && window.pywebview.api;
+    if (api && api.ready) {
+      api.ready();
+      return;
+    }
+    setTimeout(connect, 30);
+  }
+  connect();
+})();
+</script>
+</body>
+</html>

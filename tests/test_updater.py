@@ -30,8 +30,8 @@ check("ssh auth detects publickey", updater_mod._ssh_auth_failed_text(
 check("ssh auth ignores unrelated", not updater_mod._ssh_auth_failed_text(
     "Already up to date."))
 
-# install helper writes a wait-copy-relaunch script (frozen path only — we
-# exercise the file shape without claiming to be frozen).
+# Packaged update copies this exe aside and starts it with --apply-update
+# (frozen path only — we exercise the launch shape without a real window).
 import tempfile
 from unittest import mock
 
@@ -54,13 +54,18 @@ try:
          mock.patch.object(updater_mod.sys, "executable", dst), \
          mock.patch("subprocess.Popen") as popen:
         helper_path = updater_mod.install_and_relaunch(src, target_path=dst, pid=1)
-        check("helper written", os.path.isfile(helper_path), helper_path)
-        check("helper is python", helper_path.endswith(".py"), helper_path)
-        body = open(helper_path, encoding="utf-8").read()
-        check("helper waits on pid", "OpenProcess" in body)
-        check("helper copies update", "shutil.copyfile" in body)
-        check("helper relaunches", "Popen([target]" in body or "Popen([target," in body)
-        check("helper spawned", popen.called)
+        check("updater copy written", os.path.isfile(helper_path), helper_path)
+        check("updater copy is an exe", helper_path.endswith("_nebula_updater.exe"),
+              helper_path)
+        check("updater spawned", popen.called)
+        spawned = popen.call_args[0][0]
+        check("spawn is the updater exe", spawned[0] == helper_path, spawned)
+        check("spawn asks for the update window",
+              "--apply-update" in spawned and "--source" in spawned
+              and src in spawned, spawned)
+        env = popen.call_args.kwargs.get("env") or {}
+        check("updater resets the pyinstaller unpack dir",
+              env.get("PYINSTALLER_RESET_ENVIRONMENT") == "1", env)
 except Exception as exc:
     check("install_and_relaunch", False, str(exc))
 finally:
@@ -74,6 +79,174 @@ finally:
         os.rmdir(tmpdir)
     except OSError:
         pass
+
+# The swap itself, with no window: a dead pid, and a cancel while the app
+# is still open.
+import shutil
+import subprocess
+
+from obsauto.update_apply import apply_downloaded_exe
+
+swap_dir = tempfile.mkdtemp(prefix="nebula-apply-")
+try:
+    new_exe = os.path.join(swap_dir, "Nebula-update.exe")
+    old_exe = os.path.join(swap_dir, "Nebula.exe")
+    with open(new_exe, "wb") as fh:
+        fh.write(b"updated-bytes")
+    with open(old_exe, "wb") as fh:
+        fh.write(b"old-bytes")
+    stages = []
+    apply_downloaded_exe(
+        old_exe, new_exe, pid=0, launch=False,
+        on_status=lambda text, pct: stages.append((text, pct)))
+    with open(old_exe, "rb") as fh:
+        swapped = fh.read()
+    check("swap writes the download", swapped == b"updated-bytes", swapped)
+    check("swap removes the download", not os.path.exists(new_exe))
+    check("swap reports the real steps",
+          [text for text, _pct in stages][:4] == [
+              "Waiting for Nebula to close…",
+              "Replacing Nebula…",
+              "Verifying the new file…",
+              "Starting Nebula…",
+          ], stages)
+    check("swap leaves no staged copy", not os.path.exists(old_exe + ".new"))
+
+    kept_bytes = open(old_exe, "rb").read()
+    again = os.path.join(swap_dir, "again.exe")
+    with open(again, "wb") as fh:
+        fh.write(b"another-download")
+    with mock.patch("obsauto.update_apply.os.replace", side_effect=OSError("denied")), \
+         mock.patch("obsauto.update_apply._spawn") as spawn:
+        replace_error = ""
+        try:
+            apply_downloaded_exe(old_exe, again, pid=0, launch=True)
+        except RuntimeError as exc:
+            replace_error = str(exc)
+    with open(old_exe, "rb") as fh:
+        after = fh.read()
+    check("failed replace keeps the installed exe",
+          after == kept_bytes and "not changed" in replace_error
+          and "opening again" in replace_error, replace_error or after)
+    check("failed replace opens Nebula again", spawn.called)
+    check("failed replace removes the staged copy",
+          not os.path.exists(old_exe + ".new"))
+
+    kept = os.path.join(swap_dir, "kept.exe")
+    fresh = os.path.join(swap_dir, "fresh.exe")
+    with open(kept, "wb") as fh:
+        fh.write(b"keep-me")
+    with open(fresh, "wb") as fh:
+        fh.write(b"do-not-copy")
+    cancel = __import__("threading").Event()
+
+    def _cancel_on_wait(text, _pct):
+        if text.startswith("Waiting"):
+            cancel.set()
+
+    raised = ""
+    try:
+        apply_downloaded_exe(
+            kept, fresh, pid=os.getpid(), launch=False,
+            on_status=_cancel_on_wait, cancel=cancel)
+    except RuntimeError as exc:
+        raised = str(exc)
+    with open(kept, "rb") as fh:
+        still = fh.read()
+    check("cancel leaves the exe alone", still == b"keep-me" and "cancelled" in raised,
+          raised or still)
+    check("cancel keeps the download", os.path.isfile(fresh))
+finally:
+    shutil.rmtree(swap_dir, ignore_errors=True)
+
+_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+# The dialog shows the design's stages. Verifying stays on replacing:
+# the bar has three segments, and the hash check is part of that step.
+from obsauto.update_apply import stage_for_status
+
+check("stage waiting",
+      stage_for_status("Waiting for Nebula to close…") == "waiting")
+check("stage replacing",
+      stage_for_status("Replacing Nebula…") == "replacing")
+check("stage verify is still replacing",
+      stage_for_status("Verifying the new file…") == "replacing")
+check("stage starting",
+      stage_for_status("Starting Nebula…") == "starting")
+check("stage cancelled",
+      stage_for_status(
+          "Update cancelled. Nebula was not changed.") == "cancelled")
+check("stage failed",
+      stage_for_status(
+          "Couldn't replace Nebula.exe (denied). "
+          "The installed copy was not changed.") == "failed")
+
+_page = os.path.join(_root, "spike", "web", "update.html")
+_html = open(_page, encoding="utf-8").read()
+for _needle in (
+        "Waiting for Nebula to close…",
+        "Replacing Nebula.exe…",
+        "Starting Nebula…",
+        "Updated. Opening Nebula…",
+        "Couldn\u2019t replace Nebula.exe.",
+        "Update cancelled.",
+        "The installed copy was not changed.",
+        "Updating Nebula…",
+        "@keyframes uw-drift-a",
+        "@keyframes uw-drift-b",
+        "@keyframes uw-drift-c",
+        "@keyframes uw-wind",
+        "@keyframes uw-twinkle",
+        "@keyframes uw-band",
+        "@keyframes uw-breathe",
+        "@keyframes uw-orbit",
+        "@keyframes uw-sweep",
+        "@keyframes uw-dot",
+        "@keyframes uw-in",
+        "700ms cubic-bezier(.32, .72, 0, 1)",
+        "600ms cubic-bezier(.32, .72, 0, 1)",
+        "500ms cubic-bezier(.32, .72, 0, 1)",
+        "420ms cubic-bezier(.32, .72, 0, 1)",
+        "animation-play-state: paused !important",
+        "#FF5C7A",
+):
+    check("update page has %s" % _needle[:32], _needle in _html, _needle)
+_spec = open(os.path.join(_root, "nebula-v4.spec"), encoding="utf-8").read()
+check("update page is in the v4 bundle", '"update.html"' in _spec)
+
+# The window has to actually come up, swap, and close. A subprocess so a
+# stuck message pump cannot hang this file.
+try:
+    _win = subprocess.run(
+        [sys.executable, "-c", """
+import os, sys, tempfile, shutil
+sys.path.insert(0, %r)
+from obsauto.update_apply import run_apply_window
+d = tempfile.mkdtemp(prefix="nebula-win-")
+src = os.path.join(d, "Nebula-update.exe")
+dst = os.path.join(d, "Nebula.exe")
+open(src, "wb").write(b"NEW-BYTES")
+open(dst, "wb").write(b"OLD")
+try:
+    run_apply_window(dst, src, pid=0, launch=False)
+    got = open(dst, "rb").read()
+    assert got == b"NEW-BYTES", got
+    assert not os.path.exists(src)
+    print("WINDOW_OK")
+finally:
+    shutil.rmtree(d, ignore_errors=True)
+""" % _root],
+        capture_output=True, text=True, timeout=20)
+    check("update window swaps and closes",
+          _win.returncode == 0 and "WINDOW_OK" in _win.stdout
+          and "WINDOW_READY" in _win.stdout,
+          (_win.stderr or _win.stdout or "")[-500:])
+except subprocess.TimeoutExpired:
+    check("update window swaps and closes", False, "timed out")
+
+with mock.patch.object(sys, "argv", [sys.argv[0], "--apply-update"]):
+    from spike.app import main as _spike_main
+    check("apply-update exits before the app", _spike_main() == 0)
 
 
 # --- Save / Load on a throwaway pair of clones --------------------------------

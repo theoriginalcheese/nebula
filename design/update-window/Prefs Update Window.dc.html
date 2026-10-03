@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="_ds/nocturne-ca27441c-01cc-44a6-99a7-7317fdeecd65/styles.css">
+<script src="_ds/nocturne-ca27441c-01cc-44a6-99a7-7317fdeecd65/_ds_bundle.js"></script>
+<style>
+body{margin:0;background:#0A0812}
+a{color:#B9AEF9}a:hover{color:#F5F3FF}
+</style>
+</helmet>
+<div style="min-height:100vh;background:#0A0812;font-family:'Segoe UI Variable Text','Segoe UI Variable','Segoe UI',system-ui,sans-serif;color:#F5F3FF">
+
+  <div style="position:sticky;top:0;z-index:5;background:rgb(10 8 18 / .94);backdrop-filter:blur(14px);box-shadow:inset 0 -1px 0 rgb(245 243 255 / .07)">
+    <div style="max-width:1960px;margin:0 auto;padding:12px 32px;display:flex;flex-wrap:wrap;align-items:center;gap:12px 24px">
+      <span style="font-family:'Cascadia Mono','Cascadia Code',ui-monospace,monospace;font-size:13px;color:#F5F3FF">~/prefs-update-window</span>
+      <span style="font-family:'Cascadia Mono','Cascadia Code',ui-monospace,monospace;font-size:12px;color:#9A93C4">liked {{ counts.like }} · noped {{ counts.nope }} · undecided {{ counts.und }} · open {{ counts.open }}</span>
+      <span style="flex:1;min-width:0;font-family:'Cascadia Mono','Cascadia Code',ui-monospace,monospace;font-size:12px;color:#736BA4">L N U vote · J K move</span>
+      <div style="display:flex;gap:8px">
+        <button onClick="{{ openExport }}" style="height:36px;padding:0 14px;border-radius:999px;border:0;background:rgb(139 124 246 / .14);box-shadow:inset 0 0 0 1px rgb(139 124 246 / .4);color:#F5F3FF;font-family:inherit;font-size:13px;font-weight:500;cursor:pointer;transition:background 500ms cubic-bezier(.32,.72,0,1)" style-hover="background:rgb(139 124 246 / .24)">Export picks</button>
+        <button onClick="{{ reset }}" style="height:36px;padding:0 14px;border-radius:999px;border:0;background:transparent;box-shadow:inset 0 0 0 1px rgb(245 243 255 / .14);color:#9A93C4;font-family:inherit;font-size:13px;cursor:pointer;transition:background 500ms cubic-bezier(.32,.72,0,1)" style-hover="background:rgb(245 243 255 / .06);color:#F5F3FF">Reset</button>
+      </div>
+    </div>
+  </div>
+
+  <div style="max-width:1960px;margin:0 auto;padding:32px 32px 80px;display:flex;flex-direction:column;gap:36px">
+
+    <div style="display:flex;flex-direction:column;gap:8px">
+      <span style="font-size:14px;color:#F5F3FF;text-wrap:pretty">These are drawn directions for one window: the one Nebula shows after it closes to replace its own exe. Steam is the behaviour reference only.</span>
+      <span style="font-size:13px;color:#9A93C4;text-wrap:pretty">CURRENT is the layout shipping now, recoloured. TRIAL is a different composition. Every window is 440×188 with the same shell, core and copy, drawn at 2×.</span>
+    </div>
+
+    <sc-if value="{{ exportShown }}" hint-placeholder-val="{{ false }}">
+      <div style="display:flex;flex-direction:column;gap:12px;padding:20px;border-radius:16px;background:rgb(16 13 28 / .98);box-shadow:inset 0 0 0 1px rgb(245 243 255 / .075)">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:12px">
+          <span style="font-size:14px;font-weight:600">{{ exportStatus }}</span>
+          <button onClick="{{ closeExport }}" style="height:32px;padding:0 12px;border-radius:999px;border:0;background:transparent;box-shadow:inset 0 0 0 1px rgb(245 243 255 / .14);color:#9A93C4;font-family:inherit;font-size:12px;cursor:pointer">close</button>
+        </div>
+        <textarea readOnly="{{ yes }}" onFocus="{{ selectAll }}" onKeyDown="{{ stop }}" value="{{ exportText }}" style="min-height:220px;resize:vertical;padding:12px;border-radius:10px;border:0;background:#0A0812;box-shadow:inset 0 0 0 1px rgb(245 243 255 / .1);color:#F5F3FF;font-family:'Cascadia Mono','Cascadia Code',ui-monospace,monospace;font-size:12px;line-height:1.6"></textarea>
+        <label style="display:flex;flex-direction:column;gap:6px">
+          <span style="font-size:11px;font-weight:600;letter-spacing:.18em;text-transform:uppercase;color:#9A93C4">Notes</span>
+          <textarea value="{{ freeNotes }}" onChange="{{ onFreeNotes }}" onKeyDown="{{ stop }}" placeholder="Goes under NOTES in the export" style="min-height:72px;resize:vertical;padding:10px 12px;border-radius:10px;border:0;background:#0A0812;box-shadow:inset 0 0 0 1px rgb(245 243 255 / .1);color:#F5F3FF;font-family:inherit;font-size:13px"></textarea>
+        </label>
+      </div>
+    </sc-if>
+
+    <div style="display:flex;flex-direction:column;gap:16px">
+      <div style="display:flex;align-items:baseline;gap:14px;flex-wrap:wrap">
+        <span style="font-family:'Cascadia Mono','Cascadia Code',ui-monospace,monospace;font-size:13px;color:#8B7CF6">S1</span>
+        <span style="font-size:20px;font-weight:500">Compositions</span>
+        <span style="font-size:13px;color:#9A93C4">one pick</span>
+      </div>
+      <div ref="{{ gridRef }}" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(min(940px,100%),1fr));gap:20px">
+        <sc-for list="{{ cards }}" as="c" hint-placeholder-count="6">
+          <div id="{{ c.domId }}" onClick="{{ c.focus }}" style="display:flex;flex-direction:column;gap:12px;padding:16px;border-radius:16px;background:rgb(245 243 255 / .025);box-shadow:inset 0 0 0 1px {{ c.ring }};transition:box-shadow 500ms cubic-bezier(.32,.72,0,1)">
+            <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+              <span style="font-family:'Cascadia Mono','Cascadia Code',ui-monospace,monospace;font-size:13px;color:#8B7CF6">{{ c.id }}</span>
+              <span style="flex:1;min-width:0;font-size:15px;font-weight:500">{{ c.title }}</span>
+              <span style="font-size:10px;font-weight:700;letter-spacing:.16em;padding:3px 7px;border-radius:5px;background:{{ c.badgeBg }};box-shadow:inset 0 0 0 1px {{ c.badgeBd }};color:#F5F3FF">{{ c.badge }}</span>
+            </div>
+            <span style="font-size:13px;line-height:1.5;color:#9A93C4;text-wrap:pretty">{{ c.line }}</span>
+
+            <div style="display:flex;flex-direction:column;gap:14px">
+              <sc-for list="{{ c.stills }}" as="s" hint-placeholder-count="2">
+                <div style="display:flex;flex-direction:column;gap:8px">
+                  <span style="font-size:10px;font-weight:700;letter-spacing:.16em;text-transform:uppercase;color:#736BA4">{{ s.label }}</span>
+                  <div style="display:flex;justify-content:center;padding:28px;min-width:0;border-radius:12px;background:radial-gradient(120% 140% at 50% 0%,#100D1C 0%,#0A0812 70%);box-shadow:inset 0 0 0 1px rgb(245 243 255 / .05)">
+                    <div style="width:{{ boxW }};height:{{ boxH }};flex:0 0 auto">
+                      <div style="width:440px;height:188px;transform:{{ scaleT }};transform-origin:0 0;box-sizing:border-box;padding:5px;border-radius:22px;background:rgba(245,243,255,0.035);box-shadow:inset 0 0 0 1px rgba(245,243,255,0.06),0 18px 40px -18px rgb(0 0 0 / .7)">
+                        <div style="position:relative;width:100%;height:100%;border-radius:17px;background:#181428;overflow:hidden;display:flex;flex-direction:column">
+
+                          <sc-if value="{{ c.isRow }}" hint-placeholder-val="{{ false }}">
+                            <div style="flex:0 0 32px;display:flex;align-items:center;justify-content:space-between;padding:0 8px 0 16px">
+                              <div style="display:flex;align-items:center;gap:8px">
+                                <span style="position:relative;width:12px;height:12px;border-radius:50%;background:radial-gradient(closest-side,rgb(139 124 246 / .3),transparent 70%)"><span style="position:absolute;inset:2px 0;border-radius:50%;border:1px solid #B9AEF9;transform:rotate(-24deg)"></span></span>
+                                <span style="font-size:11.5px;color:#9A93C4">Nebula</span>
+                              </div>
+                              <span style="width:26px;height:22px;display:grid;place-items:center;border-radius:7px;font-size:10px;color:#9A93C4">✕</span>
+                            </div>
+                            <div style="flex:1;display:flex;flex-direction:column;justify-content:center;padding:0 20px 14px">
+                              <div style="font-size:15px;font-weight:500">{{ s.heading }}</div>
+                              <div style="margin-top:12px;height:4px;border-radius:2px;background:{{ s.track }};overflow:hidden"><div style="width:{{ s.fill }};height:100%;border-radius:2px;background:#8B7CF6;box-shadow:0 0 8px rgb(139 124 246 / .6)"></div></div>
+                              <div style="margin-top:12px;display:flex;align-items:flex-start;justify-content:space-between;gap:12px">
+                                <div style="min-width:0;padding-top:7px">
+                                  <div style="font-size:12.5px;color:{{ s.statusC }}">{{ s.status }}</div>
+                                  <sc-if value="{{ s.failed }}" hint-placeholder-val="{{ false }}"><div style="margin-top:2px;font-size:11.5px;color:#9A93C4">{{ s.sub }}</div></sc-if>
+                                </div>
+                                <span style="flex:0 0 auto;display:inline-flex;align-items:center;height:30px;padding:0 14px;border-radius:999px;border:1px solid rgb(245 243 255 / .12);font-size:12px;color:#F5F3FF;outline:2px solid #8B7CF6;outline-offset:2px">{{ s.btn }}</span>
+                              </div>
+                            </div>
+                          </sc-if>
+
+                          <sc-if value="{{ c.isStack }}" hint-placeholder-val="{{ false }}">
+                            <div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:7px;padding:14px 40px;text-align:center">
+                              <span style="font-size:9.5px;font-weight:500;letter-spacing:.22em;color:#736BA4">UPDATING</span>
+                              <div style="font-size:15px;font-weight:500">{{ s.heading }}</div>
+                              <div style="width:260px;height:4px;border-radius:2px;background:{{ s.track }};overflow:hidden"><div style="width:{{ s.fill }};height:100%;border-radius:2px;background:#8B7CF6;box-shadow:0 0 8px rgb(139 124 246 / .6)"></div></div>
+                              <div>
+                                <div style="font-size:12.5px;color:{{ s.statusC }}">{{ s.status }}</div>
+                                <sc-if value="{{ s.failed }}" hint-placeholder-val="{{ false }}"><div style="margin-top:1px;font-size:11.5px;color:#9A93C4">{{ s.sub }}</div></sc-if>
+                              </div>
+                              <span style="display:inline-flex;align-items:center;height:26px;padding:0 14px;border-radius:999px;background:rgb(245 243 255 / .04);font-size:11.5px;color:#9A93C4;outline:2px solid #8B7CF6;outline-offset:2px">{{ s.btn }}</span>
+                            </div>
+                          </sc-if>
+
+                          <sc-if value="{{ c.isSplit }}" hint-placeholder-val="{{ false }}">
+                            <div style="flex:1;display:flex;align-items:center;gap:28px;padding:0 24px">
+                              <div style="flex:1;min-width:0;display:flex;flex-direction:column">
+                                <span style="font-size:9.5px;font-weight:500;letter-spacing:.22em;color:#736BA4">UPDATING</span>
+                                <div style="margin-top:6px;font-size:15px;font-weight:500">{{ s.heading }}</div>
+                                <div style="margin-top:4px;font-size:12.5px;color:{{ s.statusC }}">{{ s.status }}</div>
+                                <sc-if value="{{ s.failed }}" hint-placeholder-val="{{ false }}"><div style="margin-top:2px;font-size:11.5px;color:#9A93C4">{{ s.sub }}</div></sc-if>
+                                <div style="margin-top:14px;height:4px;border-radius:2px;background:{{ s.track }};overflow:hidden"><div style="width:{{ s.fill }};height:100%;border-radius:2px;background:#8B7CF6;box-shadow:0 0 8px rgb(139 124 246 / .6)"></div></div>
+                              </div>
+                              <span style="flex:0 0 auto;display:inline-flex;align-items:center;height:30px;padding:0 14px;border-radius:999px;border:1px solid rgb(245 243 255 / .12);font-size:12px;color:#F5F3FF;outline:2px solid #8B7CF6;outline-offset:2px">{{ s.btn }}</span>
+                            </div>
+                          </sc-if>
+
+                          <sc-if value="{{ c.isBand }}" hint-placeholder-val="{{ false }}">
+                            <div style="padding:22px 22px 0">
+                              <div style="display:flex;align-items:baseline;justify-content:space-between;gap:12px">
+                                <div style="font-size:15px;font-weight:500;white-space:nowrap">{{ s.heading }}</div>
+                                <div style="font-size:12.5px;color:{{ s.statusC }};white-space:nowrap">{{ s.status }}</div>
+                              </div>
+                              <sc-if value="{{ s.failed }}" hint-placeholder-val="{{ false }}"><div style="margin-top:3px;font-size:11.5px;color:#9A93C4;text-align:right">{{ s.sub }}</div></sc-if>
+                            </div>
+                            <div style="margin-top:16px;height:4px;background:{{ s.track }};overflow:hidden"><div style="width:{{ s.fill }};height:100%;background:#8B7CF6;box-shadow:0 0 8px rgb(139 124 246 / .6)"></div></div>
+                            <div style="flex:1"></div>
+                            <div style="margin:0 22px;height:1px;background:linear-gradient(90deg,transparent 0,rgb(245 243 255 / .08) 32px,rgb(245 243 255 / .08) calc(100% - 32px),transparent 100%)"></div>
+                            <div style="display:flex;justify-content:flex-end;padding:10px 22px 14px">
+                              <span style="display:inline-flex;align-items:center;height:30px;padding:0 14px;border-radius:999px;border:1px solid rgb(245 243 255 / .12);font-size:12px;color:#F5F3FF;outline:2px solid #8B7CF6;outline-offset:2px">{{ s.btn }}</span>
+                            </div>
+                          </sc-if>
+
+                          <sc-if value="{{ c.isQuiet }}" hint-placeholder-val="{{ false }}">
+                            <div style="flex:1;display:flex;flex-direction:column;justify-content:center;padding:0 26px">
+                              <span style="font-size:11px;color:#736BA4">{{ s.heading }}</span>
+                              <div style="margin-top:8px;display:flex;align-items:baseline;justify-content:space-between;gap:12px">
+                                <div style="font-size:15px;font-weight:500;color:#F5F3FF">{{ s.status }}</div>
+                                <span style="font-size:12.5px;color:#B9AEF9;padding:2px 4px;border-radius:4px;outline:2px solid #8B7CF6;outline-offset:2px">{{ s.btn }}</span>
+                              </div>
+                              <div style="margin-top:10px;height:2px;background:{{ s.track }};overflow:hidden"><div style="width:{{ s.fill }};height:100%;background:#8B7CF6;box-shadow:0 0 6px rgb(139 124 246 / .6)"></div></div>
+                              <sc-if value="{{ s.failed }}" hint-placeholder-val="{{ false }}"><div style="margin-top:8px;font-size:11.5px;color:#9A93C4">{{ s.sub }}</div></sc-if>
+                            </div>
+                          </sc-if>
+
+                          <sc-if value="{{ c.isMark }}" hint-placeholder-val="{{ false }}">
+                            <div style="flex:1;display:flex;align-items:center;gap:16px;padding:0 24px">
+                              <span style="position:relative;flex:0 0 36px;width:36px;height:36px;border-radius:50%;background:radial-gradient(closest-side,rgb(139 124 246 / .32),transparent 72%);filter:drop-shadow(0 0 6px rgb(139 124 246 / .45))"><span style="position:absolute;inset:7px 2px;border-radius:50%;border:2px solid #B9AEF9;transform:rotate(-24deg)"></span><span style="position:absolute;left:14px;top:14px;width:8px;height:8px;border-radius:50%;background:#F5F3FF"></span></span>
+                              <div style="flex:0 1 auto;min-width:0;display:inline-flex;flex-direction:column">
+                                <div style="font-size:15px;font-weight:500">{{ s.heading }}</div>
+                                <div style="margin-top:3px;font-size:12.5px;color:{{ s.statusC }}">{{ s.status }}</div>
+                                <sc-if value="{{ s.failed }}" hint-placeholder-val="{{ false }}"><div style="margin-top:2px;font-size:11.5px;color:#9A93C4">{{ s.sub }}</div></sc-if>
+                                <div style="margin-top:10px;height:4px;border-radius:2px;background:{{ s.track }};overflow:hidden"><div style="width:{{ s.fill }};height:100%;border-radius:2px;background:#8B7CF6;box-shadow:0 0 8px rgb(139 124 246 / .6)"></div></div>
+                              </div>
+                              <div style="flex:1"></div>
+                              <span style="flex:0 0 auto;display:inline-flex;align-items:center;height:30px;padding:0 14px;border-radius:999px;border:1px solid rgb(245 243 255 / .12);font-size:12px;color:#F5F3FF;outline:2px solid #8B7CF6;outline-offset:2px">{{ s.btn }}</span>
+                            </div>
+                          </sc-if>
+
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </sc-for>
+            </div>
+
+            <span style="font-family:'Cascadia Mono','Cascadia Code',ui-monospace,monospace;font-size:11.5px;color:#736BA4">{{ c.source }}</span>
+            <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px">
+              <sc-for list="{{ c.votes }}" as="v" hint-placeholder-count="3">
+                <button onClick="{{ v.onClick }}" style="height:44px;border-radius:10px;border:0;background:{{ v.bg }};box-shadow:inset 0 0 0 1px {{ v.bd }};color:{{ v.color }};font-family:inherit;font-size:12px;font-weight:700;letter-spacing:.14em;cursor:pointer;transition:background 500ms cubic-bezier(.32,.72,0,1),transform 120ms cubic-bezier(.32,.72,0,1)" style-active="transform:scale(.98)">{{ v.label }}</button>
+              </sc-for>
+            </div>
+            <input value="{{ c.note }}" onChange="{{ c.onNote }}" onKeyDown="{{ stop }}" placeholder="note" style="height:40px;padding:0 12px;border-radius:10px;border:0;background:#0A0812;box-shadow:inset 0 0 0 1px rgb(245 243 255 / .1);color:#F5F3FF;font-family:inherit;font-size:13px;outline:none" style-focus="box-shadow:inset 0 0 0 1px rgb(139 124 246 / .6)">
+          </div>
+        </sc-for>
+      </div>
+    </div>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script>
+const KEY = 'ajt_prefs_update_window_2026-10-02';
+const CARDS = [
+  ['U-ROW', 'Caption, heading, bar, status and button', 'Gives: the window that ships now, so nothing to relearn. Costs: a caption bar that only repeats the name.', 'CURRENT', 'Source: the structure of the window in obsauto/update_apply.py, recoloured into Nebula Deep', 'row'],
+  ['U-STACK', 'Centred column', 'Gives: a calm, centred poster. Costs: a taller read, and it fights the left-aligned rest of Nebula.', 'TRIAL', 'Source: trial composition · same parts and copy as U-ROW', 'stack'],
+  ['U-SPLIT', 'Words left, button right', 'Gives: the words read as one block, with the action set apart. Costs: the bar is shorter and reads as a detail.', 'TRIAL', 'Source: trial composition · same parts and copy as U-ROW', 'split'],
+  ['U-BAND', 'Top row, bleeding bar, button on a rule', 'Gives: the bar is unmistakable as a stage. Costs: the heading and status compete on one line.', 'TRIAL', 'Source: trial composition · same parts and copy as U-ROW', 'band'],
+  ['U-QUIET', 'One line, a 2px rule, a word', 'Gives: the lightest window, where the status is the whole message. Costs: Cancel as a plain word is a small target.', 'TRIAL', 'Source: trial composition · same parts and copy as U-ROW', 'quiet'],
+  ['U-MARK', 'Mark, words, pill', 'Gives: it reads as Nebula at once, even with no caption. Costs: the bar is only as wide as the text.', 'TRIAL', 'Source: trial composition · same parts and copy as U-ROW', 'mark']
+];
+const STILLS = [
+  { label: 'Waiting', failed: false, heading: 'Updating Nebula…', status: 'Waiting for Nebula to close…', sub: '', btn: 'Cancel', fill: '33%', track: 'rgb(245 243 255 / .08)', statusC: '#9A93C4' },
+  { label: 'Failed', failed: true, heading: 'Updating Nebula…', status: 'Couldn\u2019t replace Nebula.exe.', sub: 'The installed copy was not changed.', btn: 'Close', fill: '0%', track: 'rgb(255 92 122 / .45)', statusC: '#F5F3FF' }
+];
+const VB = { like: ['LIKE', '#8B7CF6', '#0A0812'], nope: ['NOPE', '#C9C4E6', '#0A0812'], undecided: ['UNDECIDED', '#3A3358', '#F5F3FF'] };
+class Component extends DCLogic {
+  state = { votes: {}, notes: {}, freeNotes: '', exportShown: false, exportStatus: '', cur: 0, scale: 2 };
+  gridRef = React.createRef();
+  componentDidMount() {
+    try { const d = JSON.parse(localStorage.getItem(KEY) || 'null'); if (d) this.setState({ votes: d.votes || {}, notes: d.notes || {}, freeNotes: d.freeNotes || '' }); } catch (e) {}
+    this.onKey = (e) => {
+      const t = e.target; if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      const k = e.key.toLowerCase();
+      if (k === 'j' || k === 'k') { e.preventDefault(); this.move(k === 'j' ? 1 : -1); }
+      else if (k === 'l') this.vote(CARDS[this.state.cur][0], 'like');
+      else if (k === 'n') this.vote(CARDS[this.state.cur][0], 'nope');
+      else if (k === 'u') this.vote(CARDS[this.state.cur][0], 'undecided');
+    };
+    window.addEventListener('keydown', this.onKey);
+    this.fit = () => {
+      const g = this.gridRef.current; const card = g && g.firstElementChild;
+      if (!card) return;
+      const s = Math.max(.5, Math.min(2, (card.clientWidth - 32 - 56) / 440));
+      if (Math.abs(s - this.state.scale) > .005) this.setState({ scale: s });
+    };
+    this.ro = new ResizeObserver(this.fit);
+    if (this.gridRef.current) this.ro.observe(this.gridRef.current);
+    this.fit();
+  }
+  componentWillUnmount() { window.removeEventListener('keydown', this.onKey); if (this.ro) this.ro.disconnect(); }
+  move(d) {
+    const cur = Math.max(0, Math.min(CARDS.length - 1, this.state.cur + d));
+    this.setState({ cur }, () => {
+      const el = document.getElementById('card-' + CARDS[cur][0]);
+      if (el) window.scrollTo({ top: el.getBoundingClientRect().top + window.scrollY - 80, behavior: 'smooth' });
+    });
+  }
+  save(patch) {
+    this.setState(patch, () => { try { localStorage.setItem(KEY, JSON.stringify({ votes: this.state.votes, notes: this.state.notes, freeNotes: this.state.freeNotes })); } catch (e) {} });
+  }
+  vote(id, k) {
+    const votes = { ...this.state.votes };
+    if (votes[id] === k) delete votes[id];
+    else {
+      if (k === 'like') CARDS.forEach(c => { if (votes[c[0]] === 'like') delete votes[c[0]]; });
+      votes[id] = k;
+    }
+    this.save({ votes });
+  }
+  exportText() {
+    const v = this.state.votes, n = this.state.notes;
+    const line = (c, unv) => `- ${c[0]} — ${c[1]}${unv ? ' (not voted)' : n[c[0]] ? ' · ' + n[c[0]] : ''}`;
+    const g = (a) => a.length ? a.join('\n') : '- none';
+    return `PREFS-UPDATE-WINDOW 2026-10-02\nLIKE:\n${g(CARDS.filter(c => v[c[0]] === 'like').map(c => line(c)))}\nNOPE:\n${g(CARDS.filter(c => v[c[0]] === 'nope').map(c => line(c)))}\nUNDECIDED:\n${g(CARDS.filter(c => !v[c[0]] || v[c[0]] === 'undecided').map(c => line(c, !v[c[0]])))}\nNOTES:\n${this.state.freeNotes || ''}`;
+  }
+  renderVals() {
+    const { votes, notes, cur } = this.state;
+    const counts = { like: 0, nope: 0, und: 0, open: 0 };
+    CARDS.forEach(c => { const x = votes[c[0]]; if (x === 'like') counts.like++; else if (x === 'nope') counts.nope++; else if (x === 'undecided') counts.und++; else counts.open++; });
+    const cards = CARDS.map(([id, title, line, badge, source, lay], i) => {
+      const mine = votes[id];
+      return {
+        id, title, line, badge, source, domId: 'card-' + id, note: notes[id] || '', stills: STILLS,
+        isRow: lay === 'row', isStack: lay === 'stack', isSplit: lay === 'split', isBand: lay === 'band', isQuiet: lay === 'quiet', isMark: lay === 'mark',
+        badgeBg: badge === 'CURRENT' ? 'rgb(139 124 246 / .22)' : 'transparent',
+        badgeBd: badge === 'CURRENT' ? 'transparent' : 'rgb(245 243 255 / .2)',
+        ring: mine === 'like' ? 'rgb(139 124 246 / .5)' : i === cur ? 'rgb(245 243 255 / .22)' : 'rgb(245 243 255 / .07)',
+        focus: () => { if (this.state.cur !== i) this.setState({ cur: i }); },
+        votes: ['like', 'nope', 'undecided'].map(k => ({ label: VB[k][0], bg: mine === k ? VB[k][1] : 'transparent', color: mine === k ? VB[k][2] : '#9A93C4', bd: mine === k ? 'transparent' : 'rgb(245 243 255 / .14)', onClick: () => this.vote(id, k) })),
+        onNote: (e) => this.save({ notes: { ...this.state.notes, [id]: e.target.value } })
+      };
+    });
+    const exportText = this.exportText();
+    return {
+      gridRef: this.gridRef, boxW: 440 * this.state.scale + 'px', boxH: 188 * this.state.scale + 'px', scaleT: `scale(${this.state.scale})`,
+      cards, counts, yes: true, exportText, exportShown: this.state.exportShown, exportStatus: this.state.exportStatus,
+      freeNotes: this.state.freeNotes, onFreeNotes: (e) => this.save({ freeNotes: e.target.value }),
+      stop: (e) => e.stopPropagation(), selectAll: (e) => e.target.select(),
+      reset: () => this.save({ votes: {}, notes: {}, freeNotes: '', exportShown: false }),
+      openExport: async () => {
+        let ok = false; try { await navigator.clipboard.writeText(exportText); ok = true; } catch (e) {}
+        this.setState({ exportShown: true, exportStatus: ok ? 'Copied to clipboard' : 'Copy from the box below' });
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      },
+      closeExport: () => this.setState({ exportShown: false })
+    };
+  }
+}
+</script>
+</body>
+</html>

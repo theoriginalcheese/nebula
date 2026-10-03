@@ -1,0 +1,8 @@
+Locked 2026-10-03. Anthony looked at the live dialog and said it is done.
+
+Do not restyle it. Do not retune the motion. Do not change the copy.
+Do not rebuild it from Prefs Update Window.dc.html.
+
+The dialog is spike/web/update.html.
+The window is _UpdateWindow in obsauto/update_apply.py.
+tests/test_updater.py pins the copy, the keyframes, and the swap.

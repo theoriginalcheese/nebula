@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="_ds/nocturne-ca27441c-01cc-44a6-99a7-7317fdeecd65/styles.css">
+<script src="_ds/nocturne-ca27441c-01cc-44a6-99a7-7317fdeecd65/_ds_bundle.js"></script>
+<style>
+body{margin:0;background:#0A0812}
+a{color:#B9AEF9}a:hover{color:#F5F3FF}
+@keyframes uw-drift-a{from{transform:translate3d(0,0,0) scale(1)}to{transform:translate3d(6%,4%,0) scale(1.14)}}
+@keyframes uw-drift-b{from{transform:translate3d(0,0,0) scale(1.08)}to{transform:translate3d(-7%,-3%,0) scale(1)}}
+@keyframes uw-drift-c{from{transform:translate3d(0,0,0)}to{transform:translate3d(-4%,6%,0) scale(1.1)}}
+@keyframes uw-wind{0%{transform:translate3d(0,0,0)}100%{transform:translate3d(-24px,-50%,0)}}
+@keyframes uw-twinkle{0%,100%{opacity:calc(var(--o) * .25)}50%{opacity:var(--o)}}
+@keyframes uw-band{0%{transform:translate3d(-140%,0,0) rotate(-18deg)}100%{transform:translate3d(240%,0,0) rotate(-18deg)}}
+@keyframes uw-breathe{0%,100%{opacity:.55;transform:scale(1)}50%{opacity:1;transform:scale(1.06)}}
+@keyframes uw-orbit{to{transform:rotate(336deg)}}
+@keyframes uw-sweep{0%{transform:translateX(-100%)}100%{transform:translateX(260%)}}
+@keyframes uw-dot{0%,100%{opacity:.95;transform:scale(1)}50%{opacity:.35;transform:scale(.8)}}
+@keyframes uw-in{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+@media (prefers-reduced-motion: reduce){*{animation-play-state:paused !important}}
+</style>
+</helmet>
+<div style="min-height:100vh;position:relative;overflow:hidden;background:radial-gradient(140% 120% at 50% 0%,#100D1C 0%,#0A0812 62%);font-family:'Segoe UI Variable Text','Segoe UI Variable','Segoe UI',system-ui,sans-serif;color:#F5F3FF;display:flex;flex-direction:column">
+
+  <div style="position:relative;z-index:1;flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:40px;padding:48px 24px">
+
+    <div ref="{{ stageRef }}" style="position:relative;width:100%;max-width:960px;display:flex;justify-content:center">
+      <div style="position:relative;width:{{ boxW }};height:{{ boxH }};flex:0 0 auto;opacity:{{ winA }};transform:{{ winT }};transition:opacity 700ms cubic-bezier(.32,.72,0,1),transform 700ms cubic-bezier(.32,.72,0,1)">
+        <div role="dialog" aria-label="Updating Nebula" style="width:440px;height:188px;transform:{{ scaleT }};transform-origin:0 0;box-sizing:border-box;padding:5px;border-radius:22px;background:rgba(245,243,255,0.035);box-shadow:inset 0 0 0 1px rgba(245,243,255,0.06),0 18px 40px -18px rgb(0 0 0 / .7);backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px)">
+          <div style="position:relative;isolation:isolate;width:100%;height:100%;border-radius:17px;background:#181428;overflow:hidden;display:flex;flex-direction:column">
+            <div aria-hidden="true" style="position:absolute;inset:0;pointer-events:none;background:radial-gradient(60% 90% at 78% 22%,rgb(139 124 246 / .20),transparent 72%),radial-gradient(62% 95% at 24% 92%,rgb(64 46 160 / .30),transparent 72%),radial-gradient(34% 50% at 96% 96%,rgb(255 92 122 / .06),transparent 72%)"></div>
+            <sc-if value="{{ sweepOn }}" hint-placeholder-val="{{ true }}">
+              <div aria-hidden="true" style="position:absolute;top:-40%;left:0;width:30%;height:180%;background:linear-gradient(90deg,transparent,rgb(139 124 246 / .08) 50%,transparent);animation:uw-band 16s cubic-bezier(.45,0,.55,1) infinite;pointer-events:none"></div>
+            </sc-if>
+            <sc-for list="{{ dust }}" as="d" hint-placeholder-count="0">
+              <i aria-hidden="true" style="position:absolute;left:{{ d.x }};top:{{ d.y }};width:{{ d.s }};height:{{ d.s }};border-radius:50%;background:#F5F3FF;box-shadow:{{ d.glow }};animation:{{ d.anim }};--o:{{ d.o }};pointer-events:none"></i>
+            </sc-for>
+            <div aria-hidden="true" style="position:absolute;inset:0;pointer-events:none;background:linear-gradient(90deg,rgb(24 20 40 / .55) 0%,rgb(24 20 40 / .15) 55%,transparent 100%)"></div>
+
+            <div style="position:relative;z-index:1;flex:0 0 32px;display:flex;align-items:center;justify-content:space-between;padding:0 8px 0 14px">
+              <div style="display:flex;align-items:center;gap:8px">
+                <span style="position:relative;width:14px;height:14px;border-radius:50%;background:radial-gradient(closest-side,{{ markGlow }},transparent 70%)">
+                  <span style="position:absolute;inset:0;animation:uw-orbit 2.4s linear infinite;animation-play-state:{{ markPlay }}">
+                    <span style="position:absolute;inset:3px 0;border-radius:50%;border:1px solid {{ markRing }};transform:rotate(-24deg)"></span>
+                    <span style="position:absolute;left:0;top:5px;width:3px;height:3px;border-radius:50%;background:{{ markRing }};box-shadow:0 0 4px {{ markRing }}"></span>
+                  </span>
+                  <span style="position:absolute;left:5px;top:5px;width:4px;height:4px;border-radius:50%;background:#F5F3FF"></span>
+                </span>
+                <span style="font-size:11.5px;color:#9A93C4">Nebula</span>
+              </div>
+              <span style="width:26px;height:22px;display:grid;place-items:center;border-radius:7px;font-size:10px;color:#9A93C4;cursor:pointer" style-hover="background:rgb(245 243 255 / .07);color:#F5F3FF">✕</span>
+            </div>
+
+            <div style="position:relative;z-index:1;flex:1;display:flex;flex-direction:column;justify-content:center;padding:0 20px 14px">
+              <div style="font-size:15px;font-weight:500">Updating Nebula…</div>
+              <div style="margin-top:12px;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:4px">
+                <sc-for list="{{ segs }}" as="g" hint-placeholder-count="3">
+                  <div style="position:relative;height:4px;border-radius:2px;overflow:hidden;background:{{ g.bg }};box-shadow:{{ g.glow }};transition:background 600ms cubic-bezier(.32,.72,0,1),box-shadow 600ms cubic-bezier(.32,.72,0,1)">
+                    <sc-if value="{{ g.active }}" hint-placeholder-val="{{ false }}">
+                      <div style="position:absolute;top:0;bottom:0;left:0;width:40%;background:linear-gradient(90deg,transparent,#8B7CF6 45%,#B9AEF9 55%,transparent);animation:uw-sweep 1.6s cubic-bezier(.45,0,.55,1) infinite"></div>
+                    </sc-if>
+                  </div>
+                </sc-for>
+              </div>
+              <div style="margin-top:12px;display:flex;align-items:flex-start;justify-content:space-between;gap:12px">
+                <div aria-live="polite" style="min-width:0;padding-top:7px">
+                  <div style="display:flex;align-items:center;gap:7px">
+                    <i style="display:block;flex:0 0 auto;width:6px;height:6px;border-radius:50%;background:{{ dotC }};box-shadow:0 0 6px {{ dotC }};animation:uw-dot 1.9s cubic-bezier(.32,.72,0,1) infinite;animation-play-state:{{ dotPlay }}"></i>
+                    {{ statusEl }}
+                  </div>
+                  {{ subEl }}
+                </div>
+                <button onClick="{{ onButton }}" disabled="{{ btnDisabled }}" style="flex:0 0 auto;display:inline-flex;align-items:center;height:30px;padding:0 14px;border-radius:999px;border:1px solid rgb(245 243 255 / .12);background:transparent;font-family:inherit;font-size:12px;color:#F5F3FF;outline:2px solid #8B7CF6;outline-offset:2px;cursor:pointer;opacity:{{ btnA }};visibility:{{ btnVis }};transition:opacity 500ms cubic-bezier(.32,.72,0,1),background 500ms cubic-bezier(.32,.72,0,1)" style-hover="background:rgb(245 243 255 / .06)">{{ btnLabel }}</button>
+              </div>
+            </div>
+
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div style="display:flex;flex-direction:column;align-items:center;gap:14px;max-width:960px;width:100%">
+      <div style="display:flex;flex-wrap:wrap;justify-content:center;gap:6px">
+        <sc-for list="{{ stageChips }}" as="s" hint-placeholder-count="6">
+          <button onClick="{{ s.go }}" style="height:30px;padding:0 12px;border-radius:999px;border:0;background:{{ s.bg }};box-shadow:inset 0 0 0 1px {{ s.bd }};color:{{ s.color }};font-family:inherit;font-size:12px;cursor:pointer;transition:background 500ms cubic-bezier(.32,.72,0,1)">{{ s.label }}</button>
+        </sc-for>
+      </div>
+      <div style="display:flex;flex-wrap:wrap;justify-content:center;gap:8px">
+        <sc-for list="{{ paths }}" as="p" hint-placeholder-count="2">
+          <button onClick="{{ p.go }}" style="height:36px;padding:0 14px;border-radius:999px;border:0;background:{{ p.bg }};box-shadow:inset 0 0 0 1px {{ p.bd }};color:#F5F3FF;font-family:inherit;font-size:13px;cursor:pointer;transition:background 500ms cubic-bezier(.32,.72,0,1)">{{ p.label }}</button>
+        </sc-for>
+        <button onClick="{{ restart }}" style="height:36px;padding:0 14px;border-radius:999px;border:0;background:transparent;box-shadow:inset 0 0 0 1px rgb(245 243 255 / .14);color:#9A93C4;font-family:inherit;font-size:13px;cursor:pointer" style-hover="background:rgb(245 243 255 / .06);color:#F5F3FF">Restart</button>
+      </div>
+      <span style="font-size:12px;color:#736BA4;text-align:center;text-wrap:pretty">Plays by itself. Pick a stage to hold it. Cancel works only while Nebula is closing.</span>
+    </div>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script>
+const KEY = 'nebula_update_window_proto';
+const EASE = 'cubic-bezier(.32,.72,0,1)';
+const STAGES = {
+  waiting:   { label: 'Waiting',   status: 'Waiting for Nebula to close…', seg: 0, btn: 'Cancel', ms: 3400 },
+  replacing: { label: 'Replacing', status: 'Replacing Nebula.exe…', seg: 1, btn: 'Cancel', lock: true, ms: 2800 },
+  starting:  { label: 'Starting',  status: 'Starting Nebula…', seg: 2, btn: 'Cancel', lock: true, ms: 2400 },
+  done:      { label: 'Done',      status: 'Updated. Opening Nebula…', seg: 3, hideBtn: true, ms: 1800 },
+  failed:    { label: 'Failed',    status: 'Couldn\u2019t replace Nebula.exe.', sub: 'The installed copy was not changed.', btn: 'Close', fail: true },
+  cancelled: { label: 'Cancelled', status: 'Update cancelled.', sub: 'The installed copy was not changed.', btn: 'Close', stop: true }
+};
+const ORDER = ['waiting', 'replacing', 'starting', 'done', 'failed', 'cancelled'];
+const NEXT = { success: { waiting: 'replacing', replacing: 'starting', starting: 'done', done: 'gone' }, fail: { waiting: 'replacing', replacing: 'failed' } };
+
+function dustField() {
+  let seed = 17; const r = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  const out = [];
+  for (let i = 0; i < 30; i++) {
+    const x = r() * 100, y = r() * 100, big = r() < .16, o = (.25 + r() * .55).toFixed(2), k1 = r(), k3 = r();
+    out.push({ x: x + '%', y: y + '%', s: (big ? 2.2 : 1.3) + 'px', o, glow: big ? '0 0 4px rgb(245 243 255 / .6)' : 'none',
+      anim: `uw-twinkle ${(3 + k3 * 4).toFixed(1)}s ease-in-out ${(-k1 * 6).toFixed(1)}s infinite` });
+  }
+  return out;
+}
+const DUST = dustField();
+function starField(n, seedStart, maxA) {
+  let seed = seedStart; const r = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  const out = [];
+  for (let i = 0; i < n; i++) {
+    const x = Math.round(r() * 2400), y = Math.round(r() * 2400), big = r() < .14, a = (.2 + r() * maxA).toFixed(2);
+    out.push(`${x}px ${y}px 0 ${big ? '.5px' : '0'} rgb(245 243 255 / ${a})`);
+  }
+  return out.join(',');
+}
+const STARS_FAR = starField(140, 11, .4), STARS_NEAR = starField(70, 29, .6);
+
+class Component extends DCLogic {
+  state = { stage: 'waiting', path: 'success', held: false, gone: false, scale: 2 };
+  stageRef = React.createRef();
+  componentDidMount() {
+    try { const d = JSON.parse(localStorage.getItem(KEY) || 'null'); if (d && d.path) this.setState({ path: d.path }); } catch (e) {}
+    this.fit = () => {
+      const el = this.stageRef.current; if (!el) return;
+      const s = Math.max(.6, Math.min(2, (el.clientWidth - 16) / 440));
+      if (Math.abs(s - this.state.scale) > .005) this.setState({ scale: s });
+    };
+    this.ro = new ResizeObserver(this.fit);
+    if (this.stageRef.current) this.ro.observe(this.stageRef.current);
+    this.fit();
+    this.schedule();
+  }
+  componentWillUnmount() { clearTimeout(this.t); if (this.ro) this.ro.disconnect(); }
+  schedule() {
+    clearTimeout(this.t);
+    const { stage, path, held, gone } = this.state;
+    if (held) return;
+    if (gone) { this.t = setTimeout(() => this.setState({ gone: false, stage: 'waiting' }, () => this.schedule()), 2200); return; }
+    const st = STAGES[stage];
+    if (st.fail || st.stop) { this.t = setTimeout(() => this.setState({ stage: 'waiting' }, () => this.schedule()), 4200); return; }
+    const nx = NEXT[path][stage];
+    if (!nx) return;
+    this.t = setTimeout(() => {
+      if (nx === 'gone') this.setState({ gone: true }, () => this.schedule());
+      else this.setState({ stage: nx }, () => this.schedule());
+    }, st.ms);
+  }
+  go(stage) { this.setState({ stage, held: true, gone: false }, () => this.schedule()); }
+  setPath(path) {
+    try { localStorage.setItem(KEY, JSON.stringify({ path })); } catch (e) {}
+    this.setState({ path, stage: 'waiting', held: false, gone: false }, () => this.schedule());
+  }
+  renderVals() {
+    const { stage, path, held, gone, scale } = this.state;
+    const st = STAGES[stage];
+    const fail = !!st.fail, stop = !!st.stop, done = stage === 'done';
+    const working = !fail && !stop && !done;
+    const segs = [0, 1, 2].map(i => {
+      if (fail) return { bg: 'rgb(255 92 122 / .45)', glow: 'none', active: false };
+      if (stop) return { bg: 'rgb(245 243 255 / .08)', glow: 'none', active: false };
+      if (i < st.seg || done) return { bg: '#8B7CF6', glow: '0 0 8px rgb(139 124 246 / .55)', active: false };
+      if (i === st.seg) return { bg: 'rgb(139 124 246 / .22)', glow: 'none', active: true };
+      return { bg: 'rgb(245 243 255 / .08)', glow: 'none', active: false };
+    });
+    const statusEl = React.createElement('span', {
+      key: stage,
+      style: { fontSize: 12.5, color: fail ? '#F5F3FF' : done ? '#F5F3FF' : '#9A93C4', animation: `uw-in 420ms ${EASE} both`, whiteSpace: 'nowrap' }
+    }, st.status);
+    const subEl = st.sub ? React.createElement('div', {
+      key: stage + '-sub',
+      style: { marginTop: 2, marginLeft: 13, fontSize: 11.5, color: '#9A93C4', animation: `uw-in 420ms ${EASE} 120ms both` }
+    }, st.sub) : null;
+    const dotC = fail ? '#FF5C7A' : stop ? '#8B84B8' : '#8B7CF6';
+    const glowC = fail ? 'rgb(255 92 122 / .16)' : stop ? 'rgb(245 243 255 / .04)' : 'rgb(139 124 246 / .26)';
+    const chipOf = k => {
+      const on = k === stage;
+      return { label: STAGES[k].label, bg: on ? 'rgb(139 124 246 / .22)' : 'transparent', bd: on ? 'rgb(139 124 246 / .5)' : 'rgb(245 243 255 / .1)', color: on ? '#F5F3FF' : '#9A93C4', go: () => this.go(k) };
+    };
+    return {
+      stageRef: this.stageRef, dust: DUST, sweepOn: working,
+      boxW: 440 * scale + 'px', boxH: 188 * scale + 'px', scaleT: `scale(${scale})`,
+      glowW: 640 * scale / 2 + 'px', glowH: 360 * scale / 2 + 'px', glowML: -320 * scale / 2 + 'px', glowMT: -180 * scale / 2 + 'px',
+      glowC, glowA: gone ? 0 : working ? 1 : .6,
+      winA: gone ? 0 : 1, winT: gone ? 'scale(.97) translateY(6px)' : 'none',
+      markPlay: working ? 'running' : 'paused', markRing: fail ? '#FF5C7A' : '#B9AEF9', markGlow: fail ? 'rgb(255 92 122 / .25)' : 'rgb(139 124 246 / .32)',
+      segs, statusEl, subEl, dotC, dotPlay: working ? 'running' : 'paused',
+      btnLabel: st.btn || 'Cancel', btnDisabled: !!st.lock || !!st.hideBtn, btnA: st.lock ? .45 : 1, btnVis: st.hideBtn ? 'hidden' : 'visible',
+      onButton: () => {
+        if (stage === 'waiting') this.setState({ stage: 'cancelled' }, () => this.schedule());
+        else if (fail || stop) this.setState({ gone: true, held: false }, () => this.schedule());
+      },
+      stageChips: ORDER.map(chipOf),
+      paths: [['success', 'Play: update works'], ['fail', 'Play: update fails']].map(([k, label]) => {
+        const on = !held && path === k;
+        return { label, bg: on ? 'rgb(139 124 246 / .14)' : 'transparent', bd: on ? 'rgb(139 124 246 / .4)' : 'rgb(245 243 255 / .14)', go: () => this.setPath(k) };
+      }),
+      restart: () => this.setState({ stage: 'waiting', held: false, gone: false }, () => this.schedule())
+    };
+  }
+}
+</script>
+</body>
+</html>

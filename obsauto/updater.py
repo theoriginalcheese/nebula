@@ -929,14 +929,17 @@ def relaunch_source(root=None, pid=None):
 
 
 def install_and_relaunch(update_path, target_path=None, pid=None):
-    """Replace the running packaged exe after this process exits, then relaunch.
+    """Show the update window, then replace this exe once it has quit.
 
-    Writes a tiny helper beside the exe, detaches it, and returns. The caller
-    must quit Nebula so the file lock drops. Windows cannot overwrite a running
-    image in place. Uses pythonw (not cmd) so no console window flashes.
+    Copies the running image to ``_nebula_updater.exe`` and starts that with
+    ``--apply-update``. The copy is what draws the window: a packaged
+    ``Nebula.exe`` is not a Python interpreter, so handing it a ``.py`` helper
+    never ran. The caller still has to quit so the file lock drops.
     """
+    import shutil
     import subprocess
-    import textwrap
+
+    from .update_apply import APPLY_FLAG, UPDATER_NAME
 
     if not is_frozen():
         raise RuntimeError("install_and_relaunch is for packaged builds only")
@@ -946,75 +949,34 @@ def install_and_relaunch(update_path, target_path=None, pid=None):
     target_path = os.path.abspath(target_path or sys.executable)
     pid = int(pid or os.getpid())
     work = os.path.dirname(target_path)
-    helper = os.path.join(work, "_nebula_apply_update.py")
-
-    script = textwrap.dedent("""\
-        import os, sys, time, shutil, subprocess
-        target, new, pid = sys.argv[1], sys.argv[2], int(sys.argv[3])
-        # Wait until the old process is gone (file lock released).
-        for _ in range(120):
-            try:
-                import ctypes
-                SYNCHRONIZE = 0x00100000
-                h = ctypes.windll.kernel32.OpenProcess(SYNCHRONIZE, False, pid)
-                if h:
-                    ctypes.windll.kernel32.CloseHandle(h)
-                    time.sleep(0.5)
-                    continue
-            except Exception:
-                pass
-            break
-        else:
-            sys.exit(1)
-        for _ in range(20):
-            try:
-                shutil.copyfile(new, target)
-                break
-            except OSError:
-                time.sleep(0.5)
-        else:
-            sys.exit(2)
-        try:
-            os.remove(new)
-        except OSError:
-            pass
-        flags = 0x00000008 | 0x00000200  # DETACHED | NEW_GROUP
-        subprocess.Popen([target], cwd=os.path.dirname(target),
-                         close_fds=True, creationflags=flags)
-        try:
-            os.remove(__file__)
-        except OSError:
-            pass
-        """)
-    with open(helper, "w", encoding="utf-8", newline="\n") as fh:
-        fh.write(script)
-
-    # Prefer pythonw.exe next to the frozen bootloader's embedded python,
-    # otherwise the same interpreter that packed us (dev) / sys.executable.
-    pyw = sys.executable
-    if pyw.lower().endswith("python.exe"):
-        candidate = pyw[:-len("python.exe")] + "pythonw.exe"
-        if os.path.isfile(candidate):
-            pyw = candidate
+    updater = os.path.join(work, UPDATER_NAME)
+    try:
+        os.remove(updater)
+    except OSError:
+        pass
+    shutil.copyfile(sys.executable, updater)
 
     flags = 0
     if hasattr(subprocess, "DETACHED_PROCESS"):
         flags |= subprocess.DETACHED_PROCESS
     if hasattr(subprocess, "CREATE_NEW_PROCESS_GROUP"):
         flags |= subprocess.CREATE_NEW_PROCESS_GROUP
-    if hasattr(subprocess, "CREATE_NO_WINDOW"):
-        flags |= subprocess.CREATE_NO_WINDOW
-
+    # A onefile child inherits the parent's unpack directory. Resetting it
+    # makes this copy extract on its own, so it survives the parent quitting.
+    env = os.environ.copy()
+    env["PYINSTALLER_RESET_ENVIRONMENT"] = "1"
     subprocess.Popen(
-        [pyw, helper, target_path, update_path, str(pid)],
+        [updater, APPLY_FLAG, "--target", target_path, "--source", update_path,
+         "--pid", str(pid)],
         cwd=work,
         close_fds=True,
         creationflags=flags,
+        env=env,
         stdin=subprocess.DEVNULL,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
-    return helper
+    return updater
 
 
 if __name__ == "__main__":

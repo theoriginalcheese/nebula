@@ -1410,8 +1410,9 @@ class Api:
         pending = getattr(self, "_update_pending", None) or {}
         last = getattr(self, "_update_last_message", "") or ""
         if frozen:
-            blurb = ("Running Nebula %s (packaged). Check GitHub Releases and "
-                     "install over this exe." % info["display"])
+            blurb = ("Running Nebula %s (packaged). Check for updates, then "
+                     "Install & relaunch — Nebula will close and show its "
+                     "update window." % info["display"])
         else:
             blurb = ("Running Nebula %s. Save this machine before you leave; "
                      "Load latest when you sit down, then Restart now."
@@ -1805,8 +1806,8 @@ class Api:
                 token=self.cfg.get("github_token") or None)
             updater_mod.install_and_relaunch(path)
             self._update_last_message = (
-                "Installing %s — Nebula will restart." % (
-                    release.get("tag") or "update"))
+                "Installing %s — Nebula will close and show the update window."
+                % (release.get("tag") or "update"))
             self._api_log("[Update] %s" % self._update_last_message)
             if self._host:
                 threading.Timer(0.4, self._host.quit).start()
@@ -3392,6 +3393,18 @@ def _set_dpi_awareness():
 
 
 def main():
+    # The update window is a second copy of this exe. It must not take the
+    # single-instance mutex, or it would see the copy that's about to quit
+    # and exit without replacing anything.
+    from obsauto.update_apply import UPDATER_NAME, run_from_argv
+    exe_name = os.path.basename(sys.executable).lower()
+    if "--apply-update" in sys.argv or exe_name == UPDATER_NAME.lower():
+        return run_from_argv(sys.argv) or 0
+    from obsauto.version import is_frozen
+    if is_frozen():
+        from obsauto.update_apply import cleanup_updater_copy
+        cleanup_updater_copy()
+
     # Per-monitor DPI aware, so 1280x808 is 1280x808 of design units on a 150%
     # panel rather than a blurry upscale.
     #
