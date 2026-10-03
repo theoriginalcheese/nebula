@@ -1,0 +1,17 @@
+---
+description: Pull a Claude Design file into the repo when the user gives a claude.ai/design URL, or a chat needs a .dc.html that is not on disk. Do not ask them to export it, and do not connect the design MCP in Cursor.
+alwaysApply: false
+---
+
+# Pull a Claude Design file
+
+Cursor does not have the design server, and it must not start a Claude chat to fetch one. `tools/pull_design.py` reads the server with the design login Claude Code already stored. Do not tell Anthony to save the HTML, and do not add the design MCP to Cursor.
+
+When the update-window design is missing, or the user names a file in the Nebula design project:
+
+```powershell
+python tools/pull_design.py
+python tools/pull_design.py --file "Nebula Toast Row.dc.html" --into design/toast-row
+```
+
+The first command needs no URL. It reads the design server directly with the Claude Code design login. It does not start a Claude chat. If it says the login is missing, stop. Do not build from a partial file.

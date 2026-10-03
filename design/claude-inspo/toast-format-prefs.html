@@ -1,0 +1,567 @@
+<!DOCTYPE html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<title>Toast format — preference gallery</title>
+<style>
+  :root {
+    --ground: #100D1C;
+    --deep: #0A0812;
+    --core: #181428;
+    --accent: #8B7CF6;
+    --ember: #FF5C7A;
+    --text: #F5F3FF;
+    --muted: #9A93C4;
+    --faint: #6E678F;
+    --line: rgba(245,243,255,.08);
+    --ease: cubic-bezier(.32,.72,0,1);
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    background: var(--deep);
+    color: var(--text);
+    font-family: "Segoe UI Variable", "Segoe UI", sans-serif;
+  }
+  body { padding: 72px 28px 80px; }
+  .bar {
+    position: sticky;
+    top: 0;
+    z-index: 5;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    margin: -72px -28px 28px;
+    padding: 14px 28px;
+    background: rgba(10,8,18,.92);
+    border-bottom: 1px solid var(--line);
+    backdrop-filter: blur(16px);
+  }
+  .bar b { font-weight: 560; letter-spacing: -.01em; }
+  .counts { color: var(--muted); font-size: 13px; }
+  .hint { color: var(--faint); font-size: 12px; margin-left: auto; }
+  button.tool, button.vote {
+    appearance: none;
+    border: 0;
+    border-radius: 999px;
+    font: inherit;
+    cursor: pointer;
+  }
+  button.tool {
+    height: 36px;
+    padding: 0 14px;
+    background: var(--core);
+    color: var(--text);
+    box-shadow: inset 0 0 0 1px var(--line);
+  }
+  button.tool:hover { background: #221c36; }
+  .intro { max-width: 760px; color: var(--muted); font-size: 14.5px; line-height: 1.55; }
+  .intro strong { color: var(--text); font-weight: 560; }
+  .legend { color: var(--faint); font-size: 12.5px; margin-top: 8px; }
+  section { margin-top: 36px; }
+  section h2 { font-size: 18px; font-weight: 560; margin: 0 0 4px; }
+  section .slot { color: var(--muted); font-size: 13px; margin: 0 0 14px; }
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(460px, 1fr));
+    gap: 16px;
+  }
+  .card {
+    background: var(--ground);
+    border-radius: 18px;
+    padding: 14px 14px 12px;
+    box-shadow: inset 0 0 0 1px var(--line);
+    outline: none;
+  }
+  .card:focus-visible { box-shadow: inset 0 0 0 1px var(--accent); }
+  .card.head { display: flex; gap: 10px; align-items: baseline; }
+  .id { font-variant-numeric: tabular-nums; color: var(--accent); font-size: 12px; letter-spacing: .04em; }
+  .card h3 { margin: 0; font-size: 15px; font-weight: 560; }
+  .why { color: var(--muted); font-size: 13px; line-height: 1.45; margin: 6px 0 12px; }
+  .badge {
+    margin-left: auto;
+    font-size: 10px;
+    letter-spacing: .14em;
+    color: var(--faint);
+  }
+  .badge.current { color: var(--ember); }
+  .stage {
+    height: 174px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: #07060d;
+    border-radius: 12px;
+    overflow: hidden;
+  }
+  .stage.status { height: 110px; }
+  .src { color: var(--faint); font-size: 11px; margin: 8px 0 10px; }
+  .votes { display: flex; gap: 8px; }
+  button.vote {
+    flex: 1;
+    height: 44px;
+    background: #141022;
+    color: var(--muted);
+    box-shadow: inset 0 0 0 1px var(--line);
+  }
+  button.vote.on[data-v="like"] { background: #24381f; color: #d7f5c8; }
+  button.vote.on[data-v="nope"] { background: #3a1822; color: #ffd0da; }
+  button.vote.on[data-v="undecided"] { background: #2a2640; color: var(--text); }
+  .note {
+    width: 100%;
+    margin-top: 8px;
+    height: 36px;
+    border: 0;
+    border-radius: 10px;
+    background: #0c0a14;
+    color: var(--text);
+    font: inherit;
+    font-size: 13px;
+    padding: 0 10px;
+    box-shadow: inset 0 0 0 1px var(--line);
+  }
+  .info {
+    margin-top: 28px;
+    color: var(--faint);
+    font-size: 13px;
+    line-height: 1.5;
+  }
+  #export {
+    display: none;
+    width: min(720px, 100%);
+    margin-top: 18px;
+    min-height: 180px;
+    background: #0c0a14;
+    color: var(--text);
+    border: 0;
+    border-radius: 12px;
+    padding: 12px;
+    font: 13px/1.45 Consolas, monospace;
+    box-shadow: inset 0 0 0 1px var(--line);
+  }
+
+  /* The toast itself, in real pixels, then scaled. */
+  .pill {
+    position: relative;
+    width: 404px;
+    height: 116px;
+    transform: scale(1.15);
+    transform-origin: center center;
+    border-radius: 58px;
+    overflow: hidden;
+    background:
+      radial-gradient(120px 70px at 18% 42%, rgba(139,124,246,.28), transparent 70%),
+      radial-gradient(140px 80px at 82% 68%, rgba(255,92,122,.08), transparent 72%),
+      #0A0812;
+    box-shadow: inset 0 0 0 1px rgba(245,243,255,.075);
+  }
+  .pill.status {
+    width: 384px;
+    height: 60px;
+    border-radius: 30px;
+    transform: scale(1.2);
+  }
+  .pill .glass {
+    position: absolute;
+    inset: 3px;
+    border-radius: inherit;
+    background: rgba(16,13,28,.72);
+  }
+  .chip {
+    position: absolute;
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    background: rgba(139,124,246,.18);
+    box-shadow: 0 0 14px rgba(139,124,246,.35);
+  }
+  .chip i {
+    position: absolute;
+    inset: 9px;
+    border-radius: 50%;
+    background: var(--accent);
+    box-shadow: 0 0 0 3px rgba(139,124,246,.25);
+  }
+  .copy { position: absolute; color: var(--text); white-space: nowrap; }
+  .copy .t { font-size: 14px; font-weight: 560; }
+  .copy .g { font-size: 12.5px; color: var(--muted); }
+  .copy .dot { color: var(--faint); margin: 0 6px; }
+  .btns { position: absolute; display: flex; gap: 8px; }
+  .btns span {
+    display: grid;
+    place-items: center;
+    height: 26px;
+    width: 108px;
+    border-radius: 13px;
+    font-size: 12px;
+    font-weight: 500;
+  }
+  .btns .pri { background: rgba(139,124,246,.38); color: var(--text); }
+  .btns .sec { background: rgba(245,243,255,.06); color: var(--muted); }
+  .btns.quiet span { background: transparent; width: auto; padding: 0 4px; }
+  .btns.quiet .pri { color: #c4b8ff; }
+  .drain {
+    position: absolute;
+    left: 22px;
+    right: 22px;
+    bottom: 10px;
+    height: 2px;
+    border-radius: 2px;
+    background: linear-gradient(90deg, transparent, rgba(139,124,246,.95) 12%, rgba(139,124,246,.95) 88%, transparent);
+  }
+  .drain.stub { left: 22px; right: auto; width: 168px; background: rgba(139,124,246,.9); }
+  .dust i {
+    position: absolute;
+    width: 3px;
+    height: 3px;
+    border-radius: 50%;
+    background: #f5f3ff;
+    box-shadow: 0 0 6px rgba(139,124,246,.9);
+  }
+</style>
+</head>
+<body>
+  <div class="bar">
+    <b>~/prefs-toast-format</b>
+    <span class="counts" id="counts">liked 0 · noped 0 · undecided 0 · open 0</span>
+    <span class="hint">L like · N nope · U undecided · J / K move</span>
+    <button class="tool" id="exportBtn" type="button">export picks</button>
+    <button class="tool" id="resetBtn" type="button">reset</button>
+  </div>
+
+  <p class="intro">
+    How the toast is arranged. Every preview is the real <strong>404×116</strong> prompt, or the real <strong>384×60</strong> status, drawn with the same colours as the app and scaled up so you can judge it.
+    The August still stacks the title over the game name, puts Record and Not now underneath, and runs the violet line the full width. The render in your screenshot cramps the buttons into the curve and stops the line early.
+  </p>
+  <p class="legend">CURRENT is what the app paints today. TRIAL is a format to try. One pick per section.</p>
+
+  <div id="root"></div>
+  <textarea id="export" readonly></textarea>
+  <p class="info">Already out, so it is not in the grid: the short 420×68 strip with Record and Not now on the right of one line. The opacity-only twinkle is out too. Dust motion itself is not up for a vote here — only where the specks sit.</p>
+
+<script>
+const KEY = "ajt_prefs_toast_format_2026-10-01";
+
+const sections = [
+  {
+    id: "S1",
+    title: "Prompt words",
+    hint: "One pick. What the upper part of the 404×116 toast says.",
+    options: [
+      { id: "W-LINE", title: "One line, with a middot", badge: "CURRENT",
+        why: "Record again? · Helldivers 2 on a single row. Compact. A long game name gets cut.",
+        kind: "prompt", words: "line" },
+      { id: "W-STACK", title: "Title over the game", badge: "TRIAL",
+        why: "The August still. The question is the loud line, the game sits under it.",
+        kind: "prompt", words: "stack" },
+      { id: "W-TITLE", title: "Question only", badge: "TRIAL",
+        why: "Just “Record again?”. Cleaner, and you lose which game it means.",
+        kind: "prompt", words: "title" },
+      { id: "W-SWAP", title: "Game name first", badge: "TRIAL",
+        why: "Helldivers 2 is the loud line. “Record again?” is the quiet one under it.",
+        kind: "prompt", words: "swap" },
+    ],
+  },
+  {
+    id: "S2",
+    title: "Prompt buttons",
+    hint: "One pick. Record and Not now, under the words.",
+    options: [
+      { id: "B-TIGHT", title: "Tight against the left curve", badge: "CURRENT",
+        why: "108×26 pills, 16px from the edge. They sit inside the round end.",
+        kind: "prompt", words: "stack", buttons: "tight" },
+      { id: "B-AIR", title: "Same pills, pulled clear of the curve", badge: "TRIAL",
+        why: "A bit further in, a bit more gap. Closer to the August still.",
+        kind: "prompt", words: "stack", buttons: "air" },
+      { id: "B-RIGHT", title: "Pair on the right", badge: "TRIAL",
+        why: "Still under the words, but the pills sit at the trailing end.",
+        kind: "prompt", words: "stack", buttons: "right" },
+      { id: "B-QUIET", title: "Words, no filled pills", badge: "TRIAL",
+        why: "Record in violet, Not now in the quiet colour. Less chrome.",
+        kind: "prompt", words: "stack", buttons: "quiet" },
+    ],
+  },
+  {
+    id: "S3",
+    title: "How round the ends are",
+    hint: "One pick. The tall prompt suffers most. Status stays a true pill in every card.",
+    options: [
+      { id: "E-PILL", title: "Full pill", badge: "CURRENT",
+        why: "Radius is half the height. Honest capsule. The ends eat the chip and the buttons.",
+        kind: "prompt", words: "stack", buttons: "air", radius: 58 },
+      { id: "E-SOFT", title: "Capsule, longer flat run", badge: "TRIAL",
+        why: "36px corners. Still obviously a capsule. The words and buttons get a straight stretch.",
+        kind: "prompt", words: "stack", buttons: "air", radius: 36 },
+      { id: "E-CARD", title: "Rounded card", badge: "TRIAL",
+        why: "22px corners. More room, and it starts to read as a normal panel.",
+        kind: "prompt", words: "stack", buttons: "air", radius: 22 },
+    ],
+  },
+  {
+    id: "S4",
+    title: "The violet line",
+    hint: "One pick. It is a life timer, not a progress bar for the game.",
+    options: [
+      { id: "R-STUB", title: "Short stub under the buttons", badge: "TRIAL",
+        why: "The weak line in your screenshot. Easy to miss, and it looks unfinished.",
+        kind: "prompt", words: "stack", buttons: "air", drain: "stub" },
+      { id: "R-FULL", title: "Full width, fading at both ends", badge: "TRIAL",
+        why: "The August still. The line belongs to the whole capsule.",
+        kind: "prompt", words: "stack", buttons: "air", drain: "full" },
+      { id: "R-INSET", title: "Stops before the curves", badge: "CURRENT",
+        why: "Inset 22px, fading at both ends. What the app draws on the status toast.",
+        kind: "prompt", words: "stack", buttons: "air", drain: "inset" },
+    ],
+  },
+  {
+    id: "S5",
+    title: "How far the content sits from the ends",
+    hint: "One pick. On a full pill the left bulb is huge.",
+    options: [
+      { id: "N-HUG", title: "Chip and buttons in the bulb", badge: "CURRENT",
+        why: "Chip at 24px, buttons at 16px. Tight, and the curve cuts into them.",
+        kind: "prompt", words: "stack", buttons: "tight", inset: "hug" },
+      { id: "N-CLEAR", title: "Content starts after the curve", badge: "TRIAL",
+        why: "The bulbs stay empty. Chip, words, and buttons share a calmer left edge.",
+        kind: "prompt", words: "stack", buttons: "air", inset: "clear" },
+      { id: "N-COLUMN", title: "One left edge for words and buttons", badge: "TRIAL",
+        why: "The question, the game, and Record line up. More like a small dialog.",
+        kind: "prompt", words: "stack", buttons: "air", inset: "column" },
+    ],
+  },
+  {
+    id: "S6",
+    title: "Where the specks sit",
+    hint: "One pick. Motion stays as it is. This is only the seat.",
+    options: [
+      { id: "U-RIGHT", title: "Tight cluster at the right end", badge: "TRIAL",
+        why: "The August prompt and pause stills. The specks keep out of the words.",
+        kind: "prompt", words: "stack", buttons: "air", dust: "right" },
+      { id: "U-LOOSE", title: "Spread across the upper right", badge: "TRIAL",
+        why: "The sparse scatter in your screenshot. More sky, less of a constellation.",
+        kind: "prompt", words: "stack", buttons: "air", dust: "loose" },
+      { id: "U-CHIP", title: "Around the icon", badge: "TRIAL",
+        why: "All seven sit on the chip. The right end stays quiet.",
+        kind: "prompt", words: "stack", buttons: "air", dust: "chip" },
+    ],
+  },
+  {
+    id: "S7",
+    title: "Status toast, the short one",
+    hint: "One pick. 384×60. Recording started, paused, stopped.",
+    options: [
+      { id: "T-ROW", title: "One row", badge: "CURRENT",
+        why: "Recording paused · Helldivers 2. The pause still. A long name gets cut.",
+        kind: "status", status: "row" },
+      { id: "T-META", title: "Title, and the time on the right", badge: "TRIAL",
+        why: "Recording stopped on the left. 10:47 · 1.7 GB on the right. The game name drops when both will not fit.",
+        kind: "status", status: "meta" },
+      { id: "T-STACK", title: "Two lines inside 60px", badge: "TRIAL",
+        why: "Title over the game, even on the short pill. It gets cramped.",
+        kind: "status", status: "stack" },
+    ],
+  },
+];
+
+const dustSets = {
+  right: [[330,28],[344,36],[352,22],[338,46],[360,34],[348,18],[366,42]],
+  loose: [[300,18],[340,14],[370,28],[318,36],[356,22],[384,16],[332,44]],
+  chip: [[18,22],[40,16],[34,40],[14,38],[46,28],[22,12],[48,42]],
+};
+
+function pill(o) {
+  const prompt = o.kind !== "status";
+  const radius = o.radius || (prompt ? 58 : 30);
+  const inset = o.inset || "hug";
+  const buttons = o.buttons || "tight";
+  const dust = o.dust || "right";
+  const drain = o.drain || "inset";
+  let chipX = inset === "hug" ? 16 : inset === "clear" ? 40 : 48;
+  let textX = chipX + 36;
+  let btnX = inset === "hug" ? 16 : inset === "column" ? textX : 48;
+  let btnY = 74;
+  if (buttons === "right") btnX = 404 - 16 - 108 - 8 - 108;
+  if (buttons === "air" && inset === "hug") btnX = 48;
+  const words = o.words || "stack";
+  let copy = "";
+  if (prompt) {
+    const top = inset === "hug" ? 22 : 26;
+    if (words === "line") {
+      copy = `<div class="copy" style="left:${textX}px;top:${top + 6}px"><span class="t">Record again?</span><span class="dot">·</span><span class="g">Helldivers 2</span></div>`;
+    } else if (words === "title") {
+      copy = `<div class="copy" style="left:${textX}px;top:${top + 8}px"><span class="t">Record again?</span></div>`;
+    } else if (words === "swap") {
+      copy = `<div class="copy" style="left:${textX}px;top:${top}px"><div class="t">Helldivers 2</div><div class="g">Record again?</div></div>`;
+    } else {
+      copy = `<div class="copy" style="left:${textX}px;top:${top}px"><div class="t">Record again?</div><div class="g" style="margin-top:2px">Helldivers 2</div></div>`;
+    }
+  } else {
+    const st = o.status || "row";
+    if (st === "stack") {
+      copy = `<div class="copy" style="left:54px;top:10px"><div class="t" style="font-size:13px">Recording paused</div><div class="g">Helldivers 2</div></div>`;
+    } else if (st === "meta") {
+      copy = `<div class="copy" style="left:54px;top:20px"><span class="t">Recording stopped</span></div>
+        <div class="copy" style="right:28px;top:22px;left:auto"><span class="g">10:47 · 1.7 GB</span></div>`;
+    } else {
+      copy = `<div class="copy" style="left:54px;top:20px"><span class="t">Recording paused</span><span class="dot">·</span><span class="g">Helldivers 2</span></div>`;
+    }
+    chipX = 14;
+  }
+  const btnClass = buttons === "quiet" ? "btns quiet" : "btns";
+  const btns = prompt
+    ? `<div class="${btnClass}" style="left:${btnX}px;top:${btnY}px"><span class="pri">Record</span><span class="sec">Not now</span></div>`
+    : "";
+  const drainEl = `<div class="drain ${drain === "stub" ? "stub" : ""}"></div>`;
+  const specks = (dustSets[dust] || dustSets.right).map(([x,y], i) =>
+    `<i style="left:${x}px;top:${y}px;opacity:${0.45 + (i % 3) * 0.15}"></i>`).join("");
+  const dustEl = prompt ? `<div class="dust">${specks}</div>` : `<div class="dust">${dustSets.right.map(([x,y],i)=>`<i style="left:${x-20}px;top:${y+2}px;opacity:${0.5+i%2*0.2}"></i>`).join("")}</div>`;
+  return `<div class="pill ${prompt ? "" : "status"}" style="border-radius:${radius}px">
+    <div class="glass" style="border-radius:${Math.max(8, radius - 3)}px"></div>
+    <div class="chip" style="left:${chipX}px;top:${prompt ? 20 : 16}px"><i></i></div>
+    ${copy}${btns}${drainEl}${prompt ? dustEl : dustEl}
+  </div>`;
+}
+
+const store = JSON.parse(localStorage.getItem(KEY) || "{\"votes\":{},\"notes\":{}}");
+store.votes = store.votes || {};
+store.notes = store.notes || {};
+
+function save() {
+  localStorage.setItem(KEY, JSON.stringify(store));
+  paintCounts();
+}
+
+function allOptions() {
+  return sections.flatMap(s => s.options);
+}
+
+function paintCounts() {
+  const all = allOptions();
+  let like = 0, nope = 0, und = 0;
+  all.forEach(o => {
+    const v = store.votes[o.id];
+    if (v === "like") like++;
+    else if (v === "nope") nope++;
+    else if (v === "undecided") und++;
+  });
+  const open = all.length - like - nope - und;
+  document.getElementById("counts").textContent =
+    `liked ${like} · noped ${nope} · undecided ${und} · open ${open}`;
+}
+
+function cardEl(o) {
+  const art = document.createElement("div");
+  art.className = "card";
+  art.tabIndex = 0;
+  art.dataset.id = o.id;
+  const badge = o.badge === "CURRENT" ? "current" : "";
+  art.innerHTML = `
+    <div class="head"><span class="id">${o.id}</span><h3>${o.title}</h3><span class="badge ${badge}">${o.badge}</span></div>
+    <p class="why">${o.why}</p>
+    <div class="stage ${o.kind === "status" ? "status" : ""}">${pill(o)}</div>
+    <p class="src">Drawn here from the toast tokens. Not a screenshot.</p>
+    <div class="votes">
+      <button class="vote" type="button" data-v="like">LIKE</button>
+      <button class="vote" type="button" data-v="nope">NOPE</button>
+      <button class="vote" type="button" data-v="undecided">UNDECIDED</button>
+    </div>
+    <input class="note" type="text" placeholder="Note, if you like it but…" value="${(store.notes[o.id] || "").replace(/"/g, "&quot;")}">
+  `;
+  const v = store.votes[o.id];
+  art.querySelectorAll(".vote").forEach(btn => {
+    if (btn.dataset.v === v) btn.classList.add("on");
+    btn.addEventListener("click", () => {
+      store.votes[o.id] = store.votes[o.id] === btn.dataset.v ? "" : btn.dataset.v;
+      if (!store.votes[o.id]) delete store.votes[o.id];
+      art.querySelectorAll(".vote").forEach(b => b.classList.toggle("on", b.dataset.v === store.votes[o.id]));
+      save();
+    });
+  });
+  const note = art.querySelector(".note");
+  note.addEventListener("keydown", ev => ev.stopPropagation());
+  note.addEventListener("input", () => {
+    store.notes[o.id] = note.value;
+    save();
+  });
+  return art;
+}
+
+const root = document.getElementById("root");
+sections.forEach(s => {
+  const sec = document.createElement("section");
+  sec.innerHTML = `<h2>${s.id} · ${s.title}</h2><p class="slot">${s.hint}</p>`;
+  const grid = document.createElement("div");
+  grid.className = "grid";
+  s.options.forEach(o => grid.appendChild(cardEl(o)));
+  sec.appendChild(grid);
+  root.appendChild(sec);
+});
+paintCounts();
+
+function cards() { return [...document.querySelectorAll(".card")]; }
+function focusCard(el) {
+  el.focus();
+  const r = el.getBoundingClientRect();
+  const mid = r.top + r.height / 2;
+  window.scrollBy(0, mid - window.innerHeight / 2);
+}
+
+document.addEventListener("keydown", ev => {
+  const tag = (ev.target.tagName || "").toLowerCase();
+  if (tag === "input" || tag === "textarea") return;
+  const list = cards();
+  let i = list.indexOf(document.activeElement);
+  if (ev.key === "j" || ev.key === "J" || ev.key === "k" || ev.key === "K") {
+    if (i < 0) i = 0;
+    else i = ev.key.toLowerCase() === "j" ? Math.min(list.length - 1, i + 1) : Math.max(0, i - 1);
+    focusCard(list[i]);
+    ev.preventDefault();
+    return;
+  }
+  if (i < 0) return;
+  const map = { l: "like", n: "nope", u: "undecided" };
+  const v = map[ev.key.toLowerCase()];
+  if (!v) return;
+  list[i].querySelector(`.vote[data-v="${v}"]`).click();
+});
+
+function line(o) {
+  const note = (store.notes[o.id] || "").trim();
+  return `- ${o.id} — ${o.title}${note ? " · " + note : ""}`;
+}
+
+document.getElementById("exportBtn").addEventListener("click", async () => {
+  const all = allOptions();
+  const bucket = { like: [], nope: [], undecided: [] };
+  all.forEach(o => {
+    const v = store.votes[o.id];
+    if (v === "like") bucket.like.push(line(o));
+    else if (v === "nope") bucket.nope.push(line(o));
+    else bucket.undecided.push(`- ${o.id} — ${o.title} (not voted)`);
+  });
+  const text = [
+    "PREFS-TOAST-FORMAT 2026-10-01",
+    "LIKE:",
+    bucket.like.length ? bucket.like.join("\n") : "- none",
+    "NOPE:",
+    bucket.nope.length ? bucket.nope.join("\n") : "- none",
+    "UNDECIDED:",
+    bucket.undecided.length ? bucket.undecided.join("\n") : "- none",
+    "NOTES:",
+    "",
+  ].join("\n");
+  const box = document.getElementById("export");
+  box.style.display = "block";
+  box.value = text;
+  box.focus();
+  box.select();
+  try { await navigator.clipboard.writeText(text); } catch (e) {}
+});
+
+document.getElementById("resetBtn").addEventListener("click", () => {
+  localStorage.removeItem(KEY);
+  location.reload();
+});
+</script>
+</body>
+</html>

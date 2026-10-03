@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Original toast twinkle</title>
+<style>
+  body { margin: 0; min-height: 100vh; display: grid; place-items: center;
+    background: #0A0812; color: #F5F3FF; font: 14px/1.4 "Segoe UI", sans-serif; }
+  p { position: fixed; top: 24px; left: 28px; margin: 0; color: #9A93C4; max-width: 520px; }
+  .pill { position: relative; width: 768px; height: 120px; border-radius: 999px;
+    background: #100C18; }
+  .chip { position: absolute; left: 30px; top: 34px; width: 52px; height: 52px;
+    border-radius: 50%; background: rgba(255,92,122,.22); }
+  .label { position: absolute; left: 96px; top: 46px; font-size: 28px; }
+  .dot { position: absolute; border-radius: 50%; background: #FF5C7A; }
+</style>
+</head>
+<body>
+<p>Original, commit e6016ea. The specks stay put around the chip and only twinkle. They do not fly.</p>
+<div class="pill" id="pill">
+  <div class="chip"></div>
+  <div class="label">Recording started</div>
+</div>
+<script>
+const DUST = [[20,-12,2.2,0.78],[30,-5,1.5,0.48],[17,15,1.8,0.58],[-11,-17,1.4,0.42],[38,11,1.2,0.36],[7,-19,1.1,0.32],[26,16,1.0,0.28]];
+const S = 2, cx = 22*S, cy = 60;
+const pill = document.getElementById("pill");
+const dots = DUST.map((spec, i) => {
+  const el = document.createElement("div");
+  el.className = "dot";
+  const r = spec[2]*S;
+  el.style.width = el.style.height = (r*2) + "px";
+  el.style.left = (cx + spec[0]*S - r) + "px";
+  el.style.top = (cy + spec[1]*S - r) + "px";
+  el.dataset.base = spec[3];
+  el.dataset.i = i;
+  pill.appendChild(el);
+  return el;
+});
+const t0 = performance.now();
+function frame(now) {
+  const t = ((now - t0) / 1000) * 2.4;
+  dots.forEach(el => {
+    const i = +el.dataset.i;
+    const wave = 0.55 + 0.45 * (0.5 + 0.5 * Math.sin(t + i * 1.7));
+    el.style.opacity = (+el.dataset.base * wave).toFixed(3);
+  });
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>

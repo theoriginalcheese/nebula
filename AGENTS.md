@@ -32,6 +32,7 @@ Nothing here is in context until you ask for it. Reach for it by name.
 | Working the handoff inbox / a `t0NN` task | rule **`handoff`** |
 | Module map, invariants, performance history | **`CLAUDE.md`** (28KB — read the section, not the file) |
 | The UI contract itself | **`design/ui-v3/BUILD-SPEC.md`** — outranks the frames, which outrank everything else |
+| A Claude Design file that is not in the repo | `python tools/pull_design.py` (update window) or `--file "Name.dc.html" --into design/<slug>`. Direct design-server read. Do not start a Claude chat and do not ask Anthony to export |
 
 `nebula-ui-v3` loads itself automatically when you touch `obsauto/` UI files,
 `design/ui-v3/**` or `spike/web/**`.

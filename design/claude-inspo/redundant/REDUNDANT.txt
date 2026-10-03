@@ -1,0 +1,3 @@
+REDUNDANT. Do not attach these to a Claude Design prompt.
+
+icon-twinkle-original.gif and icon-twinkle.html are the opacity-only twinkle from commit e6016ea. Anthony watched that motion on 2026-10-01 and said it is not the toast. The confirmed motion is the moving dust in commit a1ebd65 (burst, sink, drift, rise, scatter, orbit). Stills are in ../refs/ and in design/toast-canonical/stills/.

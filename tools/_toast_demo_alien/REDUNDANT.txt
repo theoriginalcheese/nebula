@@ -1,0 +1,3 @@
+REDUNDANT. Do not use these shots.
+
+This is the later recapture Anthony rejected on 2026-09-30 ("the really dead ones"). The toast he confirmed is the August gallery in tools/_toast_demo/ and the backup in design/toast-canonical/. Commit a1ebd65. Status 384×60, prompt 404×116.

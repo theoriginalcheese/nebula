@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="_ds/nocturne-ca27441c-01cc-44a6-99a7-7317fdeecd65/styles.css">
+<script src="_ds/nocturne-ca27441c-01cc-44a6-99a7-7317fdeecd65/_ds_bundle.js"></script>
+<style>
+html,body{margin:0;background:#0A0812}
+a{color:#B9AEF9}a:hover{color:#F5F3FF}
+@keyframes nr-burst{0%,100%{transform:translate(-50%,-50%) scale(.9);opacity:calc(var(--a) * .6)}50%{transform:translate(calc(-50% + var(--dx) * .5),calc(-50% + var(--dy) * .5)) scale(1.15);opacity:var(--a)}}
+@keyframes nr-sink{0%,100%{transform:translate(-50%,-50%);opacity:var(--a)}50%{transform:translate(calc(-50% - var(--dx) * .3),calc(-50% + 5px));opacity:calc(var(--a) * .6)}}
+@keyframes nr-drift{0%,100%{transform:translate(-50%,-50%);opacity:var(--a)}50%{transform:translate(calc(-50% + var(--dx) * .5 + 4px),calc(-50% + var(--dy) * .2));opacity:calc(var(--a) * .85)}}
+@keyframes nr-rise{0%,100%{transform:translate(-50%,-50%);opacity:calc(var(--a) * .6)}50%{transform:translate(-50%,calc(-50% - 6px));opacity:var(--a)}}
+@keyframes nr-scatter{0%,100%{transform:translate(-50%,-50%)}25%{transform:translate(calc(-50% + 2px),calc(-50% - 1px))}50%{transform:translate(calc(-50% - 1px),calc(-50% + 2px))}75%{transform:translate(calc(-50% + 1px),calc(-50% + 1px))}}
+@keyframes nr-orbit{0%{transform:translate(-50%,-50%) rotate(0deg) translate(var(--orb),0) rotate(0deg)}100%{transform:translate(-50%,-50%) rotate(360deg) translate(var(--orb),0) rotate(-360deg)}}
+</style>
+</helmet>
+<div style="min-height:100vh;position:relative;overflow:hidden;background:#0A0812;font-family:'Segoe UI Variable Text','Segoe UI Variable','Segoe UI',system-ui,sans-serif;color:#F5F3FF">
+  <div aria-hidden="true" style="position:absolute;inset:0;pointer-events:none;background:radial-gradient(60% 50% at 78% 30%,rgb(139 124 246 / .16),transparent 70%),radial-gradient(45% 40% at 92% 85%,rgb(64 48 150 / .28),transparent 70%),radial-gradient(30% 30% at 60% 70%,rgb(255 92 122 / .05),transparent 70%),#0A0812"></div>
+  <div style="position:relative;padding:40px 24px 24px;display:flex;flex-direction:column;align-items:flex-end;gap:20px">
+    <div style="align-self:flex-start;display:flex;flex-direction:column;gap:6px;max-width:520px">
+      <span style="font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:#736BA4">Nebula toasts · locked row format</span>
+      <span style="font-size:13px;color:#9A93C4;text-wrap:pretty">Every toast is one row: same 60px height, chip, type size and centre. Status toasts are 384px wide and prompts are 456px. Drawn at {{ scaleLabel }}, bottom-right, 24px from the edge.</span>
+    </div>
+    <sc-for list="{{ toasts }}" as="t" hint-placeholder-count="7">
+      <div style="display:flex;align-items:center;gap:14px">
+        <span style="font-family:'Cascadia Mono',ui-monospace,monospace;font-size:11px;color:#736BA4">{{ t.n }}</span>
+        <div style="width:{{ t.sw }}px;height:{{ t.sh }}px;position:relative">
+          <div style="position:absolute;left:0;top:0;width:{{ t.w }}px;height:60px;transform:scale({{ scale }});transform-origin:0 0">
+            <div style="position:absolute;inset:0;border-radius:30px;background:rgb(245 243 255 / .07);box-shadow:inset 0 0 0 1px rgb(245 243 255 / .10),0 12px 32px rgb(0 0 0 / .35);backdrop-filter:blur(18px)"></div>
+            <div style="position:absolute;inset:3px;border-radius:27px;background:radial-gradient(90% 180% at 0% 0%,{{ t.wash }},transparent 60%),radial-gradient(60% 160% at 100% 100%,rgb(64 48 150 / .22),transparent 70%),rgb(16 13 28 / .88);box-shadow:inset 0 0 0 1px rgb(245 243 255 / .075),inset 0 1px 0 rgb(245 243 255 / .06)"></div>
+            <div aria-hidden="true" style="position:absolute;inset:3px;border-radius:27px;overflow:hidden;pointer-events:none">
+              <sc-for list="{{ t.dust }}" as="d" hint-placeholder-count="7">
+                <span style="position:absolute;left:{{ d.x }}px;top:{{ d.y }}px;width:{{ d.s }}px;height:{{ d.s }}px;border-radius:50%;background:{{ t.speck }};box-shadow:0 0 4px {{ t.speckGlow }};--dx:{{ d.dx }}px;--dy:{{ d.dy }}px;--a:{{ d.a }};--orb:{{ d.orb }}px;opacity:{{ d.a }};transform:translate(-50%,-50%);animation:{{ d.anim }};animation-play-state:{{ play }}"></span>
+              </sc-for>
+            </div>
+            <span style="position:absolute;left:16px;top:16px;width:28px;height:28px;border-radius:50%;background:{{ t.chipBg }};box-shadow:0 0 0 5px {{ t.halo }},0 0 16px {{ t.glow }},inset 0 0 0 1px {{ t.chipRing }};display:flex;align-items:center;justify-content:center">
+              <svg width="14" height="14" viewBox="0 0 24 24"><path d="{{ t.icon.s }}" fill="none" stroke="{{ t.ink }}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path><path d="{{ t.icon.f }}" fill="{{ t.ink }}"></path></svg>
+            </span>
+            <div style="position:absolute;left:56px;top:0;height:60px;width:{{ t.textW }}px;display:flex;align-items:center;gap:7px;white-space:nowrap;min-width:0">
+              <span style="font-size:14px;font-weight:500;line-height:18px;color:#F5F3FF;flex:none">{{ t.title }}</span>
+              <sc-if value="{{ t.hasGame }}" hint-placeholder-val="{{ true }}">
+                <span style="font-size:14px;line-height:18px;color:#736BA4;flex:none">·</span>
+                <span style="font-size:13px;line-height:18px;color:#9A93C4;overflow:hidden;text-overflow:ellipsis;min-width:0;flex:0 1 auto">{{ t.game }}</span>
+              </sc-if>
+              <sc-if value="{{ t.hasMeta }}" hint-placeholder-val="{{ false }}">
+                <span style="margin-left:auto;padding-left:6px;font-family:'Cascadia Mono',ui-monospace,monospace;font-size:11.5px;line-height:18px;color:#9A93C4;font-variant-numeric:tabular-nums;flex:none">10:47 · 1.7 GB</span>
+              </sc-if>
+            </div>
+            <sc-if value="{{ t.prompt }}" hint-placeholder-val="{{ false }}">
+              <span style="position:absolute;left:286px;top:17px;width:72px;height:26px;border-radius:13px;background:rgb(139 124 246 / .32);box-shadow:inset 0 0 0 1px rgb(245 243 255 / .09),inset 0 1px 0 rgb(245 243 255 / .06);color:#F5F3FF;font-size:12px;font-weight:500;display:flex;align-items:center;justify-content:center;transition:transform 120ms cubic-bezier(.32,.72,0,1)" style-active="transform:scale(.98)">Record</span>
+              <span style="position:absolute;left:366px;top:17px;width:72px;height:26px;border-radius:13px;background:rgb(245 243 255 / .045);box-shadow:inset 0 0 0 1px rgb(245 243 255 / .09);color:#9A93C4;font-size:12px;font-weight:500;display:flex;align-items:center;justify-content:center;transition:transform 120ms cubic-bezier(.32,.72,0,1)" style-active="transform:scale(.98)">Not now</span>
+            </sc-if>
+            <span style="position:absolute;left:24px;right:24px;bottom:5px;height:2px;border-radius:2px;background:{{ t.tint }};-webkit-mask-image:linear-gradient(90deg,transparent 0,#000 40px,#000 calc(100% - 40px),transparent 100%);mask-image:linear-gradient(90deg,transparent 0,#000 40px,#000 calc(100% - 40px),transparent 100%)"></span>
+          </div>
+        </div>
+      </div>
+    </sc-for>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;scale&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[1,1.5,2],&quot;default&quot;:1.5,&quot;tsType&quot;:&quot;number&quot;}}">
+const DUST = [[20, -10, 2.2, .78], [30, -4, 1.5, .48], [16, 9, 1.8, .58], [-10, -12, 1.4, .42], [36, 8, 1.2, .36], [6, -14, 1.1, .32], [26, 12, 1.0, .28]];
+const IC = {
+  start: { s: '', f: 'M12 7a5 5 0 1 0 0 10a5 5 0 1 0 0-10z' },
+  pause: { s: 'M9 6.5v11M15 6.5v11', f: '' },
+  resume: { s: '', f: 'M9 6.8v10.4a.8.8 0 0 0 1.2.7l8-5.2a.8.8 0 0 0 0-1.4l-8-5.2A.8.8 0 0 0 9 6.8z' },
+  stop: { s: '', f: 'M8.5 7h7A1.5 1.5 0 0 1 17 8.5v7a1.5 1.5 0 0 1-1.5 1.5h-7A1.5 1.5 0 0 1 7 15.5v-7A1.5 1.5 0 0 1 8.5 7z' },
+  error: { s: 'M12 7v6', f: 'M12 15.6a1.3 1.3 0 1 0 0 2.6a1.3 1.3 0 1 0 0-2.6z' },
+  prompt: { s: 'M12 5.5a6.5 6.5 0 1 0 0 13a6.5 6.5 0 1 0 0-13z', f: 'M12 9a3 3 0 1 0 0 6a3 3 0 1 0 0-6z' }
+};
+const V = { tint: '#8B7CF6', ink: '#B9AEF9', chipBg: 'rgb(139 124 246 / .16)', halo: 'rgb(139 124 246 / .07)', glow: 'rgb(139 124 246 / .34)', chipRing: 'rgb(139 124 246 / .28)', wash: 'rgb(139 124 246 / .09)', speck: '#B9AEF9', speckGlow: 'rgb(139 124 246 / .9)' };
+const E = { tint: '#FF5C7A', ink: '#FF5C7A', chipBg: 'rgb(255 92 122 / .16)', halo: 'rgb(255 92 122 / .07)', glow: 'rgb(255 92 122 / .38)', chipRing: 'rgb(255 92 122 / .30)', wash: 'rgb(255 92 122 / .07)', speck: '#FF8FA5', speckGlow: 'rgb(255 92 122 / .9)' };
+const DUR = { burst: 2.4, sink: 2.8, drift: 3.6, rise: 2.6, scatter: 1.8, orbit: 4.2 };
+const LIST = [
+  ['start', 'Recording started', 'Helldivers 2', E, 'burst'],
+  ['pause', 'Recording paused', 'Helldivers 2', V, 'drift'],
+  ['resume', 'Recording resumed', 'Helldivers 2', V, 'rise'],
+  ['stop', 'Recording stopped', 'Helldivers 2', E, 'sink', 'meta'],
+  ['error', 'Something went wrong', '', E, 'scatter'],
+  ['prompt', 'Record again?', 'Helldivers 2', V, 'orbit', 'prompt'],
+  ['prompt', 'New game detected', 'Clair Obscur', V, 'orbit', 'prompt']
+];
+class Component extends DCLogic {
+  state = { reduce: false };
+  componentDidMount() {
+    this.mq = window.matchMedia('(prefers-reduced-motion: reduce)');
+    this.mqf = () => this.setState({ reduce: this.mq.matches }); this.mqf();
+    this.mq.addEventListener && this.mq.addEventListener('change', this.mqf);
+  }
+  componentWillUnmount() { this.mq && this.mq.removeEventListener && this.mq.removeEventListener('change', this.mqf); }
+  dust(cx, mirror, style, k) {
+    k = k ?? .7;
+    return DUST.map(([dx, dy, r, a], i) => ({
+      x: cx + dx * k * mirror, y: 30 + dy * .7, s: Math.max(1.5, r * 1.6), dx: dx * mirror, dy, a, orb: 3 + (i % 3) * 2,
+      anim: `nr-${style} ${DUR[style]}s ${style === 'orbit' ? 'linear' : 'cubic-bezier(.32,.72,0,1)'} ${(-i * .23).toFixed(2)}s infinite`
+    }));
+  }
+  renderVals() {
+    const scale = this.props.scale ?? 1.5;
+    const toasts = LIST.map(([k, title, game, C, style, kind], i) => {
+      const prompt = kind === 'prompt', w = prompt ? 456 : 384;
+      return {
+        ...C, n: String(i + 1).padStart(2, '0'), w, sw: w * scale, sh: 60 * scale, title, game, hasGame: !!game,
+        hasMeta: kind === 'meta', prompt, icon: IC[k], textW: prompt ? 218 : kind === 'meta' ? 280 : 302,
+        dust: prompt ? this.dust(34, -1, style, .5) : kind === 'meta' ? this.dust(372, -1, style, .3) : this.dust(348, -1, style)
+      };
+    });
+    return { toasts, scale, scaleLabel: scale === 1 ? 'real size' : scale + '×', play: this.state.reduce ? 'paused' : 'running' };
+  }
+}
+</script>
+</body>
+</html>
