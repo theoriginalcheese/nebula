@@ -1799,18 +1799,25 @@ class Api:
         self._update_busy = True
         self._update_last_message = "Downloading %s…" % (
             release.get("asset_name") or "update")
+        installed = False
         try:
             dest = updater_mod.default_download_path(release.get("asset_name"))
             path = updater_mod.download_update(
                 release["asset_url"], dest,
-                token=self.cfg.get("github_token") or None)
-            updater_mod.install_and_relaunch(path)
+                token=self.cfg.get("github_token") or None,
+                expected_size=release.get("asset_size") or None,
+                expected_sha256=release.get("asset_sha256") or None)
+            updater_mod.install_and_relaunch(
+                path,
+                size=release.get("asset_size") or None,
+                sha256=release.get("asset_sha256") or None)
             self._update_last_message = (
                 "Installing %s — Nebula will close and show the update window."
                 % (release.get("tag") or "update"))
             self._api_log("[Update] %s" % self._update_last_message)
             if self._host:
                 threading.Timer(0.4, self._host.quit).start()
+            installed = True
             out = {"ok": True, "message": self._update_last_message,
                    "relaunching": True}
         except Exception as exc:
@@ -1819,7 +1826,8 @@ class Api:
             self._api_log("[Update] %s" % msg)
             out = {"ok": False, "error": str(exc), "message": msg}
         finally:
-            self._update_busy = False
+            if not installed:
+                self._update_busy = False
         out["updates_footer"] = self._settings_updates_footer()
         return out
 
@@ -1849,10 +1857,19 @@ class Api:
         if self._update_busy:
             return {"ok": False, "error": "busy",
                     "updates_footer": self._settings_updates_footer()}
-        result = updater_mod.relaunch_source()
+        self._update_busy = True
+        try:
+            result = updater_mod.relaunch_source()
+        except Exception as exc:
+            self._update_busy = False
+            return {"ok": False, "error": str(exc),
+                    "message": "Couldn't restart: %s" % exc,
+                    "updates_footer": self._settings_updates_footer()}
         if result.get("ok"):
             host = self._host
             threading.Timer(0.8, lambda: host.quit() if host else None).start()
+        else:
+            self._update_busy = False
         return {"ok": bool(result.get("ok")),
                 "message": result.get("message") or "",
                 "updates_footer": self._settings_updates_footer()}
@@ -3477,6 +3494,8 @@ def main():
             except (OSError, AttributeError):
                 pass
         return 0
+    if not allow_multi:
+        host_mod.arm_wake_event()
 
     api = Api()
     host = host_mod.NebulaHost(api.cfg)
@@ -3643,7 +3662,11 @@ def main():
         if start_hidden:
             # Page may not be ready on the first watcher tick; nudge asleep once
             # the bridge is likely up so we do not composite blur while hidden.
-            threading.Timer(2.0, lambda: host._sleep(False)).start()
+            # Skip it if a wake already showed the window in those two seconds.
+            def _nudge_asleep():
+                if not host._visible:
+                    host._sleep(False)
+            threading.Timer(2.0, _nudge_asleep).start()
         host._log("[App] DPI awareness: %s" % dpi_level)
         host._log("[App] v4 spike up. Tray %s, %d hotkey(s) bound, %d deferred."
                   % ("running" if host._tray else "failed",

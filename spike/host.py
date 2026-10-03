@@ -30,6 +30,7 @@ from spike.webview_power import apply_webview_power, gpu_page_state, window_on_s
 
 ERROR_ALREADY_EXISTS = 183
 _INSTANCE_MUTEX = None
+_WAKE_HANDLE = None
 # Second-launch pulse — the live host waits on this and calls show().
 WAKE_EVENT_NAME = "Local\\Nebula.Wake"
 _kernel32 = ctypes.windll.kernel32
@@ -64,9 +65,9 @@ def claim_single_instance(name="Nebula.SingleInstance"):
 def focus_existing_instance():
     """Ask the already-running Nebula to show, then exit this process.
 
-    Pulses :data:`WAKE_EVENT_NAME` (host listener → ``show()``) and best-effort
-    restores the HWND titled ``Nebula``. Returns True if either path looked
-    successful — callers still exit either way.
+    Pulses :data:`WAKE_EVENT_NAME`. The live host's listener calls ``show()``,
+    which wakes the page. Showing the HWND directly leaves a hidden boot on
+    screen with the page still asleep, which is a black window.
     """
     signaled = False
     try:
@@ -78,18 +79,27 @@ def focus_existing_instance():
             signaled = True
     except Exception:
         pass
-    focused = False
+    return signaled
+
+
+def arm_wake_event():
+    """Create the wake event as soon as this process owns the mutex.
+
+    Manual-reset, so a second launch can signal it before the listener
+    thread exists and the signal stays set until that thread reads it.
+    """
+    global _WAKE_HANDLE
+    if _WAKE_HANDLE:
+        return True
     try:
-        user32 = ctypes.windll.user32
-        hwnd = user32.FindWindowW(None, "Nebula")
-        if hwnd:
-            SW_RESTORE = 9
-            user32.ShowWindow(hwnd, SW_RESTORE)
-            user32.SetForegroundWindow(hwnd)
-            focused = True
+        # CreateEventW(lpAttributes, bManualReset, bInitialState, lpName)
+        handle = _kernel32.CreateEventW(None, True, False, WAKE_EVENT_NAME)
+        if not handle:
+            return False
+        _WAKE_HANDLE = handle
+        return True
     except Exception:
-        pass
-    return signaled or focused
+        return False
 
 
 def release_single_instance():

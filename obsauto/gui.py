@@ -3617,8 +3617,13 @@ class AppWindow:
                 dest = updater_mod.default_download_path(release.get("asset_name"))
                 path = updater_mod.download_update(
                     release["asset_url"], dest,
-                    token=self.config.get("github_token") or None)
-                updater_mod.install_and_relaunch(path)
+                    token=self.config.get("github_token") or None,
+                    expected_size=release.get("asset_size") or None,
+                    expected_sha256=release.get("asset_sha256") or None)
+                updater_mod.install_and_relaunch(
+                    path,
+                    size=release.get("asset_size") or None,
+                    sha256=release.get("asset_sha256") or None)
                 result.update(
                     ok=True, path=path,
                     message="Installing — Nebula will restart.")
@@ -3659,7 +3664,9 @@ class AppWindow:
                 dest = updater_mod.default_download_path(release.get("asset_name"))
                 path = updater_mod.download_update(
                     release["asset_url"], dest,
-                    token=self.config.get("github_token") or None)
+                    token=self.config.get("github_token") or None,
+                    expected_size=release.get("asset_size") or None,
+                    expected_sha256=release.get("asset_sha256") or None)
                 result.update(ok=True, path=path,
                               message=f"Saved to {path}. Quit Nebula and swap the exe.")
             except Exception as exc:

@@ -199,6 +199,8 @@ def fetch_latest_release(repo=DEFAULT_REPO, token=None, timeout=15):
         "html_url": html_url,
         "asset_name": (exe or {}).get("name"),
         "asset_url": (exe or {}).get("browser_download_url"),
+        "asset_size": (exe or {}).get("size") or None,
+        "asset_sha256": _sha256_from_digest((exe or {}).get("digest")),
         "published_at": data.get("published_at") or "",
         "tag_only": tag_only,
     }
@@ -259,18 +261,58 @@ def check_for_update(repo=DEFAULT_REPO, token=None, local_version=__version__):
                 release.get("tag") or remote, local_version)}
 
 
-def download_update(asset_url, dest_path, token=None, timeout=120):
-    """Download a release asset to ``dest_path`` (atomic via .partial)."""
+def _sha256_from_digest(digest):
+    """GitHub asset ``digest`` is ``sha256:<hex>``. Anything else is ignored."""
+    if not isinstance(digest, str) or not digest.startswith("sha256:"):
+        return None
+    hexdigest = digest.split(":", 1)[1].strip().lower()
+    if len(hexdigest) != 64:
+        return None
+    return hexdigest
+
+
+def download_update(asset_url, dest_path, token=None, timeout=120,
+                    expected_size=None, expected_sha256=None):
+    """Download a release asset to ``dest_path`` (atomic via .partial).
+
+    A dropped connection makes ``read`` return ``b""`` instead of raising, so
+    the byte count has to be checked against Content-Length or the size
+    GitHub published. A short file is deleted, not renamed into place.
+    """
     req = urllib.request.Request(asset_url, headers=_api_headers(token))
     partial = dest_path + ".partial"
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp, open(partial, "wb") as out:
+            expected = int(expected_size) if expected_size else 0
+            if not expected:
+                header = resp.headers.get("Content-Length") if resp.headers else None
+                if header and str(header).isdigit():
+                    expected = int(header)
+            got = 0
             while True:
                 chunk = resp.read(1024 * 256)
                 if not chunk:
                     break
                 out.write(chunk)
+                got += len(chunk)
+        if expected and got != expected:
+            raise RuntimeError(
+                "Download stopped early (%s of %s bytes)." % (got, expected))
         os.replace(partial, dest_path)
+        digest = (expected_sha256 or "").strip().lower()
+        if digest:
+            import hashlib
+            check = hashlib.sha256()
+            with open(dest_path, "rb") as fh:
+                for chunk in iter(lambda: fh.read(1024 * 1024), b""):
+                    check.update(chunk)
+            if check.hexdigest().lower() != digest:
+                try:
+                    os.remove(dest_path)
+                except OSError:
+                    pass
+                raise RuntimeError(
+                    "Download didn't match the published hash.")
     finally:
         if os.path.exists(partial):
             try:
@@ -855,9 +897,11 @@ def relaunch_source(root=None, pid=None):
 
     Writes a tiny waiter into %TEMP% - deliberately **not** beside the repo,
     where a stray helper file would dirty the tree and ship on the next
-    Save this machine. The waiter waits for ``pid`` to drop (mutex and
-    WebView2 children released), then starts ``pythonw spike/app.py --show``
-    from the repo root - the same argv as the Start Menu shortcut.
+    Save this machine. The waiter waits until ``pid`` has actually exited.
+    If the single-instance mutex is already held (the game watcher starts a
+    hidden copy in that gap), it asks that copy to show itself. Otherwise it
+    starts ``pythonw spike/app.py --show`` from the repo root - the same argv
+    as the Start Menu shortcut.
     """
     import subprocess
     import tempfile
@@ -881,26 +925,64 @@ def relaunch_source(root=None, pid=None):
 
     pid = int(pid or os.getpid())
     helper = os.path.join(tempfile.gettempdir(), "_nebula_relaunch.py")
+    # Wait until that pid has actually exited, then either start a fresh
+    # window or — if something else already took the single-instance mutex,
+    # usually the game watcher — ask that copy to show. OpenProcess failing
+    # is not "the process is gone" (access denied looks the same), and
+    # starting --show while the mutex is held focuses a hidden window.
     script = textwrap.dedent("""\
-        import os, sys, time, subprocess
+        import os, sys, time, subprocess, ctypes
         pid, pyw, entry, root = (sys.argv[1], sys.argv[2], sys.argv[3],
                                  sys.argv[4])
-        for _ in range(120):
+        kernel = ctypes.windll.kernel32
+        SYNCHRONIZE = 0x00100000
+        WAIT_TIMEOUT = 0x102
+        kernel.OpenProcess.restype = ctypes.c_void_p
+        kernel.OpenMutexW.restype = ctypes.c_void_p
+        kernel.OpenEventW.restype = ctypes.c_void_p
+        kernel.WaitForSingleObject.argtypes = [ctypes.c_void_p, ctypes.c_uint]
+        kernel.WaitForSingleObject.restype = ctypes.c_uint
+        kernel.CloseHandle.argtypes = [ctypes.c_void_p]
+
+        def pid_alive():
+            handle = kernel.OpenProcess(SYNCHRONIZE, False, int(pid))
+            if not handle:
+                return False
             try:
-                import ctypes
-                SYNCHRONIZE = 0x00100000
-                h = ctypes.windll.kernel32.OpenProcess(SYNCHRONIZE, False,
-                                                       int(pid))
-                if h:
-                    ctypes.windll.kernel32.CloseHandle(h)
-                    time.sleep(0.5)
-                    continue
-            except Exception:
-                pass
-            break
-        flags = 0x00000008 | 0x00000200  # DETACHED | NEW_GROUP
-        subprocess.Popen([pyw, entry, "--show"], cwd=root,
-                         close_fds=True, creationflags=flags)
+                return kernel.WaitForSingleObject(handle, 0) == WAIT_TIMEOUT
+            finally:
+                kernel.CloseHandle(handle)
+
+        def mutex_held():
+            handle = kernel.OpenMutexW(SYNCHRONIZE, False, "Nebula.SingleInstance")
+            if not handle:
+                return False
+            kernel.CloseHandle(handle)
+            return True
+
+        def pulse_wake():
+            handle = kernel.OpenEventW(
+                SYNCHRONIZE | 0x0002, False, "Local\\\\Nebula.Wake")
+            if not handle:
+                return False
+            kernel.SetEvent(handle)
+            kernel.CloseHandle(handle)
+            return True
+
+        for _ in range(120):
+            if not pid_alive():
+                break
+            time.sleep(0.5)
+        time.sleep(0.4)
+        if mutex_held():
+            for _ in range(40):
+                if pulse_wake():
+                    break
+                time.sleep(0.25)
+        else:
+            flags = 0x00000008 | 0x00000200  # DETACHED | NEW_GROUP
+            subprocess.Popen([pyw, entry, "--show"], cwd=root,
+                             close_fds=True, creationflags=flags)
         try:
             os.remove(__file__)
         except OSError:
@@ -928,13 +1010,18 @@ def relaunch_source(root=None, pid=None):
     return {"ok": True, "message": "Restarting with the latest source."}
 
 
-def install_and_relaunch(update_path, target_path=None, pid=None):
+def install_and_relaunch(update_path, target_path=None, pid=None,
+                          size=None, sha256=None):
     """Show the update window, then replace this exe once it has quit.
 
     Copies the running image to ``_nebula_updater.exe`` and starts that with
     ``--apply-update``. The copy is what draws the window: a packaged
     ``Nebula.exe`` is not a Python interpreter, so handing it a ``.py`` helper
     never ran. The caller still has to quit so the file lock drops.
+
+    A onefile build is two processes. ``os.getpid()`` is the inner one; the
+    bootloader keeps the exe mapped after it. Both pids are passed so the
+    swap waits for the lock to drop.
     """
     import shutil
     import subprocess
@@ -948,6 +1035,10 @@ def install_and_relaunch(update_path, target_path=None, pid=None):
         raise RuntimeError("Update file missing: %s" % update_path)
     target_path = os.path.abspath(target_path or sys.executable)
     pid = int(pid or os.getpid())
+    pids = [pid] if pid > 0 else []
+    parent = _same_image_parent(target_path)
+    if parent and parent not in pids:
+        pids.append(parent)
     work = os.path.dirname(target_path)
     updater = os.path.join(work, UPDATER_NAME)
     try:
@@ -965,9 +1056,14 @@ def install_and_relaunch(update_path, target_path=None, pid=None):
     # makes this copy extract on its own, so it survives the parent quitting.
     env = os.environ.copy()
     env["PYINSTALLER_RESET_ENVIRONMENT"] = "1"
+    cmd = [updater, APPLY_FLAG, "--target", target_path, "--source", update_path,
+           "--pid", ",".join(str(item) for item in pids)]
+    if size:
+        cmd.extend(["--size", str(int(size))])
+    if sha256:
+        cmd.extend(["--sha256", str(sha256)])
     subprocess.Popen(
-        [updater, APPLY_FLAG, "--target", target_path, "--source", update_path,
-         "--pid", str(pid)],
+        cmd,
         cwd=work,
         close_fds=True,
         creationflags=flags,
@@ -977,6 +1073,28 @@ def install_and_relaunch(update_path, target_path=None, pid=None):
         stderr=subprocess.DEVNULL,
     )
     return updater
+
+
+def _same_image_parent(image_path):
+    """The onefile bootloader pid, when it is a parent running this same exe.
+
+    ``os.getppid()`` on its own is often Explorer or a terminal. Waiting for
+    that pid would sit for a minute and then refuse to install.
+    """
+    try:
+        parent = int(os.getppid())
+    except (OSError, ValueError):
+        return 0
+    if parent <= 0 or parent == os.getpid():
+        return 0
+    try:
+        import psutil
+        parent_exe = os.path.abspath(psutil.Process(parent).exe())
+    except Exception:
+        return 0
+    if parent_exe.lower() == os.path.abspath(image_path).lower():
+        return parent
+    return 0
 
 
 if __name__ == "__main__":

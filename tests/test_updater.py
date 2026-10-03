@@ -63,6 +63,9 @@ try:
         check("spawn asks for the update window",
               "--apply-update" in spawned and "--source" in spawned
               and src in spawned, spawned)
+        check("spawn waits on the given pid",
+              "--pid" in spawned and spawned[spawned.index("--pid") + 1] == "1",
+              spawned)
         env = popen.call_args.kwargs.get("env") or {}
         check("updater resets the pyinstaller unpack dir",
               env.get("PYINSTALLER_RESET_ENVIRONMENT") == "1", env)
@@ -156,6 +159,78 @@ try:
     check("cancel leaves the exe alone", still == b"keep-me" and "cancelled" in raised,
           raised or still)
     check("cancel keeps the download", os.path.isfile(fresh))
+
+    # A cancel while the old process is still alive must not start another
+    # copy. That copy loses the mutex, focuses the one that's quitting, and
+    # exits — so the user is left with nothing.
+    live = os.path.join(swap_dir, "live.exe")
+    pending = os.path.join(swap_dir, "pending.exe")
+    with open(live, "wb") as fh:
+        fh.write(b"still-running")
+    with open(pending, "wb") as fh:
+        fh.write(b"do-not-install")
+    early = __import__("threading").Event()
+    early.set()
+    spawned_early = {"called": False}
+
+    def _no_spawn(_target):
+        spawned_early["called"] = True
+
+    early_error = ""
+    with mock.patch("obsauto.update_apply.pid_alive", return_value=True), \
+         mock.patch("obsauto.update_apply.time.sleep"), \
+         mock.patch("obsauto.update_apply._spawn", side_effect=_no_spawn):
+        try:
+            apply_downloaded_exe(
+                live, pending, pid=4242, launch=True, cancel=early)
+        except RuntimeError as exc:
+            early_error = str(exc)
+    with open(live, "rb") as fh:
+        live_bytes = fh.read()
+    check("cancel while running does not relaunch",
+          live_bytes == b"still-running" and not spawned_early["called"]
+          and "cancelled" in early_error and "opening again" not in early_error,
+          early_error)
+
+    short = os.path.join(swap_dir, "short.exe")
+    installed = os.path.join(swap_dir, "installed.exe")
+    with open(short, "wb") as fh:
+        fh.write(b"tiny")
+    with open(installed, "wb") as fh:
+        fh.write(b"good-exe")
+    size_error = ""
+    try:
+        apply_downloaded_exe(
+            installed, short, pid=0, launch=False, expected_size=50)
+    except RuntimeError as exc:
+        size_error = str(exc)
+    with open(installed, "rb") as fh:
+        kept_install = fh.read()
+    check("short download is not installed",
+          kept_install == b"good-exe" and "wrong size" in size_error, size_error)
+
+    # Both start attempts fail after the swap. The error has to stay
+    # _ReplacedNotStarted so the dialog does not claim the exe was untouched.
+    from obsauto.update_apply import _ReplacedNotStarted
+    swapped_exe = os.path.join(swap_dir, "swapped.exe")
+    new_body = os.path.join(swap_dir, "new-body.exe")
+    with open(swapped_exe, "wb") as fh:
+        fh.write(b"old-body")
+    with open(new_body, "wb") as fh:
+        fh.write(b"new-body")
+    start_error = None
+    with mock.patch("obsauto.update_apply._spawn", side_effect=OSError("blocked")):
+        try:
+            apply_downloaded_exe(swapped_exe, new_body, pid=0, launch=True)
+        except _ReplacedNotStarted as exc:
+            start_error = exc
+        except Exception as exc:
+            start_error = exc
+    with open(swapped_exe, "rb") as fh:
+        swapped_body = fh.read()
+    check("failed start after replace stays honest",
+          isinstance(start_error, _ReplacedNotStarted) and swapped_body == b"new-body",
+          type(start_error).__name__ if start_error else swapped_body)
 finally:
     shutil.rmtree(swap_dir, ignore_errors=True)
 
@@ -402,10 +477,47 @@ try:
         check("waiter waits on the given pid", "int(pid)" in _src, "")
         check("waiter passes --show like the Start Menu shortcut",
               '"--show"' in _src, "")
+        check("waiter shows a copy that already holds the mutex",
+              "Nebula.SingleInstance" in _src and "Nebula.Wake" in _src, "")
         os.remove(_waiter)
 finally:
     _subprocess_mod.Popen = _real_popen
 
+# A short body must not be renamed onto the download path.
+import io
+_short_dest = os.path.join(tempfile.gettempdir(), "nebula-short-download.exe")
+
+
+class _ShortBody:
+    headers = {"Content-Length": "8"}
+
+    def __init__(self):
+        self._buf = io.BytesIO(b"abcd")
+
+    def read(self, _n):
+        return self._buf.read(_n)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_exc):
+        return False
+
+
+try:
+    if os.path.exists(_short_dest):
+        os.remove(_short_dest)
+    with mock.patch("urllib.request.urlopen", return_value=_ShortBody()):
+        _short_error = ""
+        try:
+            updater_mod.download_update("http://example.invalid/Nebula.exe", _short_dest)
+        except RuntimeError as exc:
+            _short_error = str(exc)
+    check("short download is refused",
+          "stopped early" in _short_error and not os.path.exists(_short_dest),
+          _short_error)
+except Exception as exc:
+    check("short download is refused", False, str(exc))
 
 failed = 0
 for name, passed, detail in results:
