@@ -10,7 +10,8 @@
    - core opacity was pushed toward /.98 so the glass stays readable on a
      busy desktop
    - luminous inset hairline at hairline-rgb /.075 (not a painted grey box)
-   - soft lift is the OS shadow — a CSS outer drop clips at the HWND edge */
+   - the HWND is the capsule. No OS shadow: that plate is square and
+     shows past the curve */
 
 *, *::before, *::after { box-sizing: border-box; }
 
@@ -42,7 +43,9 @@ html, body {
 .toast {
   width: var(--toast-w);
   height: var(--toast-h);
-  opacity: 0;
+  /* Opacity lives on the HWND. Fading this node shows the window fill,
+     which is a solid black capsule. */
+  opacity: 1;
   transform: translateY(var(--toast-in-rise));
   transition: none;
 }
@@ -145,15 +148,13 @@ html, body {
 .toast.is-visible {
   opacity: 1;
   transform: translateY(0);
-  transition:
-    opacity var(--toast-in-ms) var(--ease),
-    transform var(--toast-in-ms) var(--ease);
+  transition: transform var(--toast-in-ms) var(--ease);
 }
 
 .toast.is-dismissing {
-  opacity: 0;
+  opacity: 1;
   transform: translateY(0);
-  transition: opacity var(--toast-out-ms) var(--ease);
+  transition: none;
 }
 
 .toast.is-swap {

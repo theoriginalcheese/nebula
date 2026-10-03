@@ -233,9 +233,11 @@ def _make_transparent(window, host=None):
 def _clip_capsule(window, host=None):
     """Clip the toast HWND to a capsule (corner diameter = window height).
 
-    DWM ROUND only softens a rectangle by about 8px. That squared silhouette
-    is the toast Anthony rejected. A window region removes the corners, so
-    the page can fill a true pill without a grey frame in the gap.
+    Two rectangular plates show past the curve if they are left on. The OS
+    shadow is one (the toast window is created with ``shadow=False``). The
+    other is Mica: pywebview turns on ``DWMSBT_MAINWINDOW`` for a dark theme,
+    and that wash fills the window rectangle even after the region is a pill.
+    Drop the extended frame, turn the backdrop off, then clip.
     """
     def apply():
         rgn = None
@@ -248,11 +250,32 @@ def _clip_capsule(window, host=None):
             h = int(rect.bottom - rect.top)
             if w < 8 or h < 8:
                 return
+
+            class _MARGINS(ctypes.Structure):
+                _fields_ = [
+                    ("cxLeftWidth", ctypes.c_int),
+                    ("cxRightWidth", ctypes.c_int),
+                    ("cyTopHeight", ctypes.c_int),
+                    ("cyBottomHeight", ctypes.c_int),
+                ]
+
+            # pywebview's shadow extends the frame by 1px on each side. That
+            # plate is square. Zero it so nothing is drawn outside the curve.
+            margins = _MARGINS(0, 0, 0, 0)
+            ctypes.windll.dwmapi.DwmExtendFrameIntoClientArea(
+                hwnd, ctypes.byref(margins))
             # DONOTROUND — our region is the silhouette. DWM's 8px round
             # would otherwise fight the capsule ends.
             donot = ctypes.c_int(1)            # DWMWCP_DONOTROUND
             ctypes.windll.dwmapi.DwmSetWindowAttribute(
                 hwnd, 33, ctypes.byref(donot), ctypes.sizeof(donot))
+            no_border = ctypes.c_int(0xFFFFFFFE)  # DWMWA_COLOR_NONE
+            ctypes.windll.dwmapi.DwmSetWindowAttribute(
+                hwnd, 34, ctypes.byref(no_border), ctypes.sizeof(no_border))
+            # DWMSBT_NONE. Mica (value 2) is the grey square in the corners.
+            no_backdrop = ctypes.c_int(1)
+            ctypes.windll.dwmapi.DwmSetWindowAttribute(
+                hwnd, 38, ctypes.byref(no_backdrop), ctypes.sizeof(no_backdrop))
             rgn = ctypes.windll.gdi32.CreateRoundRectRgn(0, 0, w + 1, h + 1, h, h)
             if not rgn:
                 return
@@ -780,6 +803,7 @@ class ToastController:
         self._on_timeout = None
         self._fading = False
         self._fade_gen = 0
+        self._fade_timer = None
         # 0 = idle, 1 = HWND appear, -1 = HWND dismiss.
         self._fade_dir = 0
         # True after create/hide — next paint soft-fades the HWND in.
@@ -845,6 +869,7 @@ class ToastController:
 
     def _replace_gui(self, content, callbacks=None, timeout_cb=None):
         self._generation += 1
+        self._stop_fade_timer()
         self._action_callbacks = list(callbacks or [])
         self._on_timeout = timeout_cb
         self._showing = True
@@ -912,13 +937,9 @@ class ToastController:
             on_top=True,
             hidden=False,
             resizable=False,
-            # shadow=True makes pywebview call ExtendFrameIntoClientArea, which
-            # gives DWM a frame to own - the documented precondition for
-            # DWMWA_WINDOW_CORNER_PREFERENCE having any effect. A bare
-            # frameless popup is not rounded by DWM at all.
-            # Combo balanced soft lift also rides this OS shadow: CSS outer
-            # drop clips at the card-sized HWND (see toast.css header).
-            shadow=True,
+            # No OS shadow. It is a square plate, and it shows past the
+            # capsule curve. The region in _clip_capsule is the edge.
+            shadow=False,
             focus=False,
             background_color=dv.GROUND_DEEP,
         )
@@ -956,12 +977,10 @@ class ToastController:
             # (create starts at status 384×60; actions live below that fold).
             self._resize_for_mode(self._prompt)
             self._reposition()
-            # JS already painted via consume_pending — reveal without a stepped
-            # Opacity tick loop (those pause WebView2 CSS animations / drain).
             _show_noactivate(self._window, self._log)
             self._needs_appear = False
             self._set_renderer_sleep(False)
-            self._set_form_opacity(1.0)
+            self._start_appear()
         self._schedule_paint_check(self._generation)
 
     def _push(self, content):
@@ -978,9 +997,8 @@ class ToastController:
                     return
                 self._resize_for_mode(prompt)
                 if appear:
-                    # Hold at 0 only until the DOM paint lands, then snap to 1.
-                    # A multi-step Form.Opacity appear loop stalls the drain
-                    # animation inside WebView2 (seen as a frozen bar).
+                    # Stay invisible until the DOM has painted. _start_appear
+                    # fades the HWND after that. The page itself stays opaque.
                     self._set_form_opacity(0.0)
                 payload = json.dumps(content, ensure_ascii=False)
                 self._window.evaluate_js("window.toastReplace(%s)" % payload)
@@ -996,7 +1014,10 @@ class ToastController:
                     self._set_renderer_sleep(False)
                     _show_noactivate(self._window, self._log)
                     self._needs_appear = False
-                    self._set_form_opacity(1.0)
+                    if appear:
+                        self._start_appear()
+                    else:
+                        self._set_form_opacity(1.0)
                     _clip_capsule(self._window, self._host)
 
                 _run_on_gui(self._host, reveal)
@@ -1114,6 +1135,96 @@ class ToastController:
         # Hide after the action — Accept/Dismiss both consume the slot.
         self._start_dismiss()
 
+    def _stop_fade_timer(self, dispose=True):
+        timer = self._fade_timer
+        self._fade_timer = None
+        if timer is not None:
+            try:
+                timer.Stop()
+            except Exception:
+                pass
+            # Disposing from inside Tick throws and skips the hide.
+            if dispose:
+                try:
+                    timer.Dispose()
+                except Exception:
+                    pass
+        try:
+            ctypes.windll.winmm.timeEndPeriod(1)
+        except Exception:
+            pass
+
+    def _run_fade(self, direction, duration_ms, on_done):
+        """Fade the HWND on the window thread.
+
+        A cross-thread timer only landed about a dozen frames, so the fade
+        stepped. This clock runs on the WinForms thread at 8ms, against a
+        1ms timer period, and the opacity follows elapsed time.
+        """
+        if not self._window:
+            return
+        gen = self._generation
+        self._fade_dir = direction
+        self._fade_gen = gen
+        duration_ms = max(1, int(duration_ms))
+
+        def start():
+            self._stop_fade_timer()
+            if gen != self._generation or not self._window:
+                self._fade_dir = 0
+                return
+            try:
+                ctypes.windll.winmm.timeBeginPeriod(1)
+            except Exception:
+                pass
+            from System.Windows.Forms import Timer
+            started = time.perf_counter()
+            timer = Timer()
+            timer.Interval = 8
+            self._fade_timer = timer
+
+            def on_tick(_sender, _args):
+                if gen != self._generation or self._fade_dir != direction:
+                    self._stop_fade_timer(dispose=False)
+                    if gen != self._generation:
+                        self._fading = False
+                        self._fade_dir = 0
+                        self._set_form_opacity(1.0)
+                    return
+                if not self._window:
+                    self._stop_fade_timer(dispose=False)
+                    self._fading = False
+                    self._fade_dir = 0
+                    return
+                elapsed = (time.perf_counter() - started) * 1000.0
+                t = min(1.0, elapsed / float(duration_ms))
+                eased = t * t * (3.0 - 2.0 * t)
+                value = eased if direction == 1 else (1.0 - eased)
+                self._set_form_opacity(value)
+                if t < 1.0:
+                    return
+                self._stop_fade_timer(dispose=False)
+                self._set_form_opacity(1.0 if direction == 1 else 0.0)
+                if direction == 1:
+                    self._fade_dir = 0
+                if on_done:
+                    on_done()
+
+            timer.Tick += on_tick
+            on_tick(None, None)
+            if self._fade_timer is timer:
+                timer.Start()
+
+        _run_on_gui(self._host, start)
+
+    def _start_appear(self):
+        """Fade the whole capsule in. The page stays opaque while this runs."""
+        if not self._showing or not self._window:
+            return
+        if self._fade_dir == 1 and self._fade_gen == self._generation:
+            return
+        self._run_fade(1, dv.TOAST_IN_MS, None)
+
     def _set_form_opacity(self, value):
         """WinForms Form.Opacity — fades the whole HWND (fill + DWM round)."""
         win = self._window
@@ -1137,47 +1248,22 @@ class ToastController:
             return
         if self._fade_dir == -1 and self._fade_gen == self._generation:
             return
-        gen = self._generation
         self._fading = True
-        self._fade_dir = -1
-        self._fade_gen = gen
-        out_ms = max(1, int(dv.TOAST_OUT_MS))
-        steps = max(8, out_ms // 16)
-        interval = out_ms / float(steps) / 1000.0
 
-        def tick(i):
-            if gen != self._generation:
-                self._fading = False
-                self._fade_dir = 0
-                self._set_form_opacity(1.0)
-                return
-            if self._fade_dir != -1:
-                return
-            if not self._window:
-                self._fading = False
-                self._fade_dir = 0
-                return
-            # Smoothstep toward 0 — continuous across TOAST_OUT_MS.
-            # Strong ease-out (.32,.72,0,1 / t**2.4) spent most of the travel
-            # early, then crawled; read as "halfway stuck then goes".
-            t = i / float(steps)
-            eased = t * t * (3.0 - 2.0 * t)
-            self._set_form_opacity(max(0.0, 1.0 - eased))
-            if i >= steps:
-                self._on_expired()
-                return
+        def finished():
+            # fade_dir is still -1, so this hides instead of starting again.
+            self._on_expired()
 
-            def nxt():
-                _run_on_gui(self._host, lambda: tick(i + 1))
-
-            threading.Timer(interval, nxt).start()
-
-        _run_on_gui(self._host, lambda: tick(0))
+        self._run_fade(-1, dv.TOAST_OUT_MS, finished)
 
     def _on_expired(self):
-        # Capture generation at expire request time. A newer replace must win —
-        # destroying/hiding mid-replace left a blank HWND zombie (opacity 0,
-        # no tick chain) that --toast-demo kept on screen forever.
+        # First call fades the HWND. The fade's last tick calls this again
+        # and hides. Fading the page instead leaves a black capsule behind.
+        if self._showing and self._fade_dir != -1:
+            self._start_dismiss()
+            return
+        # A newer replace must win — hiding mid-replace left a blank HWND
+        # zombie (opacity 0, no tick chain) that --toast-demo kept on screen.
         self._expire_if_current(self._generation)
 
     def _expire_if_current(self, gen):
@@ -1193,6 +1279,7 @@ class ToastController:
             self._showing = False
             self._fading = False
             self._fade_dir = 0
+            self._stop_fade_timer()
             self._needs_appear = True
             if timeout_cb:
                 try:
@@ -1224,6 +1311,7 @@ class ToastController:
             self._alive = False
             self._showing = False
             self._ready.clear()
+            self._stop_fade_timer()
             if self._window:
                 try:
                     self._window.destroy()

@@ -224,17 +224,13 @@ function cancelDismiss() {
 
 function fadeOut() {
   state.dismissing = true;
-  $("toast").classList.add("is-dismissing");
-  $("toast").classList.remove("is-visible");
-  const outMs = (state.cfg && state.cfg.out_ms) || DEFAULT_CFG.out_ms;
-  setTimeout(() => {
-    if (!state.dismissing) return;
-    state.ticking = false;
-    state.tickHandle = null;
-    if (window.pywebview && window.pywebview.api) {
-      window.pywebview.api.on_expired();
-    }
-  }, outMs + 20);
+  state.ticking = false;
+  state.tickHandle = null;
+  // The page stays opaque. Python fades the window, then hides it.
+  // Fading the page here reveals the black window fill.
+  if (window.pywebview && window.pywebview.api) {
+    window.pywebview.api.on_expired();
+  }
 }
 
 function tick() {
