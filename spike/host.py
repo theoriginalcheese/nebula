@@ -12,6 +12,7 @@ import atexit
 import ctypes
 import os
 import queue
+import random
 import subprocess
 import threading
 import time
@@ -21,6 +22,9 @@ import psutil
 from obsauto import design_v3 as dv
 from obsauto import hotkey as hotkey_mod
 from obsauto import replay as replay_mod
+from spike.dial import (
+    ROW_LABELS, DialKnob, background_for_open, pause_label, status_word,
+)
 from spike.windows import NebulaWindows
 from obsauto import tray_app
 from obsauto.app_log import log_to_file
@@ -315,6 +319,8 @@ class NebulaHost:
         self._preview_last_fetch = 0.0
 
         self.hotkeys = HotkeyManager(on_log=self._log)
+        self._dial = DialKnob(on_log=self._log)
+        self._dial_hook = None
         self._windows = NebulaWindows(self, config)
 
         self._calls = queue.Queue()
@@ -568,6 +574,7 @@ class NebulaHost:
         if self._quitting:
             return
         self._quitting = True
+        self._unbind_dial()
         self._abort_connect = True
         self._taskbar_icon_stop.set()
         self._stop_poll()
@@ -1253,6 +1260,11 @@ class NebulaHost:
 
         if was != now:
             self.refresh_tray_icon()
+            try:
+                self._windows.dial_refresh()
+            except Exception as exc:
+                error = exc
+                self._log("[Dial] status refresh failed: %s" % error)
 
         # Scene still for the WebView hero tile (recording/paused only).
         try:
@@ -1719,7 +1731,101 @@ class NebulaHost:
             from .udp_trigger import UdpTrigger
             self._udp_trigger = UdpTrigger(self._save_replay, on_log=self._log)
             self._udp_trigger.start(cfg.get("replay_udp_port"))
+        self._bind_dial()
         return self.hotkeys
+
+    def dial_status(self):
+        """Header word and the pause-row label from the last OBS poll."""
+        state = self.hero_state()
+        return {
+            "status": status_word(state),
+            "pauseLabel": pause_label(state == "paused"),
+        }
+
+    def _bind_dial(self):
+        self._unbind_dial()
+        self._dial_hook = hotkey_mod.hook(
+            self._on_dial_event, suppress=True, on_log=self._log)
+        if self._dial_hook:
+            self._log("[Dial] watching numpad Ins (Num Lock off), "
+                      "VK_VOLUME_UP 0xAF, VK_VOLUME_DOWN 0xAE, "
+                      "VK_VOLUME_MUTE 0xAD")
+
+    def _unbind_dial(self):
+        handle = getattr(self, "_dial_hook", None)
+        self._dial_hook = None
+        hotkey_mod.unhook(handle, on_log=self._log)
+
+    def _on_dial_event(self, event):
+        if self._quitting:
+            return True
+        allow, action = self._dial.handle(event)
+        if action:
+            self.call_soon(lambda a=action: self._dial_perform(a))
+        return allow
+
+    def _dial_perform(self, action):
+        kind = action.get("type")
+        windows = getattr(self, "_windows", None)
+        if kind == "open":
+            status = self.dial_status()
+            self._log("[Dial] open status=%s" % status["status"])
+            if windows is None:
+                self._dial.abandon()
+                return
+            payload = dict(status)
+            payload["index"] = self._dial.index
+            payload["seed"] = random.randrange(1, 2 ** 31)
+            bg, chosen_at = background_for_open(
+                getattr(self, "_dial_bg", None),
+                getattr(self, "_dial_bg_at", None),
+                time.monotonic(),
+                random.random,
+            )
+            self._dial_bg = bg
+            self._dial_bg_at = chosen_at
+            payload["bg"] = bg
+            payload["epoch"] = action.get("epoch")
+            windows.dial_open(payload)
+        elif kind == "move":
+            index = action.get("index", 0)
+            self._log("[Dial] highlight %s" % self._dial_row_name(index))
+            if windows is not None:
+                windows.dial_highlight(index)
+        elif kind == "activate":
+            index = action.get("index", 0)
+            name = self._dial_row_name(index)
+            self._log("[Dial] run %s" % name)
+            token = action.get("token")
+            try:
+                self._dial_run(index)
+            finally:
+                if windows is None:
+                    self._dial.note_closed(token)
+                else:
+                    windows.dial_close(token)
+        elif kind == "close":
+            self._log("[Dial] close")
+            token = action.get("token")
+            if windows is None:
+                self._dial.note_closed(token)
+                return
+            windows.dial_close(token)
+
+    def _dial_row_name(self, index):
+        if index == 1:
+            return self.dial_status()["pauseLabel"]
+        if 0 <= index < len(ROW_LABELS):
+            return ROW_LABELS[index]
+        return "row %s" % index
+
+    def _dial_run(self, index):
+        if index == 0:
+            self.show()
+        elif index == 1:
+            self._toggle_pause()
+        elif index == 2:
+            self._save_replay()
 
     def apply_obs_endpoint(self):
         """Point the live client at the saved host, port and password.

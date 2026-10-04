@@ -1,4 +1,4 @@
-"""Toast (2i) and mini overlay (2k) as separate pywebview windows.
+"""Toast (2i), mini overlay (2k) and the K762 dial menu as separate pywebview windows.
 
 These are deliberately *not* part of the main ``index.html`` surface — another
 agent owns ``spike/app.py`` and ``spike/host.py``. This module defines the
@@ -36,6 +36,10 @@ import webview
 
 from obsauto import design_v3 as dv
 from obsauto.config import save_config
+from spike.dial import (
+    CLOSE_MS, DODGE_MS, OPEN_TOTAL_MS, close_pose, corner_dy, dodge_lift,
+    open_pose,
+)
 from spike.webview_power import apply_webview_power
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -48,6 +52,9 @@ OVERLAY_HTML = os.path.join(WEB, "overlay.html")
 # track obsauto/design_v3.py TOAST_*.
 TOAST_W, TOAST_H = dv.TOAST_W, dv.TOAST_H
 TOAST_PROMPT_W, TOAST_PROMPT_H = dv.TOAST_PROMPT_W, dv.TOAST_PROMPT_H
+# The drawn menu: 8px pad + 30px header + three 38px rows. Not a capsule.
+DIAL_W, DIAL_H = 320, 160
+DIAL_HTML = os.path.join(WEB, "dial.html")
 
 # Segoe Fluent Icons — same verified codepoints as gui.py, keyed by Phosphor name.
 _ICON_CODEPOINTS = {
@@ -63,19 +70,30 @@ _ICON_CODEPOINTS = {
 ICON_GLYPHS = {name: chr(cp) for name, cp in _ICON_CODEPOINTS.items()}
 
 GWL_EXSTYLE = -20
+WS_EX_TOPMOST = 0x00000008
 WS_EX_TOOLWINDOW = 0x00000080
 WS_EX_APPWINDOW = 0x00040000
 WS_EX_NOACTIVATE = 0x08000000
 WM_CLOSE = 0x0010
 SW_SHOWNOACTIVATE = 4
+HWND_TOPMOST = -1
 SWP_NOSIZE = 0x0001
 SWP_NOMOVE = 0x0002
 SWP_NOZORDER = 0x0004
 SWP_NOACTIVATE = 0x0010
 SWP_FRAMECHANGED = 0x0020
+# While a toast is up, something else (a game, an overlay) can grab the
+# topmost band after we do. Re-assert often enough that it does not stay
+# covered, without taking focus.
+_TOAST_TOP_MS = 100
+
+# Pointer-sized SetWindowPos. The shared user32 binding has no argtypes, so
+# a bare -1 (HWND_TOPMOST) is passed as a 32-bit int. On 64-bit that is not
+# the all-ones HWND, and the call quietly does not raise the window.
+_SET_WINDOW_POS = None
 
 _LIVENESS_INTERVAL = 3.0
-_AUXILIARY_TITLES = frozenset(("Nebula Toast", "Nebula Overlay"))
+_AUXILIARY_TITLES = frozenset(("Nebula Toast", "Nebula Overlay", "Nebula Dial"))
 
 
 # --- monitor geometry -------------------------------------------------------
@@ -150,6 +168,16 @@ def _toast_place(right, bottom, monitor_handle, prompt=False):
     h = TOAST_PROMPT_H if prompt else TOAST_H
     x = (rect[2] / scale) - w - dv.TOAST_MARGIN
     y = (rect[3] / scale) - h - dv.TOAST_MARGIN
+    return x, y
+
+
+def _dial_place():
+    """Logical x/y for the dial, bottom-right of the primary work area."""
+    rect = (ctypes.c_long * 4)()
+    ctypes.windll.user32.SystemParametersInfoW(0x0030, 0, ctypes.byref(rect), 0)
+    scale = _primary_scale()
+    x = (rect[2] / scale) - DIAL_W - dv.TOAST_MARGIN
+    y = (rect[3] / scale) - DIAL_H - dv.TOAST_MARGIN
     return x, y
 
 
@@ -292,7 +320,51 @@ def _clip_capsule(window, host=None):
     _run_on_gui(host, apply)
 
 
-def _place_physical(window, x, y, host=None):
+def _clip_round_rect(window, radius_css, host=None):
+    """Clip an HWND to a rounded rectangle. Radius is CSS px, not a capsule.
+
+    Diameter is ``2 * radius`` scaled by the window's physical width over
+    its CSS width, so a 16px corner stays 16px on a 150% monitor.
+    """
+    def apply():
+        rgn = None
+        try:
+            hwnd = int(window.native.Handle.ToInt64())
+            rect = ctypes.wintypes.RECT()
+            if not ctypes.windll.user32.GetWindowRect(hwnd, ctypes.byref(rect)):
+                return
+            w = int(rect.right - rect.left)
+            h = int(rect.bottom - rect.top)
+            if w < 8 or h < 8:
+                return
+            css_w = float(DIAL_W) if DIAL_W else float(w)
+            diameter = max(2, int(round(2 * radius_css * w / css_w)))
+            donot = ctypes.c_int(1)  # DWMWCP_DONOTROUND — our region is the corner
+            ctypes.windll.dwmapi.DwmSetWindowAttribute(
+                hwnd, 33, ctypes.byref(donot), ctypes.sizeof(donot))
+            no_border = ctypes.c_int(0xFFFFFFFE)
+            ctypes.windll.dwmapi.DwmSetWindowAttribute(
+                hwnd, 34, ctypes.byref(no_border), ctypes.sizeof(no_border))
+            no_backdrop = ctypes.c_int(1)
+            ctypes.windll.dwmapi.DwmSetWindowAttribute(
+                hwnd, 38, ctypes.byref(no_backdrop), ctypes.sizeof(no_backdrop))
+            rgn = ctypes.windll.gdi32.CreateRoundRectRgn(
+                0, 0, w + 1, h + 1, diameter, diameter)
+            if not rgn:
+                return
+            if ctypes.windll.user32.SetWindowRgn(hwnd, rgn, True):
+                rgn = None
+        except Exception as exc:
+            if host is not None and hasattr(host, "_log"):
+                host._log("[Dial] round clip failed: %s" % exc)
+        finally:
+            if rgn:
+                ctypes.windll.gdi32.DeleteObject(rgn)
+
+    _run_on_gui(host, apply)
+
+
+def _place_physical(window, x, y, host=None, keep_z=False):
     """Move a window by PHYSICAL screen pixels, bypassing pywebview.
 
     ``move()`` and the ``x``/``y`` given to ``create_window`` are *logical*
@@ -314,8 +386,13 @@ def _place_physical(window, x, y, host=None):
         try:
             import ctypes
             hwnd = int(window.native.Handle.ToInt64())
-            SWP_NOSIZE, SWP_NOACTIVATE = 0x0001, 0x0010
+            SWP_NOSIZE, SWP_NOACTIVATE, SWP_NOZORDER = 0x0001, 0x0010, 0x0004
             HWND_TOPMOST = -1
+            flags = SWP_NOSIZE | SWP_NOACTIVATE
+            insert_after = HWND_TOPMOST
+            if keep_z:
+                flags |= SWP_NOZORDER
+                insert_after = 0
             # The *thread* has to be per-monitor aware, not just the process.
             # WinForms leaves this GUI thread on a system-aware context, and a
             # system-aware caller gets its coordinates virtualised: asking for
@@ -334,8 +411,7 @@ def _place_physical(window, x, y, host=None):
                 prev_ctx = None
             try:
                 ctypes.windll.user32.SetWindowPos(
-                    hwnd, HWND_TOPMOST, int(x), int(y), 0, 0,
-                    SWP_NOSIZE | SWP_NOACTIVATE)
+                    hwnd, insert_after, int(x), int(y), 0, 0, flags)
             finally:
                 if prev_ctx:
                     try:
@@ -396,7 +472,9 @@ def _hide_from_taskbar(window, on_log=None):
         hwnd = int(window.native.Handle.ToInt64())
         user32 = ctypes.windll.user32
         style = user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
-        style = (style | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE) & ~WS_EX_APPWINDOW
+        style = (
+            style | WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE
+        ) & ~WS_EX_APPWINDOW
         user32.SetWindowLongW(hwnd, GWL_EXSTYLE, style)
         # Shell only picks up EXSTYLE changes after a frame change.
         user32.SetWindowPos(
@@ -408,6 +486,59 @@ def _hide_from_taskbar(window, on_log=None):
             on_log("[Windows] taskbar hide failed: %s" % exc)
 
 
+def _set_window_pos(hwnd, insert_after, flags):
+    """SetWindowPos with a pointer-sized insert-after handle."""
+    global _SET_WINDOW_POS
+    if _SET_WINDOW_POS is None:
+        _SET_WINDOW_POS = ctypes.WINFUNCTYPE(
+            ctypes.c_bool,
+            ctypes.c_void_p,
+            ctypes.c_void_p,
+            ctypes.c_int,
+            ctypes.c_int,
+            ctypes.c_int,
+            ctypes.c_int,
+            ctypes.c_uint,
+        )(("SetWindowPos", ctypes.windll.user32))
+    return bool(_SET_WINDOW_POS(
+        ctypes.c_void_p(int(hwnd)),
+        ctypes.c_void_p(int(insert_after)),
+        0, 0, 0, 0,
+        int(flags),
+    ))
+
+
+def _raise_above(window):
+    """Put this HWND above every other window, without taking focus.
+
+    pywebview sets ``Form.TopMost`` before ``FormBorderStyle.None``, and that
+    border change drops the topmost bit. A later ``on_top = True`` from the
+    push worker is cross-thread and gets swallowed. ``ShowWindow`` with
+    ``SW_SHOWNOACTIVATE`` does not raise z-order either, so a game or
+    browser that was already in front stays in front.
+
+    Do not set ``Form.TopMost``. That property's own SetWindowPos omits
+    ``SWP_NOACTIVATE`` and steals the foreground — a toast would yank a
+    game out of focus. A pointer-sized ``HWND_TOPMOST`` plus ``NOACTIVATE``
+    raises the window and leaves focus where it was.
+
+    Must run on the GUI thread (``native.Handle``).
+    """
+    try:
+        hwnd = int(window.native.Handle.ToInt64())
+    except Exception:
+        return
+    if not hwnd:
+        return
+    try:
+        _set_window_pos(
+            hwnd, HWND_TOPMOST,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+        )
+    except Exception:
+        pass
+
+
 def _show_noactivate(window, on_log=None):
     """Show an auxiliary HWND without a taskbar button or activation flash.
 
@@ -415,22 +546,22 @@ def _show_noactivate(window, on_log=None):
     WinForms ``Show()`` activates and can re-expose ``WS_EX_APPWINDOW``.
     Re-applies taskbar hide on every call (create-time hide alone is not enough).
     Falls back to ``window.show()`` when there is no native handle (tests).
+    Always re-asserts topmost afterwards: show itself does not.
     """
     _hide_from_taskbar(window, on_log)
     try:
         hwnd = int(window.native.Handle.ToInt64())
         ctypes.windll.user32.ShowWindow(hwnd, SW_SHOWNOACTIVATE)
-        return
     except Exception:
-        pass
-    try:
-        window.show()
-    except Exception as exc:
-        if on_log:
-            on_log("[Windows] show failed: %s" % exc)
-        return
-    # show() may have restored APPWINDOW — hide again.
-    _hide_from_taskbar(window, on_log)
+        try:
+            window.show()
+        except Exception as exc:
+            if on_log:
+                on_log("[Windows] show failed: %s" % exc)
+            return
+        # show() may have restored APPWINDOW — hide again.
+        _hide_from_taskbar(window, on_log)
+    _raise_above(window)
 
 
 def _format_bytes(n):
@@ -662,6 +793,8 @@ def _force_destroy_controller(ctl):
     ctl._alive = getattr(ctl, "_alive", False)
     if hasattr(ctl, "_open"):
         ctl._open = False
+    if hasattr(ctl, "_showing"):
+        ctl._showing = False
     if getattr(ctl, "_ready", None):
         ctl._ready.clear()
     _force_destroy_window(getattr(ctl, "_window", None))
@@ -804,6 +937,7 @@ class ToastController:
         self._fading = False
         self._fade_gen = 0
         self._fade_timer = None
+        self._top_timer = None
         # 0 = idle, 1 = HWND appear, -1 = HWND dismiss.
         self._fade_dir = 0
         # True after create/hide — next paint soft-fades the HWND in.
@@ -895,6 +1029,63 @@ class ToastController:
             self._pending = content
             self._needs_appear = True
             self._set_form_opacity(0.0)
+        self._arm_topmost()
+        self._tell_dial()
+
+    def _tell_dial(self):
+        """Ask the dial to clear this corner while the toast owns it."""
+        windows = getattr(self._host, "_windows", None)
+        dial = getattr(windows, "dial", None) if windows is not None else None
+        if dial is None:
+            return
+        if self._showing:
+            height = TOAST_PROMPT_H if self._prompt else TOAST_H
+            dial.note_toast(height + dv.TOAST_MARGIN)
+        else:
+            dial.note_toast(0)
+
+    def _arm_topmost(self):
+        """Keep the toast above whatever else is on screen, until it hides.
+
+        One raise at show is not enough: a game or overlay can take the
+        topmost band afterwards. The timer only runs while ``_showing``.
+        """
+        if not self._window or not self._showing:
+            return
+        _raise_above(self._window)
+        timer = self._top_timer
+        if timer is None:
+            try:
+                from System.Windows.Forms import Timer
+            except Exception:
+                return
+            timer = Timer()
+            timer.Interval = _TOAST_TOP_MS
+
+            def on_tick(_sender, _args):
+                if not self._showing or not self._window:
+                    try:
+                        _sender.Enabled = False
+                    except Exception:
+                        pass
+                    return
+                _raise_above(self._window)
+
+            timer.Tick += on_tick
+            self._top_timer = timer
+        try:
+            timer.Start()
+        except Exception:
+            pass
+
+    def _stop_topmost(self):
+        timer = self._top_timer
+        if timer is None:
+            return
+        try:
+            timer.Stop()
+        except Exception:
+            pass
 
     def _take_pending(self):
         out = self._pending
@@ -1106,9 +1297,9 @@ class ToastController:
         x, y = _toast_place(right, bottom, monitor, prompt=self._prompt)
         try:
             self._window.move(x, y)
-            self._window.on_top = True
         except Exception:
             pass
+        # Z-order is _raise_above, not Form.TopMost. The property activates.
 
     def _focus_main(self):
         host = self._host
@@ -1280,6 +1471,8 @@ class ToastController:
             self._fading = False
             self._fade_dir = 0
             self._stop_fade_timer()
+            self._stop_topmost()
+            self._tell_dial()
             self._needs_appear = True
             if timeout_cb:
                 try:
@@ -1312,6 +1505,14 @@ class ToastController:
             self._showing = False
             self._ready.clear()
             self._stop_fade_timer()
+            self._stop_topmost()
+            timer = self._top_timer
+            self._top_timer = None
+            if timer is not None:
+                try:
+                    timer.Dispose()
+                except Exception:
+                    pass
             if self._window:
                 try:
                     self._window.destroy()
@@ -1681,6 +1882,627 @@ class OverlayController:
             host._log(msg)
 
 
+# --- dial menu --------------------------------------------------------------
+
+class DialApi:
+    """JS bridge for the dial window. The Window stays on ``_window``."""
+
+    def __init__(self, controller):
+        self._ctl = controller
+        self._window = None
+
+    def ready(self):
+        # The page calls this off the WinForms thread. Pose timers only tick
+        # there, and window.show() from anywhere else takes focus.
+        _run_on_gui(self._ctl._host, self._ctl._on_ready, wait=False)
+
+
+class DialController:
+    """One menu for the process. Opens in place, never a stack.
+
+    The panel's rise and leave are Form.Opacity plus a no-activate move.
+    CSS transform inside a 160px HWND would clip them. A toast in the same
+    corner lifts that rest point and eases it back when the toast hides.
+    Rows, the pill and the background stay in the page.
+    """
+
+    TITLE = "Nebula Dial"
+
+    def __init__(self, host):
+        self._host = host
+        self._api = DialApi(self)
+        self._window = None
+        self._ready = threading.Event()
+        self._pending = None
+        self._alive = False
+        self._generation = 0
+        self._showing = False
+        self._rest = None
+        self._opacity = 0.0
+        self._offset = 0.0
+        self._lift = 0.0
+        self._lift_target = 0.0
+        self._pose_timer = None
+        self._pose_retired = None
+        self._pose_dir = 0
+        self._dodge_timer = None
+        self._dodge_retired = None
+        self._dodge_token = None
+        self._close_token = None
+        self._finished_token = None
+        self._closing = False
+        self._open_epoch = None
+        self._top_timer = None
+        self._renderer_asleep = False
+
+    def open(self, payload):
+        _run_on_gui(self._host, lambda: self._open_gui(payload), wait=False)
+
+    def highlight(self, index):
+        index = int(index)
+        if isinstance(self._pending, dict):
+            self._pending["index"] = index
+        if not self._showing or self._closing:
+            return
+        script = "window.dialHighlight(%d)" % index
+        self._eval(script)
+
+    def refresh_status(self):
+        host = self._host
+        if not self._showing or not hasattr(host, "dial_status"):
+            return
+        try:
+            payload = host.dial_status()
+        except Exception as exc:
+            error = exc
+            self._log("[Dial] status failed: %s" % error)
+            return
+        self._eval("window.dialStatus(%s)" % json.dumps(payload))
+
+    def close(self, token):
+        _run_on_gui(self._host, lambda: self._close_gui(token), wait=False)
+
+    def suspend_if_hidden(self):
+        _run_on_gui(self._host, self._suspend_if_hidden_gui, wait=False)
+
+    def _suspend_if_hidden_gui(self):
+        if not self._showing:
+            self._set_renderer_sleep(True)
+
+    def _set_renderer_sleep(self, asleep):
+        if not self._window or asleep == self._renderer_asleep:
+            return
+        win = self._window
+        script = "setAsleep(%s)" % ("true" if asleep else "false")
+
+        def push_js():
+            try:
+                win.evaluate_js(script)
+            except Exception:
+                pass
+
+        _off_gui(push_js)
+        apply_webview_power(win, asleep, log=self._log, prefix="[Dial]")
+        self._renderer_asleep = asleep
+
+    def _open_gui(self, payload):
+        self._closing = False
+        self._generation += 1
+        gen = self._generation
+        self._open_epoch = payload.get("epoch") if isinstance(payload, dict) else None
+        self._stop_pose()
+        self._showing = True
+        self._finished_token = None
+        try:
+            self._rest = _corner_physical(DIAL_W, DIAL_H)
+        except Exception:
+            self._rest = None
+        self._arm_open_deadline(gen, self._open_epoch)
+        if self._window is None:
+            self._pending = payload
+            self._create()
+            self._set_form_opacity(0.0)
+            return
+        if self._ready.is_set():
+            self._pending = None
+            self._push(payload, gen)
+        else:
+            self._pending = payload
+            self._set_form_opacity(0.0)
+        self._arm_topmost()
+
+    def _arm_open_deadline(self, gen, epoch):
+        """If the page never paints, do not leave volume keys swallowed."""
+        def fire():
+            time.sleep(3.0)
+
+            def decide():
+                if gen != self._generation or not self._showing or self._closing:
+                    return
+                if self._ready.is_set() and self._opacity > 0.5:
+                    return
+                self._log("[Dial] open did not paint — releasing volume keys")
+                knob = getattr(self._host, "_dial", None)
+                if knob is not None:
+                    knob.abandon(epoch)
+                self._finish_close(gen, None)
+
+            _run_on_gui(self._host, decide, wait=False)
+
+        threading.Thread(
+            target=fire, name="DialOpenDeadline", daemon=True).start()
+
+    def _close_gui(self, token):
+        if not self._showing:
+            self._tell_closed(token)
+            return
+        if self._closing:
+            return
+        # Drop any open push/reveal still queued for this show. _showing
+        # stays true until the leave finishes, so the generation and the
+        # flag are what stop that push from starting the open again.
+        self._closing = True
+        self._generation += 1
+        self._pending = None
+        self._close_token = token
+        self._start_pose("close", self._generation, token)
+
+    def _create(self):
+        x, y = _dial_place()
+        try:
+            closed = reclaim_orphan_windows()
+            if closed:
+                self._log("[Dial] reclaimed %d orphan window(s)" % len(closed))
+        except Exception as exc:
+            error = exc
+            self._log("[Dial] reclaim failed: %s" % error)
+        win = webview.create_window(
+            self.TITLE,
+            DIAL_HTML,
+            js_api=self._api,
+            width=DIAL_W,
+            height=DIAL_H,
+            min_size=(DIAL_W, DIAL_H),
+            x=x,
+            y=y,
+            frameless=True,
+            easy_drag=False,
+            on_top=True,
+            hidden=False,
+            resizable=False,
+            shadow=False,
+            focus=False,
+            background_color=dv.GROUND,
+        )
+        if win is None:
+            self._log("[Dial] create_window returned None")
+            return
+        self._window = win
+        self._api._window = win
+        self._alive = True
+        _hide_from_taskbar(win, self._log)
+        self._set_form_opacity(0.0)
+
+    def _on_ready(self):
+        self._ready.set()
+        _make_transparent(self._window, self._host)
+        _clip_round_rect(self._window, 16, self._host)
+        _hide_from_taskbar(self._window, self._log)
+        if self._closing or not self._showing:
+            return
+        if self._pending:
+            payload = self._pending
+            self._pending = None
+            self._push(payload, self._generation)
+        else:
+            self._reveal(self._generation)
+
+    def _push(self, payload, gen):
+        if not self._window or not self._alive:
+            return
+
+        def run():
+            try:
+                if gen != self._generation or not self._showing or self._closing:
+                    return
+                body = dict(payload)
+                body["index"] = self._index_now(body.get("index", 0))
+                text = json.dumps(body, ensure_ascii=False)
+                if gen != self._generation or not self._showing or self._closing:
+                    return
+                self._window.evaluate_js("window.dialOpen(%s)" % text)
+            except Exception as exc:
+                error = exc
+                self._log("[Dial] push failed: %s" % error)
+                return
+            _run_on_gui(self._host, lambda: self._reveal(gen), wait=False)
+
+        _off_gui(run)
+
+    def _index_now(self, fallback):
+        """Knob wins. The open payload freezes the index too early."""
+        knob = getattr(self._host, "_dial", None)
+        if knob is None:
+            return int(fallback or 0)
+        try:
+            return int(knob.index)
+        except (TypeError, ValueError):
+            return int(fallback or 0)
+
+    def _reveal(self, gen):
+        if (gen != self._generation or not self._showing or self._closing
+                or not self._window):
+            return
+        self._set_renderer_sleep(False)
+        _show_noactivate(self._window, self._log)
+        _clip_round_rect(self._window, 16, self._host)
+        self._arm_topmost()
+        self._start_pose("open", gen, None)
+
+    def _eval(self, script):
+        win = self._window
+        if not win:
+            return
+
+        def run():
+            try:
+                win.evaluate_js(script)
+            except Exception as exc:
+                error = exc
+                self._log("[Dial] eval failed: %s" % error)
+
+        _off_gui(run)
+
+    def _can_pose(self):
+        native = getattr(self._window, "native", None)
+        return native is not None and hasattr(native, "Opacity")
+
+    def note_toast(self, clearance_css):
+        """Reserve CSS px above the corner. ``0`` once the toast has gone."""
+        target = max(0.0, float(clearance_css))
+        _run_on_gui(self._host, lambda: self._note_toast_gui(target))
+
+    def _note_toast_gui(self, target):
+        if abs(target - self._lift_target) < 0.5:
+            return
+        self._lift_target = target
+        if target > 0:
+            self._yield_to_toast()
+        if not self._showing or not self._window or not self._rest:
+            self._lift = target
+            self._stop_dodge()
+            return
+        self._start_dodge()
+
+    def _yield_to_toast(self):
+        """The toast keeps the top slot. The dial glides up behind it."""
+        windows = getattr(self._host, "_windows", None)
+        toast = getattr(windows, "toast", None) if windows is not None else None
+        if toast is None or not getattr(toast, "_showing", False):
+            return
+        win = getattr(toast, "_window", None)
+        if win is not None:
+            _raise_above(win)
+
+    def _apply_pose(self, opacity, offset_y):
+        self._opacity = float(opacity)
+        self._offset = float(offset_y)
+        self._set_form_opacity(self._opacity)
+        self._place()
+
+    def _place(self):
+        if not self._window or not self._rest:
+            return
+        x, y = self._rest
+        dy = corner_dy(self._offset, self._lift, _primary_scale())
+        _place_physical(
+            self._window, x, y + dy, self._host,
+            keep_z=self._lift_target > 0,
+        )
+
+    def _start_pose(self, direction, gen, token):
+        self._retire_pose()
+        self._stop_pose(dispose=True)
+        if direction == "close":
+            self._pose_dir = -1
+            self._close_token = token
+        else:
+            self._pose_dir = 1
+            self._opacity = 0.0
+            self._offset = 8.0
+        if not self._can_pose():
+            if direction == "close":
+                self._finish_close(gen, token)
+            else:
+                self._apply_pose(1.0, 0.0)
+                self._pose_dir = 0
+            return
+        if direction == "open":
+            self._apply_pose(0.0, 8.0)
+
+        origin_y = self._offset
+        origin_o = self._opacity
+        try:
+            ctypes.windll.winmm.timeBeginPeriod(1)
+        except Exception:
+            pass
+        try:
+            from System.Windows.Forms import Timer
+        except Exception:
+            if direction == "close":
+                self._finish_close(gen, token)
+            else:
+                self._apply_pose(1.0, 0.0)
+                self._pose_dir = 0
+            return
+
+        started = time.perf_counter()
+        timer = Timer()
+        timer.Interval = 8
+        self._pose_timer = timer
+        pose_dir = self._pose_dir
+
+        def on_tick(_sender, _args):
+            if gen != self._generation or self._pose_dir != pose_dir:
+                self._stop_pose(dispose=False)
+                return
+            elapsed = (time.perf_counter() - started) * 1000.0
+            if pose_dir == 1:
+                opacity, offset = open_pose(elapsed)
+                limit = OPEN_TOTAL_MS
+            else:
+                opacity, offset = close_pose(elapsed, origin_y, origin_o)
+                limit = CLOSE_MS
+            self._apply_pose(opacity, offset)
+            if elapsed < limit:
+                return
+            self._stop_pose(dispose=False)
+            self._pose_dir = 0
+            if pose_dir == 1:
+                self._apply_pose(1.0, 0.0)
+            else:
+                self._finish_close(gen, token)
+
+        timer.Tick += on_tick
+        on_tick(None, None)
+        if self._pose_timer is timer:
+            try:
+                timer.Start()
+            except Exception:
+                pass
+
+    def _stop_pose(self, dispose=True):
+        timer = self._pose_timer
+        self._pose_timer = None
+        if timer is None:
+            return
+        try:
+            timer.Stop()
+        except Exception:
+            pass
+        if dispose:
+            try:
+                timer.Dispose()
+            except Exception:
+                pass
+        else:
+            self._pose_retired = timer
+        try:
+            ctypes.windll.winmm.timeEndPeriod(1)
+        except Exception:
+            pass
+
+    def _retire_pose(self):
+        timer = self._pose_retired
+        self._pose_retired = None
+        if timer is None:
+            return
+        try:
+            timer.Dispose()
+        except Exception:
+            pass
+
+    def _start_dodge(self):
+        self._retire_dodge()
+        self._stop_dodge(dispose=True)
+        origin = self._lift
+        target = self._lift_target
+        if abs(origin - target) < 0.5 or not self._can_pose():
+            self._lift = target
+            self._place()
+            if target <= 0 and self._window:
+                _raise_above(self._window)
+            return
+        token = object()
+        self._dodge_token = token
+        try:
+            from System.Windows.Forms import Timer
+        except Exception:
+            self._lift = target
+            self._place()
+            return
+        try:
+            ctypes.windll.winmm.timeBeginPeriod(1)
+        except Exception:
+            pass
+
+        started = time.perf_counter()
+        timer = Timer()
+        timer.Interval = 8
+        self._dodge_timer = timer
+
+        def on_tick(_sender, _args):
+            if self._dodge_token is not token:
+                self._stop_dodge(dispose=False)
+                return
+            elapsed = (time.perf_counter() - started) * 1000.0
+            self._lift = dodge_lift(elapsed, origin, target, DODGE_MS)
+            self._place()
+            if elapsed < DODGE_MS:
+                return
+            self._lift = target
+            self._place()
+            self._stop_dodge(dispose=False)
+            if target > 0:
+                self._yield_to_toast()
+            elif self._window:
+                _raise_above(self._window)
+
+        timer.Tick += on_tick
+        on_tick(None, None)
+        if self._dodge_timer is timer:
+            try:
+                timer.Start()
+            except Exception:
+                pass
+
+    def _stop_dodge(self, dispose=True):
+        timer = self._dodge_timer
+        self._dodge_timer = None
+        self._dodge_token = None
+        if timer is None:
+            return
+        try:
+            timer.Stop()
+        except Exception:
+            pass
+        if dispose:
+            try:
+                timer.Dispose()
+            except Exception:
+                pass
+        else:
+            self._dodge_retired = timer
+        try:
+            ctypes.windll.winmm.timeEndPeriod(1)
+        except Exception:
+            pass
+
+    def _retire_dodge(self):
+        timer = self._dodge_retired
+        self._dodge_retired = None
+        if timer is None:
+            return
+        try:
+            timer.Dispose()
+        except Exception:
+            pass
+
+    def _finish_close(self, gen, token):
+        if token is not None and token == self._finished_token:
+            return
+        if gen != self._generation:
+            return
+        self._finished_token = token
+        self._showing = False
+        self._closing = False
+        self._pose_dir = 0
+        self._stop_pose()
+        self._stop_dodge()
+        self._lift = self._lift_target
+        self._stop_topmost()
+        self._set_form_opacity(0.0)
+        if self._window:
+            try:
+                self._window.hide()
+            except Exception:
+                pass
+            self._set_renderer_sleep(True)
+        self._tell_closed(token)
+
+    def _tell_closed(self, token):
+        knob = getattr(self._host, "_dial", None)
+        if knob is not None and token is not None:
+            knob.note_closed(token)
+
+    def _set_form_opacity(self, value):
+        win = self._window
+        if not win:
+            return
+        try:
+            form = getattr(win, "native", None)
+            if form is not None and hasattr(form, "Opacity"):
+                form.Opacity = float(max(0.0, min(1.0, value)))
+        except Exception:
+            pass
+
+    def _arm_topmost(self):
+        if not self._window or not self._showing:
+            return
+        if self._lift_target > 0:
+            self._yield_to_toast()
+        else:
+            _raise_above(self._window)
+        timer = self._top_timer
+        if timer is None:
+            try:
+                from System.Windows.Forms import Timer
+            except Exception:
+                return
+            timer = Timer()
+            timer.Interval = _TOAST_TOP_MS
+
+            def on_tick(_sender, _args):
+                if not self._showing or not self._window:
+                    try:
+                        _sender.Enabled = False
+                    except Exception:
+                        pass
+                    return
+                if self._lift_target > 0:
+                    self._yield_to_toast()
+                    return
+                _raise_above(self._window)
+
+            timer.Tick += on_tick
+            self._top_timer = timer
+        try:
+            timer.Start()
+        except Exception:
+            pass
+
+    def _stop_topmost(self):
+        timer = self._top_timer
+        if timer is None:
+            return
+        try:
+            timer.Stop()
+        except Exception:
+            pass
+
+    def destroy(self):
+        def teardown():
+            self._alive = False
+            self._showing = False
+            self._ready.clear()
+            self._stop_pose()
+            self._retire_pose()
+            self._stop_dodge()
+            self._retire_dodge()
+            self._stop_topmost()
+            timer = self._top_timer
+            self._top_timer = None
+            if timer is not None:
+                try:
+                    timer.Dispose()
+                except Exception:
+                    pass
+            if self._window:
+                try:
+                    self._window.destroy()
+                except Exception:
+                    pass
+            self._window = None
+            self._renderer_asleep = False
+
+        _run_on_gui(self._host, teardown)
+
+    def _log(self, msg):
+        host = self._host
+        if host and hasattr(host, "_log"):
+            host._log(msg)
+
+
 # --- facade -------------------------------------------------------------------
 
 class NebulaWindows:
@@ -1694,6 +2516,7 @@ class NebulaWindows:
         reclaim_orphan_windows()
         self.toast = ToastController(host)
         self.overlay = OverlayController(host, config)
+        self.dial = DialController(host)
         self._liveness = _LivenessWatch(self)
         atexit.register(self._atexit_teardown)
 
@@ -1719,9 +2542,22 @@ class NebulaWindows:
         """
         self.toast.suspend_if_hidden()
         self.overlay.suspend_if_hidden()
+        self.dial.suspend_if_hidden()
 
     def overlay_sync(self):
         self.overlay.sync()
+
+    def dial_open(self, payload):
+        self.dial.open(payload)
+
+    def dial_highlight(self, index):
+        self.dial.highlight(index)
+
+    def dial_close(self, token):
+        self.dial.close(token)
+
+    def dial_refresh(self):
+        self.dial.refresh_status()
 
     def _atexit_teardown(self):
         try:
@@ -1738,6 +2574,7 @@ class NebulaWindows:
             self._liveness.stop()
         _force_destroy_controller(self.toast)
         _force_destroy_controller(self.overlay)
+        _force_destroy_controller(self.dial)
 
     def destroy(self):
         with self._teardown_lock:
@@ -1748,6 +2585,7 @@ class NebulaWindows:
             self._liveness.stop()
         self.toast.destroy()
         self.overlay.destroy()
+        self.dial.destroy()
 
 
 # --- demo / screenshot helper -----------------------------------------------

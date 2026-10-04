@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Nebula Dial</title>
+<link rel="stylesheet" href="tokens.css">
+<link rel="stylesheet" href="dial.css">
+</head>
+<body>
+<div class="dial" id="dial">
+  <div class="dial-panel" id="panel">
+    <div class="well">
+      <canvas id="bg" width="628" height="308" aria-hidden="true"></canvas>
+      <div class="scrim" aria-hidden="true"></div>
+      <div class="head">
+        <span class="brand">Nebula</span>
+        <span class="status">
+          <i class="dot" aria-hidden="true"></i>
+          <span class="status-word" id="statusWord"></span>
+        </span>
+        <span class="rule" aria-hidden="true"></span>
+      </div>
+      <div class="rows" id="rows">
+        <div class="pill" id="pill" aria-hidden="true"><span class="mark"></span></div>
+        <div class="row" data-i="0">
+          <div class="row-hit" tabindex="-1">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4h6v6M20 4l-8 8M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"></path></svg>
+            <span class="label">Start Nebula</span>
+          </div>
+        </div>
+        <div class="row" data-i="1">
+          <div class="row-hit" tabindex="-1">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M8 5v14M16 5v14"></path></svg>
+            <span class="label">Pause recording</span>
+          </div>
+        </div>
+        <div class="row" data-i="2">
+          <div class="row-hit" tabindex="-1">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4h11l3 3v12a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V4zM8 4v5h7V4M8 20v-6h8v6"></path></svg>
+            <span class="label">Save replay</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<script src="dial-bg.js"></script>
+<script src="dial.js"></script>
+</body>
+</html>

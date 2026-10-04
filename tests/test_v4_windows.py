@@ -386,6 +386,71 @@ def test_liveness_teardown():
         nw_mod.webview.create_window = old_create
 
 
+def test_toast_stays_above_other_windows():
+    class Handle:
+        @staticmethod
+        def ToInt64():
+            return 4242
+
+    class Native:
+        def __init__(self):
+            self.TopMost = False
+            self.Handle = Handle()
+
+    win = FakeWindow("Nebula Toast")
+    win.native = Native()
+    calls = []
+
+    def fake_pos(hwnd, insert_after, flags):
+        calls.append((hwnd, insert_after, flags))
+        return True
+
+    old_pos = nw_mod._set_window_pos
+    nw_mod._set_window_pos = fake_pos
+    try:
+        nw_mod._raise_above(win)
+        check(
+            "raise leaves TopMost alone (that property steals focus)",
+            win.native.TopMost is False,
+        )
+        check("raise calls SetWindowPos once", len(calls) == 1, calls)
+        hwnd, after, flags = calls[0]
+        check("raise targets this hwnd", hwnd == 4242, hwnd)
+        check("raise uses HWND_TOPMOST", after == nw_mod.HWND_TOPMOST, after)
+        check(
+            "raise does not activate",
+            bool(flags & nw_mod.SWP_NOACTIVATE) and not (flags & 0x0040),
+            hex(flags),
+        )
+        # Already topmost: do not churn the property, but still re-assert
+        # z-order so a later topmost window cannot stay above us.
+        calls.clear()
+        nw_mod._raise_above(win)
+        check("second raise still reasserts z-order", len(calls) == 1, calls)
+
+        calls.clear()
+        shown = []
+
+        def track_show(hwnd, cmd):
+            shown.append((hwnd, cmd))
+            return 1
+
+        user32 = __import__("ctypes").windll.user32
+        old_show = user32.ShowWindow
+        user32.ShowWindow = track_show
+        old_hide = nw_mod._hide_from_taskbar
+        nw_mod._hide_from_taskbar = lambda *a, **k: None
+        try:
+            nw_mod._show_noactivate(win)
+        finally:
+            user32.ShowWindow = old_show
+            nw_mod._hide_from_taskbar = old_hide
+        check("show uses SW_SHOWNOACTIVATE", shown == [(4242, nw_mod.SW_SHOWNOACTIVATE)], shown)
+        check("show re-raises after ShowWindow", len(calls) == 1, calls)
+    finally:
+        nw_mod._set_window_pos = old_pos
+
+
 if __name__ == "__main__":
     test_replace_one_slot()
     test_pending_before_ready()
@@ -398,6 +463,7 @@ if __name__ == "__main__":
     test_reclaim_orphans()
     test_reclaim_dead_pid()
     test_liveness_teardown()
+    test_toast_stays_above_other_windows()
     print("\n%d passed, %d failed" % (len(PASS), len(FAIL)))
     if FAIL:
         print("FAILED:", ", ".join(FAIL))

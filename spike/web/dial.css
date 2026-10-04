@@ -1,0 +1,205 @@
+/* K762 dial menu. Authority: design/k762-dial/Nebula Dial Menu v4.dc.html.
+   The stage, the pool buttons, and the 2× scale are the preview harness.
+   Panel travel (8px, 220ms open, 200ms close) is the HWND in spike/windows.py. */
+
+html, body {
+  margin: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: var(--ground-deep);
+  color: var(--text);
+  font-family: "Segoe UI Variable", "Segoe UI", sans-serif;
+}
+
+.dial {
+  --dial-ms: 260ms;
+  --sel: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.dial-panel {
+  position: relative;
+  box-sizing: border-box;
+  width: 100%;
+  height: 100%;
+  border-radius: 16px;
+  overflow: hidden;
+  background: rgb(var(--card-core-rgb) / .55);
+  box-shadow:
+    inset 0 1px 0 rgb(var(--hairline-rgb) / .16),
+    inset 0 0 0 1px rgb(var(--accent-rgb) / .28);
+}
+
+.well {
+  position: absolute;
+  inset: 3px;
+  border-radius: 13px;
+  overflow: hidden;
+  background: var(--ground);
+}
+
+#bg {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 314px;
+  height: 154px;
+}
+
+.scrim {
+  position: absolute;
+  inset: 0;
+  background: rgb(10 8 18 / .35); /* lint-allow: v4 scrim is #0A0812 at .35 and tokens.css has no ground-deep triplet */
+  pointer-events: none;
+}
+
+.head {
+  position: relative;
+  z-index: 1;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 30px;
+  padding: 0 12px;
+}
+
+.brand {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.status {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: nb-breathe var(--live-dot-ms) var(--ease) infinite alternate;
+}
+
+.status-word {
+  font-size: 12px;
+  font-weight: 500;
+  color: #C9BFFF; /* lint-allow: dial status word from the v4 menu, no token */
+}
+
+.rule {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 1px;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgb(var(--hairline-rgb) / .08) 28px,
+    rgb(var(--hairline-rgb) / .08) calc(100% - 28px),
+    transparent
+  );
+}
+
+.rows {
+  position: relative;
+  z-index: 1;
+  padding-top: 2px;
+}
+
+.pill {
+  position: absolute;
+  top: 2px;
+  left: 4px;
+  right: 4px;
+  height: 38px;
+  border-radius: 999px;
+  background: rgb(var(--accent-rgb) / .14);
+  box-shadow: inset 0 0 0 1px rgb(var(--accent-rgb) / .26);
+  transform: translate3d(0, calc(var(--sel) * 38px), 0);
+  transition: transform var(--dial-ms) var(--ease);
+  pointer-events: none;
+}
+
+.mark {
+  position: absolute;
+  left: 4px;
+  top: 10px;
+  width: 2px;
+  height: 18px;
+  border-radius: 2px;
+  background: var(--accent);
+}
+
+.row {
+  position: relative;
+  z-index: 1;
+  height: 38px;
+  color: var(--text-secondary);
+  transition: color var(--dial-ms) var(--ease);
+}
+
+.row.is-on {
+  color: var(--text);
+}
+
+.row svg {
+  flex: none;
+  stroke: var(--text-secondary);
+  transition: stroke var(--dial-ms) var(--ease);
+}
+
+.row.is-on svg {
+  stroke: var(--accent-text);
+}
+
+.row-hit {
+  position: relative;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  height: 100%;
+  padding: 0 14px;
+  font-size: 14px;
+  font-weight: 500;
+  transition: transform var(--press-ms) var(--ease);
+}
+
+.row-hit:active {
+  transform: scale(var(--press-scale));
+}
+
+.row-hit:focus {
+  outline: none;
+}
+
+.row-hit:focus-visible {
+  outline: var(--focus-ring-w) solid var(--accent);
+  outline-offset: var(--focus-ring-offset);
+}
+
+.dial.no-travel .pill {
+  transition: none;
+}
+
+@keyframes nb-breathe {
+  0% { opacity: var(--live-dot-a-min); }
+  100% { opacity: var(--live-dot-a-max); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dot {
+    animation-play-state: paused;
+  }
+}
+
+html.asleep .dot {
+  animation-play-state: paused;
+}

@@ -39,14 +39,15 @@ and `RESOURCE_DIR` (`sys._MEIPASS` when frozen) only for bundled read-only asset
 | `main.py` | `main()` | Thin shim → `spike.app.main` |
 | `spike/app.py` | `Api` | WebView backend: snapshot(), settings, clips, updates, palette; fault-isolated per-section payloads |
 | `spike/host.py` | `NebulaHost` | Window lifecycle, OBS connect/poll, transports, page GPU sleep (asleep/quiet), wake event, preview stills |
-| `spike/windows.py` | `NebulaWindows`, toast/overlay controllers | Toast + mini-overlay windows (own JS APIs), orphan reclaim, sleep_aux |
+| `spike/windows.py` | `NebulaWindows`, `DialController` | Toast, mini-overlay and the K762 dial menu (own JS APIs), orphan reclaim, sleep_aux |
+| `spike/dial.py` | `DialKnob`, `status_word`, `pause_label`, `open_pose`, `close_pose` | Knob swallow rules and the one open/close pose. No WebView |
 | `spike/taskbar_icon.py` | `start`, `_apply_icon` | Hover-only orbit animation for the taskbar button; static mark at rest |
 | `spike/gen_tokens.py` | - | Dev tool: regenerates `spike/web/tokens.css` from `design_v3.py` — run after changing tokens, commit the output |
 | `spike/webview_power.py` | `gpu_page_state`, `apply_webview_power` | TrySuspend + GPU-adapter preference from real window state |
 | `spike/udp_trigger.py` | `UdpTrigger` | Loopback UDP listener that saves the replay buffer on any datagram (`replay_udp_port`, off by default) - Stream Deck / automation / macropad entry point |
 | `obsauto/updater.py` | `check_for_update`, `save_source_snapshot`, `load_source_snapshot`, `relaunch_source`, `sync_source_checkout` (back-compat) | Updates: packaged = Releases; source = Save this machine / Load latest / Restart now on `main`. No wip shuttle |
 | `obsauto/monitor.py` | `Monitor` | Core loop: foreground/idle detection, ensure/launch OBS, start/stop + retarget recording, manual-stop hold-off (`Classifier.peek()` on UI paths - never network there) |
-| `obsauto/hotkey.py` | `register`, `unregister` | Global hotkey toggle via low-level keyboard hook; callers must pair register/unregister or stale hooks pile up |
+| `obsauto/hotkey.py` | `register`, `unregister`, `hook`, `unhook` | Global hotkey toggle via low-level keyboard hook; callers must pair register/unregister or hook/unhook or stale hooks pile up |
 | `obsauto/fsprobe.py` | `isdir_within`, `filesize_within` | Bounded filesystem probes: `os.path.isdir` on a dead mapped/SMB drive blocks 20–60s, so probe with a worker + timeout; negative verdicts memoised ~10s |
 | `obsauto/obs_client.py` | `OBSClient`, `OBSError` | Minimal obs-websocket **v5** client |
 | `obsauto/classifier.py` | `Classifier`, `merge_classifications()` | Game vs non-game classification (Steam-aware hybrid); `peek()` = cache-only variant |

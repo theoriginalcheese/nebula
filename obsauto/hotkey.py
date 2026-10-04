@@ -60,6 +60,66 @@ def register(binding, callback, suppress=True, on_log=lambda msg: None, scancode
         return False
 
 
+def hook(callback, suppress=True, on_log=lambda msg: None):
+    """Low-level hook from the ``keyboard`` package.
+
+    ``callback(event)`` returns True to let that event through and False to
+    swallow it. With ``suppress=True`` a forgotten ``return`` is treated as
+    allow — a blocking hook that returns None would otherwise eat every key
+    on the machine. Keys the callback does not own must return True.
+
+    Returns a handle for :func:`unhook`, or False if the hook was not
+    installed. Pair every successful call with unhook.
+    """
+    _probe()
+    if not _AVAILABLE or keyboard is None:
+        on_log("[Hotkey] keyboard package unavailable - dial hook disabled.")
+        return False
+    listen = getattr(keyboard, "hook", None)
+    if not callable(listen):
+        on_log("[Hotkey] keyboard hook unavailable - dial hook disabled.")
+        return False
+
+    def handler(event):
+        try:
+            allow = callback(event)
+        except Exception as exc:
+            error = exc
+            on_log("[Hotkey] dial hook failed: %s" % error)
+            return True
+        if not suppress or allow is None:
+            return True
+        return bool(allow)
+
+    try:
+        handle = listen(handler, suppress=bool(suppress))
+    except Exception as exc:
+        error = exc
+        on_log("[Hotkey] Failed to hook the dial knob: %s" % error)
+        return False
+    on_log("[Hotkey] Dial knob hook registered.")
+    return handle
+
+
+def unhook(handle, on_log=lambda msg: None):
+    """Remove a hook returned by :func:`hook`. Safe with None or False."""
+    if not handle:
+        return False
+    try:
+        if callable(handle):
+            handle()
+            return True
+        _probe()
+        remove = getattr(keyboard, "unhook", None)
+        if callable(remove):
+            remove(handle)
+            return True
+    except Exception as exc:
+        error = exc
+        on_log("[Hotkey] Failed to remove the dial hook: %s" % error)
+    return False
+
+
 def unregister(handle, on_log=lambda msg: None):
     """Take down a hook returned by register(). Safe with None/False, so a
     caller can rebind unconditionally without tracking whether the previous

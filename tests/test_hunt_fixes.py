@@ -295,6 +295,7 @@ def test_udp_rebind_closes_the_old_socket():
             again.close()
         check("the port is held once", bound_twice)
     finally:
+        host._unbind_dial()
         trigger = getattr(host, "_udp_trigger", None)
         if trigger is not None:
             trigger.stop()
