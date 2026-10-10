@@ -23,9 +23,16 @@ onto the Tk thread with `root.after(0, ...)` rather than touching widgets.
 
 import threading
 
-import pystray
+try:
+    import pystray
+except ImportError:
+    pystray = None
 
-from .icon_art import ARC_PERIOD_S, generate_recording_frames, generate_state_icons
+
+def _art():
+    from .icon_art import (
+        ARC_PERIOD_S, generate_recording_frames, generate_state_icons)
+    return ARC_PERIOD_S, generate_recording_frames, generate_state_icons
 
 ICON_PATH = None  # unused - kept only in case something still imports it
 
@@ -71,15 +78,18 @@ def _start_recording_arc(icon, icons):
         # not change resolution when recording starts.
         ref = icons.get("idle")
         size = ref.size[0] if ref is not None else 64
+        arc_period, generate_recording_frames, _icons = _art()
         frames = generate_recording_frames(size=size, fps=RECORDING_FPS)
         icon._nebula_arc_frames = frames
+    else:
+        arc_period = _art()[0]
     if not frames:
         return
 
     icon.icon = frames[0]           # land on the state immediately, not in 100ms
     stop = threading.Event()
     icon._nebula_arc_stop = stop
-    period = ARC_PERIOD_S / float(len(frames))
+    period = arc_period / float(len(frames))
 
     def run():
         i = 1
@@ -99,6 +109,9 @@ def _start_recording_arc(icon, icons):
 
 
 def build_tray_icon(app_window, icon_path):
+    if pystray is None:
+        raise ImportError("pystray is not available")
+    _period, _frames, generate_state_icons = _art()
     icons = generate_state_icons(size=64)
 
     def on_tk(fn):

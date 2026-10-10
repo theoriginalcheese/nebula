@@ -30,7 +30,11 @@ import json
 import os
 import threading
 
-from PIL import Image, ImageDraw
+try:
+    from PIL import Image, ImageDraw
+except ImportError:  # headless host: icons are unavailable, import still works
+    Image = None
+    ImageDraw = None
 
 from . import design_v3 as dv
 from .app_log import log_to_file

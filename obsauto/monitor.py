@@ -142,6 +142,10 @@ def encode_obs_window_id(title, cls, exe):
 
 
 def get_idle_duration():
+    if os.name != "nt":
+        from .linux_plat import idle_seconds
+        return idle_seconds()
+
     class LASTINPUTINFO(ctypes.Structure):
         _fields_ = [("cbSize", ctypes.c_uint), ("dwTime", ctypes.c_uint)]
 
@@ -164,7 +168,8 @@ def _process_info(pid):
 def is_obs_running():
     for proc in psutil.process_iter(["name"]):
         try:
-            if proc.info["name"] and proc.info["name"].lower() == "obs64.exe":
+            name = (proc.info["name"] or "").lower()
+            if name in ("obs64.exe", "obs32.exe", "obs.exe", "obs"):
                 return True
         except (psutil.NoSuchProcess, psutil.AccessDenied):
             continue
@@ -376,6 +381,9 @@ def list_visible_windows():
 
 
 def get_foreground_window_info():
+    if os.name != "nt":
+        from .linux_plat import foreground
+        return foreground()
     if win32gui is None:
         return None
     hwnd = win32gui.GetForegroundWindow()
@@ -387,8 +395,8 @@ def get_foreground_window_info():
 class Monitor:
     # Nebula's own windows, and the OBS it drives. Never worth reporting as
     # "the foreground that isn't a game".
-    SELF_PROCESSES = {"nebula.exe", "python.exe", "pythonw.exe",
-                      "obs64.exe", "obs32.exe"}
+    SELF_PROCESSES = {"nebula.exe", "python.exe", "pythonw.exe", "python3",
+                      "obs64.exe", "obs32.exe", "obs.exe", "obs"}
 
     # After a manual Stop, wait this long before offering "record again?" for
     # the same game. A different game prompts as soon as it debounces in.

@@ -39,7 +39,7 @@ _INSTANCE_MUTEX = None
 _WAKE_HANDLE = None
 # Second-launch pulse — the live host waits on this and calls show().
 WAKE_EVENT_NAME = "Local\\Nebula.Wake"
-_kernel32 = ctypes.windll.kernel32
+_kernel32 = ctypes.windll.kernel32 if os.name == "nt" else None
 
 
 def _running_elevated():
@@ -47,8 +47,11 @@ def _running_elevated():
 
     HoYoPlay and Star Rail launch elevated. A normal Nebula never hears
     the knob while one of those windows is in front: Windows does not
-    deliver low-level keys across that boundary.
+    deliver low-level keys across that boundary. On Linux the grab sits
+    below the game, so this is already true and no prompt is raised.
     """
+    if os.name != "nt":
+        return True
     try:
         return bool(ctypes.windll.shell32.IsUserAnAdmin())
     except Exception:
@@ -69,6 +72,14 @@ def claim_single_instance(name="Nebula.SingleInstance"):
     """
     global _INSTANCE_MUTEX
     if _INSTANCE_MUTEX:
+        return True
+    if _kernel32 is None:
+        from obsauto.linux_plat import try_lock
+        handle = try_lock(name)
+        if handle is None:
+            return False
+        _INSTANCE_MUTEX = handle
+        atexit.register(release_single_instance)
         return True
     try:
         handle = _kernel32.CreateMutexW(None, True, name)
@@ -92,6 +103,9 @@ def focus_existing_instance():
     which wakes the page. Showing the HWND directly leaves a hidden boot on
     screen with the page still asleep, which is a black window.
     """
+    if _kernel32 is None:
+        from obsauto.linux_plat import pulse_wake
+        return pulse_wake(WAKE_EVENT_NAME)
     signaled = False
     try:
         kernel32 = ctypes.windll.kernel32
@@ -114,6 +128,10 @@ def arm_wake_event():
     global _WAKE_HANDLE
     if _WAKE_HANDLE:
         return True
+    if _kernel32 is None:
+        from obsauto.linux_plat import arm_wake
+        _WAKE_HANDLE = arm_wake(WAKE_EVENT_NAME)
+        return _WAKE_HANDLE is not None
     try:
         # CreateEventW(lpAttributes, bManualReset, bInitialState, lpName)
         handle = _kernel32.CreateEventW(None, True, False, WAKE_EVENT_NAME)
@@ -131,6 +149,10 @@ def release_single_instance():
     handle = _INSTANCE_MUTEX
     _INSTANCE_MUTEX = None
     if not handle:
+        return
+    if _kernel32 is None:
+        from obsauto.linux_plat import unlock
+        unlock(handle)
         return
     try:
         _kernel32.ReleaseMutex(handle)

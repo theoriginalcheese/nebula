@@ -21,7 +21,10 @@ from __future__ import annotations
 
 import ctypes
 import time
-from ctypes import wintypes
+try:
+    from ctypes import wintypes
+except ImportError:
+    wintypes = None
 
 # Deferred, not module-level: comtypes + psutil cost ~27 ms together and
 # Discord detection first runs from the monitor's poll loop - long after the

@@ -280,8 +280,12 @@ def test_network_paths_have_no_bin():
           recycle.recyclable("\\\\192.168.68.59\\50tb\\OBS\\a.mkv") is False)
     check("a mapped network drive is not recyclable",
           recycle.recyclable("Z:\\OBS\\a.mkv") is False)
+    if os.name == "nt":
+        local_root = "C:\\Users\\x\\Videos\\a.mkv"
+    else:
+        local_root = "/tmp"
     check("the local recording root is",
-          recycle.recyclable("C:\\Users\\x\\Videos\\a.mkv") is True)
+          recycle.recyclable(local_root) is True)
 
     try:
         recycle.to_recycle_bin("Z:\\OBS\\a.mkv")

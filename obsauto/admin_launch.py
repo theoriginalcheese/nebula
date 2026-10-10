@@ -12,7 +12,10 @@ import json
 import os
 import subprocess
 import sys
-from ctypes import wintypes
+try:
+    from ctypes import wintypes
+except ImportError:
+    wintypes = None
 
 _SKIP = ("--dev", "--allow-multi", "--toast-demo", "--apply-update")
 

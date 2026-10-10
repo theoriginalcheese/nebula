@@ -32,7 +32,10 @@ import threading
 import time
 
 import psutil
-import webview
+try:
+    import webview
+except ImportError:
+    webview = None
 
 from obsauto import design_v3 as dv
 from obsauto.config import save_config

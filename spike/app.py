@@ -29,7 +29,10 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import psutil
-import webview
+try:
+    import webview
+except ImportError:
+    webview = None
 
 from obsauto import app_icons
 from obsauto import design_v3 as dv

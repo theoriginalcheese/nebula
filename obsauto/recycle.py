@@ -43,6 +43,9 @@ def recyclable(path):
     success. Answering "no" on an unreadable drive type is deliberate:
     the caller then leaves the file alone.
     """
+    if os.name != "nt":
+        from .linux_plat import is_recyclable
+        return is_recyclable(path)
     if win32file is None:
         return False
     path = os.path.abspath(path)
@@ -115,6 +118,10 @@ def to_recycle_bin(path):
     say so itself, in its own code, where it can be read.
     """
     path = os.path.abspath(path)
+    if os.name != "nt":
+        from .linux_plat import send_to_trash
+        send_to_trash(path)
+        return True
     if shell is None:
         raise RecycleError("pywin32 is not available")
     if not os.path.exists(path):
