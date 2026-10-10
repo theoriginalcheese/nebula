@@ -14,4 +14,4 @@ python tools/pull_design.py
 python tools/pull_design.py --file "Nebula Toast Row.dc.html" --into design/toast-row
 ```
 
-The first command needs no URL. It reads the design server directly with the Claude Code design login. It does not start a Claude chat. If it says the login is missing, stop. Do not build from a partial file.
+The first command needs no URL. It reads the design server directly. A live login is refreshed and saved before the read. If that login has been rejected, the script opens the browser itself — approve that window, do not ask Anthony to run a command. It does not start a Claude chat. If the sign-in window is not approved, stop. Do not build from a partial file.

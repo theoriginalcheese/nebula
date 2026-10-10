@@ -1610,6 +1610,9 @@ class Api:
         self._settings_saved_at = time.time()
         self._api_log("[Manual] %s = %s" % (key, settings_spec.log_value(field, value)))
         # Hotkeys that claim live apply: rebind through the host when we can.
+        if key == "run_as_administrator" and self._host:
+            want = bool(value)
+            self._host.call_soon(lambda w=want: self._host.apply_run_as_admin(w))
         if (self._host and key in (
                 "toggle_hotkey", "toggle_hotkey_scancode",
                 "replay_hotkey", "replay_hotkey_scancode",
@@ -3476,6 +3479,14 @@ def main():
         _mod.install_start_menu_shortcut(repo_root=_repo, show=True)
     except Exception as exc:
         log_to_file("[Launch] Start Menu shortcut: %s" % exc)
+
+    # Before the mutex. The Start Menu shortcut launches this file, not
+    # main.py, so the admin hand-off has to live here too. A cancelled
+    # prompt falls through and this process claims the mutex as usual.
+    from obsauto.admin_launch import maybe_relaunch_elevated
+    if maybe_relaunch_elevated():
+        log_to_file("[App] Restarting as administrator.")
+        return 0
 
     # Single instance always — `--dev` / `--allow-multi` is the only escape
     # hatch (agent smoke tests). The Start Menu shortcut must NOT pass --dev:

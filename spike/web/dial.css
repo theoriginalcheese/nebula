@@ -44,8 +44,8 @@ html, body {
   position: absolute;
   left: 0;
   top: 0;
-  width: 314px;
-  height: 154px;
+  width: 100%;
+  height: 100%;
 }
 
 .scrim {
@@ -157,6 +157,16 @@ html, body {
 
 .row.is-on svg {
   stroke: var(--accent-text);
+}
+
+.row.is-armed,
+.row.is-armed.is-on {
+  color: var(--ember);
+}
+
+.row.is-armed svg,
+.row.is-armed.is-on svg {
+  stroke: var(--ember);
 }
 
 .row-hit {

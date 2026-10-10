@@ -23,9 +23,10 @@ from obsauto import design_v3 as dv
 from obsauto import hotkey as hotkey_mod
 from obsauto import replay as replay_mod
 from spike.dial import (
-    ROW_LABELS, DialKnob, background_for_open, pause_label, status_word,
+    DELETE_CONFIRM, DELETE_ROW, ROW_LABELS, DialKnob, background_for_open,
+    pause_label, row_action, status_word,
 )
-from spike.windows import NebulaWindows
+from spike.windows import HWND_TOPMOST, NebulaWindows, _set_window_pos
 from obsauto import tray_app
 from obsauto.app_log import log_to_file
 from obsauto.monitor import Monitor, ensure_obs_running, is_obs_running
@@ -33,6 +34,7 @@ from obsauto.obs_client import OBSError, OBSClient
 from spike.webview_power import apply_webview_power, gpu_page_state, window_on_screen
 
 ERROR_ALREADY_EXISTS = 183
+ERROR_ACCESS_DENIED = 5
 _INSTANCE_MUTEX = None
 _WAKE_HANDLE = None
 # Second-launch pulse — the live host waits on this and calls show().
@@ -40,13 +42,30 @@ WAKE_EVENT_NAME = "Local\\Nebula.Wake"
 _kernel32 = ctypes.windll.kernel32
 
 
+def _running_elevated():
+    """True when this process has an admin token.
+
+    HoYoPlay and Star Rail launch elevated. A normal Nebula never hears
+    the knob while one of those windows is in front: Windows does not
+    deliver low-level keys across that boundary.
+    """
+    try:
+        return bool(ctypes.windll.shell32.IsUserAnAdmin())
+    except Exception:
+        return False
+
+
 def claim_single_instance(name="Nebula.SingleInstance"):
     """True if we are the only live process holding ``name``.
 
     The kernel drops a mutex when the last handle closes, so a crashed
     instance cannot leave it held. A *live* second launch sees
-    ERROR_ALREADY_EXISTS and must exit. ``bInitialOwner=True`` so we own
-    the object we created; ``release_single_instance`` is atexit + quit.
+    ERROR_ALREADY_EXISTS and must exit. An elevated copy owns a mutex a
+    normal process cannot open: that comes back as ERROR_ACCESS_DENIED,
+    and it is the same "already running" answer. Treating it as a fresh
+    start is how a cancelled UAC prompt used to leave two Nebulas on one OBS.
+    ``bInitialOwner=True`` so we own the object we created;
+    ``release_single_instance`` is atexit + quit.
     """
     global _INSTANCE_MUTEX
     if _INSTANCE_MUTEX:
@@ -55,7 +74,7 @@ def claim_single_instance(name="Nebula.SingleInstance"):
         handle = _kernel32.CreateMutexW(None, True, name)
         err = _kernel32.GetLastError()
         if not handle:
-            return True
+            return err != ERROR_ACCESS_DENIED
         if err == ERROR_ALREADY_EXISTS:
             _kernel32.CloseHandle(handle)
             return False
@@ -553,9 +572,32 @@ class NebulaHost:
             self._visible = True
             self.window.show()
             self.window.restore()
+            self._raise_existing()
             self._sleep(True)
         except Exception as exc:
             self._log("[Window] Show failed: %s" % exc)
+
+    def _raise_existing(self):
+        """Bring this process's window forward. ``show()`` does nothing
+        once the window is already open."""
+        try:
+            import ctypes
+            hwnd = int(self.window.native.Handle.ToInt64())
+            user32 = ctypes.windll.user32
+            SW_RESTORE = 9
+            HWND_NOTOPMOST = -2
+            SWP_NOMOVE, SWP_NOSIZE, SWP_SHOWWINDOW = 0x0002, 0x0001, 0x0040
+            flags = SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW
+            user32.ShowWindow(hwnd, SW_RESTORE)
+            # Pointer-sized handles. A bare -1 does not actually go topmost.
+            _set_window_pos(hwnd, HWND_TOPMOST, flags)
+            try:
+                user32.SetForegroundWindow(hwnd)
+            finally:
+                _set_window_pos(hwnd, HWND_NOTOPMOST, flags)
+        except Exception as exc:
+            error = exc
+            self._log("[Window] Raise failed: %s" % error)
 
     def hide(self):
         if not self.window:
@@ -569,6 +611,47 @@ class NebulaHost:
 
     def toggle_window(self):
         self.hide() if self._visible else self.show()
+
+    def apply_run_as_admin(self, want):
+        """Restart so the dial hook matches the setting.
+
+        On means an administrator copy, which is the only way the knob is
+        delivered while HoYoPlay is in front. Off drops back to a normal
+        process. A live recording is left alone; the saved switch applies
+        the next time Nebula starts.
+        """
+        from obsauto.admin_launch import (
+            is_elevated, relaunch_elevated, relaunch_unelevated,
+        )
+        want = bool(want)
+        if want == is_elevated():
+            return
+        if self._recording_active():
+            self._log("[App] Run as administrator is saved. It applies "
+                      "the next time Nebula starts — not during a recording.")
+            return
+        release_single_instance()
+        ok = relaunch_elevated() if want else relaunch_unelevated()
+        if not ok:
+            if not claim_single_instance():
+                self._log("[App] Another Nebula took the lock while "
+                          "Windows was asking. Leaving.")
+                self.quit()
+                return
+            self._log("[App] Windows did not change administrator rights. "
+                      "Nebula stayed as it was.")
+            return
+        self.quit()
+
+    def _recording_active(self):
+        obs = getattr(self, "obs", None)
+        if obs is None or not getattr(obs, "connected", False):
+            return False
+        try:
+            status = obs.get_record_status()
+        except Exception:
+            return False
+        return bool(status.get("outputActive"))
 
     def quit(self):
         if self._quitting:
@@ -1306,7 +1389,22 @@ class NebulaHost:
                 status = self.obs.get_record_status()
                 recording = bool(status.get("outputActive"))
                 paused = bool(status.get("outputPaused"))
-                if action == "record":
+                if action == "stop":
+                    if recording:
+                        self.obs.stop_record()
+                        result.update(stopped=True, event="stop",
+                                      outcome="Recording stopped.")
+                        # Before the UI thread hears about it. The monitor
+                        # polls on its own clock, and a stop it has not been
+                        # told about looks like the game is still there and
+                        # the recording simply ended, so it starts another.
+                        if self.monitor:
+                            self.monitor.note_manual_stop(
+                                hold_basename, hold_name)
+                            result["hold_noted"] = True
+                    else:
+                        result["outcome"] = "Nothing is recording."
+                elif action == "record":
                     if recording:
                         self.obs.stop_record()
                         result.update(stopped=True, event="stop",
@@ -1345,14 +1443,19 @@ class NebulaHost:
     def _transport_done(self, result):
         self._transport_busy = False
         if result["problem"]:
-            verb = "start/stop" if result["action"] == "record" else "pause/resume"
+            verb = {
+                "record": "start/stop",
+                "stop": "stop",
+                "pause": "pause/resume",
+            }.get(result["action"], result["action"])
             self._log("[Manual] Could not %s recording: %s" % (verb, result["problem"]))
         else:
             self._log("[Manual] %s" % result["outcome"])
             if result.get("stopped") and self.monitor:
                 self.monitor._recording_target = None
-                self.monitor.note_manual_stop(
-                    result.get("hold_basename"), result.get("hold_name"))
+                if not result.get("hold_noted"):
+                    self.monitor.note_manual_stop(
+                        result.get("hold_basename"), result.get("hold_name"))
                 try:
                     name = result.get("hold_name") or "Recording"
                     self._windows.toast_replace("stop", name)
@@ -1737,9 +1840,12 @@ class NebulaHost:
     def dial_status(self):
         """Header word and the pause-row label from the last OBS poll."""
         state = self.hero_state()
+        armed = getattr(self._dial, "_armed", None) == DELETE_ROW
         return {
             "status": status_word(state),
             "pauseLabel": pause_label(state == "paused"),
+            "deleteLabel": DELETE_CONFIRM if armed else ROW_LABELS[DELETE_ROW],
+            "deleteArmed": armed,
         }
 
     def _bind_dial(self):
@@ -1750,6 +1856,12 @@ class NebulaHost:
             self._log("[Dial] watching numpad Ins (Num Lock off), "
                       "VK_VOLUME_UP 0xAF, VK_VOLUME_DOWN 0xAE, "
                       "VK_VOLUME_MUTE 0xAD")
+            if _running_elevated():
+                self._log("[Dial] Running elevated, so the knob still works "
+                          "while an admin window is in front.")
+            else:
+                self._log("[Dial] Not elevated. An admin window in front "
+                          "hides the knob.")
 
     def _unbind_dial(self):
         handle = getattr(self, "_dial_hook", None)
@@ -1792,6 +1904,11 @@ class NebulaHost:
             self._log("[Dial] highlight %s" % self._dial_row_name(index))
             if windows is not None:
                 windows.dial_highlight(index)
+                windows.dial_refresh()
+        elif kind == "arm":
+            self._log("[Dial] delete armed — press again")
+            if windows is not None:
+                windows.dial_refresh()
         elif kind == "activate":
             index = action.get("index", 0)
             name = self._dial_row_name(index)
@@ -1813,19 +1930,113 @@ class NebulaHost:
             windows.dial_close(token)
 
     def _dial_row_name(self, index):
+        status = self.dial_status()
         if index == 1:
-            return self.dial_status()["pauseLabel"]
+            return status["pauseLabel"]
+        if index == DELETE_ROW:
+            return status["deleteLabel"]
         if 0 <= index < len(ROW_LABELS):
             return ROW_LABELS[index]
         return "row %s" % index
 
     def _dial_run(self, index):
-        if index == 0:
+        action = row_action(index)
+        if action == "show":
             self.show()
-        elif index == 1:
+        elif action == "pause":
             self._toggle_pause()
-        elif index == 2:
+        elif action == "stop":
+            self._transport("stop")
+        elif action == "replay":
             self._save_replay()
+        elif action == "discard":
+            self._discard_recording()
+
+    def _discard_recording(self):
+        """Stop the live recording and move that file to the Recycle Bin.
+
+        A second press is what reaches here. Nothing is recording, a drive
+        with no bin, or a recycle that fails: the file stays on disk.
+        """
+        if not self.obs:
+            self._log("[Dial] OBS is not connected — nothing to delete.")
+            return
+        if self._transport_busy:
+            self._log("[Dial] Busy — delete did not run.")
+            return
+        self._transport_busy = True
+        prior = self.monitor._recording_target if self.monitor else None
+        hold_basename = prior[1] if prior else None
+        hold_name = prior[2] if prior else None
+
+        def worker():
+            result = {
+                "stopped": False, "recycled": False, "problem": None,
+                "hold_basename": hold_basename, "hold_name": hold_name,
+            }
+            try:
+                status = self.obs.get_record_status()
+                if not status.get("outputActive"):
+                    result["problem"] = "Nothing is recording."
+                    return
+                response = self.obs.stop_record() or {}
+                result["stopped"] = True
+                if self.monitor:
+                    self.monitor.note_manual_stop(hold_basename, hold_name)
+                path = response.get("outputPath")
+                if not path:
+                    result["problem"] = (
+                        "OBS did not name the file. Left it on disk.")
+                    return
+                from obsauto.recycle import RecycleError, recyclable, to_recycle_bin
+                if not recyclable(path):
+                    result["problem"] = (
+                        "That drive has no Recycle Bin. The clip is still on disk.")
+                    return
+                last_error = None
+                for _attempt in range(5):
+                    try:
+                        to_recycle_bin(path)
+                        result["recycled"] = True
+                        return
+                    except RecycleError as exc:
+                        last_error = exc
+                        time.sleep(0.2)
+                result["problem"] = (
+                    "Could not recycle it (%s). The clip is still on disk."
+                    % last_error)
+            except Exception as exc:
+                error = exc
+                result["problem"] = "%s: %s" % (type(error).__name__, error)
+            finally:
+                self.call_soon(lambda r=result: self._discard_done(r))
+
+        threading.Thread(target=worker, name="DialDiscard", daemon=True).start()
+
+    def _discard_done(self, result):
+        self._transport_busy = False
+        if result.get("problem"):
+            self._log("[Dial] %s" % result["problem"])
+        elif result.get("recycled"):
+            self._log("[Dial] Moved the recording to the Recycle Bin.")
+        if result.get("stopped") and self.monitor:
+            self.monitor._recording_target = None
+        if result.get("recycled"):
+            try:
+                name = result.get("hold_name") or "Recording"
+                self._windows.toast_replace(
+                    "stop", name, {"title": "Clip in the Recycle Bin"})
+            except Exception as exc:
+                error = exc
+                self._log("[Toast] %s" % error)
+        elif result.get("stopped") and result.get("problem"):
+            try:
+                self._windows.toast_replace(
+                    "error", "Recording", {"title": "Clip kept"})
+            except Exception as exc:
+                error = exc
+                self._log("[Toast] %s" % error)
+        self._poll_now()
 
     def apply_obs_endpoint(self):
         """Point the live client at the saved host, port and password.

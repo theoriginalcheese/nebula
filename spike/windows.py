@@ -37,8 +37,8 @@ import webview
 from obsauto import design_v3 as dv
 from obsauto.config import save_config
 from spike.dial import (
-    CLOSE_MS, DODGE_MS, OPEN_TOTAL_MS, close_pose, corner_dy, dodge_lift,
-    open_pose,
+    CLOSE_MS, DODGE_MS, OPEN_TOTAL_MS, ROW_COUNT, close_pose, corner_dy,
+    dodge_lift, open_pose,
 )
 from spike.webview_power import apply_webview_power
 
@@ -52,8 +52,10 @@ OVERLAY_HTML = os.path.join(WEB, "overlay.html")
 # track obsauto/design_v3.py TOAST_*.
 TOAST_W, TOAST_H = dv.TOAST_W, dv.TOAST_H
 TOAST_PROMPT_W, TOAST_PROMPT_H = dv.TOAST_PROMPT_W, dv.TOAST_PROMPT_H
-# The drawn menu: 8px pad + 30px header + three 38px rows. Not a capsule.
-DIAL_W, DIAL_H = 320, 160
+# The drawn menu: 3px well inset, 30px header, 2px row pad, 8px slack,
+# then one 38px row each. Three rows were 160px. Five are 236.
+DIAL_W = 320
+DIAL_H = 46 + ROW_COUNT * 38
 DIAL_HTML = os.path.join(WEB, "dial.html")
 
 # Segoe Fluent Icons — same verified codepoints as gui.py, keyed by Phosphor name.
@@ -82,10 +84,12 @@ SWP_NOMOVE = 0x0002
 SWP_NOZORDER = 0x0004
 SWP_NOACTIVATE = 0x0010
 SWP_FRAMECHANGED = 0x0020
-# While a toast is up, something else (a game, an overlay) can grab the
-# topmost band after we do. Re-assert often enough that it does not stay
-# covered, without taking focus.
+# A game or another overlay can take the topmost band after we do.
+# Re-assert often enough that the toast and the dial do not stay covered,
+# without taking focus.
 _TOAST_TOP_MS = 100
+EVENT_SYSTEM_FOREGROUND = 0x0003
+WINEVENT_SKIPOWNPROCESS = 0x0002
 
 # Pointer-sized SetWindowPos. The shared user32 binding has no argtypes, so
 # a bare -1 (HWND_TOPMOST) is passed as a 32-bit int. On 64-bit that is not
@@ -179,6 +183,31 @@ def _dial_place():
     x = (rect[2] / scale) - DIAL_W - dv.TOAST_MARGIN
     y = (rect[3] / scale) - DIAL_H - dv.TOAST_MARGIN
     return x, y
+
+
+def _form_alive(window):
+    """True when this slot still has a window we can show.
+
+    A disposed WinForms form stays on the Python object. The toast then
+    looks open, the dial keeps the gap, and nothing on screen is actually
+    there. A window with no native host yet is still the slot — tests, and
+    the moment before the form exists — so only a real ``IsDisposed``
+    counts as dead.
+    """
+    if window is None:
+        return False
+    try:
+        form = window.native
+    except AttributeError:
+        return True
+    except Exception:
+        return False
+    if form is None:
+        return True
+    try:
+        return not bool(form.IsDisposed)
+    except Exception:
+        return True
 
 
 def _corner_physical(w_css, h_css, lift=0):
@@ -364,7 +393,7 @@ def _clip_round_rect(window, radius_css, host=None):
     _run_on_gui(host, apply)
 
 
-def _place_physical(window, x, y, host=None, keep_z=False):
+def _place_physical(window, x, y, host=None):
     """Move a window by PHYSICAL screen pixels, bypassing pywebview.
 
     ``move()`` and the ``x``/``y`` given to ``create_window`` are *logical*
@@ -386,13 +415,7 @@ def _place_physical(window, x, y, host=None, keep_z=False):
         try:
             import ctypes
             hwnd = int(window.native.Handle.ToInt64())
-            SWP_NOSIZE, SWP_NOACTIVATE, SWP_NOZORDER = 0x0001, 0x0010, 0x0004
-            HWND_TOPMOST = -1
             flags = SWP_NOSIZE | SWP_NOACTIVATE
-            insert_after = HWND_TOPMOST
-            if keep_z:
-                flags |= SWP_NOZORDER
-                insert_after = 0
             # The *thread* has to be per-monitor aware, not just the process.
             # WinForms leaves this GUI thread on a system-aware context, and a
             # system-aware caller gets its coordinates virtualised: asking for
@@ -410,8 +433,7 @@ def _place_physical(window, x, y, host=None, keep_z=False):
             except Exception:
                 prev_ctx = None
             try:
-                ctypes.windll.user32.SetWindowPos(
-                    hwnd, insert_after, int(x), int(y), 0, 0, flags)
+                _set_window_pos(hwnd, HWND_TOPMOST, flags, int(x), int(y))
             finally:
                 if prev_ctx:
                     try:
@@ -486,8 +508,13 @@ def _hide_from_taskbar(window, on_log=None):
             on_log("[Windows] taskbar hide failed: %s" % exc)
 
 
-def _set_window_pos(hwnd, insert_after, flags):
-    """SetWindowPos with a pointer-sized insert-after handle."""
+def _set_window_pos(hwnd, insert_after, flags, x=0, y=0):
+    """SetWindowPos with a pointer-sized insert-after handle.
+
+    A bare ``-1`` through the shared user32 binding is a 32-bit int. On
+    64-bit that is not ``HWND_TOPMOST``, and the call moves the window
+    without raising it.
+    """
     global _SET_WINDOW_POS
     if _SET_WINDOW_POS is None:
         _SET_WINDOW_POS = ctypes.WINFUNCTYPE(
@@ -503,9 +530,120 @@ def _set_window_pos(hwnd, insert_after, flags):
     return bool(_SET_WINDOW_POS(
         ctypes.c_void_p(int(hwnd)),
         ctypes.c_void_p(int(insert_after)),
-        0, 0, 0, 0,
+        int(x), int(y), 0, 0,
         int(flags),
     ))
+
+
+def _raise_visible_aux(host):
+    """Put the open dial, then the open toast, above every other window.
+
+    The toast is last so it stays above the dial when they share the
+    corner. Returns False when this host has no auxiliary facade yet,
+    so the caller can still raise the one window it owns.
+    """
+    windows = getattr(host, "_windows", None) if host is not None else None
+    if windows is None:
+        return False
+    for ctrl in (
+        getattr(windows, "dial", None),
+        getattr(windows, "toast", None),
+    ):
+        if ctrl is None or not getattr(ctrl, "_showing", False):
+            continue
+        win = getattr(ctrl, "_window", None)
+        if _form_alive(win):
+            _raise_above(win)
+    return True
+
+
+_ONTOP_HOOK = None
+_ONTOP_PROC = None
+
+
+def _ensure_ontop_hook(host):
+    """Re-raise the moment some other process becomes the foreground.
+
+    The timer covers a game that grabs the topmost band without a focus
+    change. This covers the focus change itself, which is when a
+    fullscreen window otherwise covers the corner until the next tick.
+    Installed on the GUI thread: an out-of-context hook is delivered
+    there, and ``native.Handle`` is only safe on that thread.
+    """
+    global _ONTOP_HOOK, _ONTOP_PROC
+    if _ONTOP_HOOK:
+        return
+
+    def _proc(_hook, _event, _hwnd, _id_obj, _id_child, _thread, _time_ms):
+        try:
+            _raise_visible_aux(host)
+        except Exception:
+            pass
+
+    try:
+        proc_type = ctypes.WINFUNCTYPE(
+            None,
+            ctypes.c_void_p,
+            ctypes.c_uint,
+            ctypes.c_void_p,
+            ctypes.c_long,
+            ctypes.c_long,
+            ctypes.c_uint,
+            ctypes.c_uint,
+        )
+        _ONTOP_PROC = proc_type(_proc)
+        set_hook = ctypes.WINFUNCTYPE(
+            ctypes.c_void_p,
+            ctypes.c_uint,
+            ctypes.c_uint,
+            ctypes.c_void_p,
+            proc_type,
+            ctypes.c_uint,
+            ctypes.c_uint,
+            ctypes.c_uint,
+        )(("SetWinEventHook", ctypes.windll.user32))
+        hook = set_hook(
+            EVENT_SYSTEM_FOREGROUND,
+            EVENT_SYSTEM_FOREGROUND,
+            None,
+            _ONTOP_PROC,
+            0,
+            0,
+            WINEVENT_SKIPOWNPROCESS,
+        )
+    except Exception:
+        _ONTOP_PROC = None
+        return
+    if hook:
+        _ONTOP_HOOK = hook
+
+
+def _release_ontop_hook(host=None):
+    """Drop the foreground hook on the thread that installed it.
+
+    ``UnhookWinEvent`` only works from that thread. Clearing the callback
+    first would leave a live hook pointing at freed memory.
+    """
+    if not _ONTOP_HOOK:
+        return
+
+    def _unhook():
+        global _ONTOP_HOOK, _ONTOP_PROC
+        current = _ONTOP_HOOK
+        if not current:
+            return
+        try:
+            unhook = ctypes.WINFUNCTYPE(
+                ctypes.c_bool, ctypes.c_void_p,
+            )(("UnhookWinEvent", ctypes.windll.user32))
+            ok = bool(unhook(ctypes.c_void_p(int(current))))
+        except Exception:
+            ok = False
+        if ok:
+            _ONTOP_HOOK = None
+            _ONTOP_PROC = None
+
+    _run_on_gui(host, _unhook)
 
 
 def _raise_above(window):
@@ -1012,6 +1150,11 @@ class ToastController:
         # Track prompt before create/ready — JS may consume_pending and skip
         # _push, which used to leave the HWND at status 60px (buttons clipped).
         self._prompt = bool(content.get("prompt") or content.get("actions"))
+        if self._window is not None and not _form_alive(self._window):
+            self._log("[Toast] window was disposed — building a new one")
+            self._window = None
+            self._ready.clear()
+            self._alive = False
         if self._window is None:
             self._pending = content
             self._create()
@@ -1038,7 +1181,7 @@ class ToastController:
         dial = getattr(windows, "dial", None) if windows is not None else None
         if dial is None:
             return
-        if self._showing:
+        if self._showing and _form_alive(self._window):
             height = TOAST_PROMPT_H if self._prompt else TOAST_H
             dial.note_toast(height + dv.TOAST_MARGIN)
         else:
@@ -1052,7 +1195,9 @@ class ToastController:
         """
         if not self._window or not self._showing:
             return
-        _raise_above(self._window)
+        _ensure_ontop_hook(self._host)
+        if not _raise_visible_aux(self._host):
+            _raise_above(self._window)
         timer = self._top_timer
         if timer is None:
             try:
@@ -1069,7 +1214,8 @@ class ToastController:
                     except Exception:
                         pass
                     return
-                _raise_above(self._window)
+                if not _raise_visible_aux(self._host):
+                    _raise_above(self._window)
 
             timer.Tick += on_tick
             self._top_timer = timer
@@ -1997,6 +2143,9 @@ class DialController:
             self._rest = _corner_physical(DIAL_W, DIAL_H)
         except Exception:
             self._rest = None
+        # A toast whose window has died never sends the all-clear. Drop the
+        # gap before the rise, or the menu opens in an empty slot.
+        self._reconcile_lift(glide=False)
         self._arm_open_deadline(gen, self._open_epoch)
         if self._window is None:
             self._pending = payload
@@ -2157,6 +2306,35 @@ class DialController:
         native = getattr(self._window, "native", None)
         return native is not None and hasattr(native, "Opacity")
 
+    def _toast_holds_corner(self):
+        windows = getattr(self._host, "_windows", None)
+        toast = getattr(windows, "toast", None) if windows is not None else None
+        if toast is None or not getattr(toast, "_showing", False):
+            return False
+        return _form_alive(getattr(toast, "_window", None))
+
+    def _reconcile_lift(self, glide=False):
+        """Come back to the corner when nothing is actually in it."""
+        if self._toast_holds_corner():
+            return
+        if self._lift_target <= 0 and self._lift <= 0.5:
+            return
+        if self._lift_target <= 0:
+            if self._dodge_timer is not None:
+                return
+            self._lift = 0.0
+            if self._window and self._rest:
+                self._place()
+            return
+        self._lift_target = 0.0
+        if glide and self._showing and self._window and self._rest:
+            self._start_dodge()
+            return
+        self._lift = 0.0
+        self._stop_dodge()
+        if self._window and self._rest:
+            self._place()
+
     def note_toast(self, clearance_css):
         """Reserve CSS px above the corner. ``0`` once the toast has gone."""
         target = max(0.0, float(clearance_css))
@@ -2195,10 +2373,9 @@ class DialController:
             return
         x, y = self._rest
         dy = corner_dy(self._offset, self._lift, _primary_scale())
-        _place_physical(
-            self._window, x, y + dy, self._host,
-            keep_z=self._lift_target > 0,
-        )
+        _place_physical(self._window, x, y + dy, self._host)
+        if self._lift_target > 0:
+            self._yield_to_toast()
 
     def _start_pose(self, direction, gen, token):
         self._retire_pose()
@@ -2426,13 +2603,19 @@ class DialController:
         except Exception:
             pass
 
+    def _raise_with_toast(self):
+        """Stay in the topmost band, with the toast still above this menu."""
+        if _raise_visible_aux(self._host):
+            return
+        _raise_above(self._window)
+        if self._lift_target > 0:
+            self._yield_to_toast()
+
     def _arm_topmost(self):
         if not self._window or not self._showing:
             return
-        if self._lift_target > 0:
-            self._yield_to_toast()
-        else:
-            _raise_above(self._window)
+        _ensure_ontop_hook(self._host)
+        self._raise_with_toast()
         timer = self._top_timer
         if timer is None:
             try:
@@ -2449,10 +2632,8 @@ class DialController:
                     except Exception:
                         pass
                     return
-                if self._lift_target > 0:
-                    self._yield_to_toast()
-                    return
-                _raise_above(self._window)
+                self._reconcile_lift(glide=True)
+                self._raise_with_toast()
 
             timer.Tick += on_tick
             self._top_timer = timer
@@ -2572,6 +2753,7 @@ class NebulaWindows:
             self._teardown_done = True
         if getattr(self, "_liveness", None):
             self._liveness.stop()
+        _release_ontop_hook(self._host)
         _force_destroy_controller(self.toast)
         _force_destroy_controller(self.overlay)
         _force_destroy_controller(self.dial)
@@ -2583,6 +2765,7 @@ class NebulaWindows:
             self._teardown_done = True
         if getattr(self, "_liveness", None):
             self._liveness.stop()
+        _release_ontop_hook(self._host)
         self.toast.destroy()
         self.overlay.destroy()
         self.dial.destroy()

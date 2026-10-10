@@ -63,7 +63,9 @@ GROUPS = (
      "OBS keeps the last few seconds in RAM. One key writes them to disk, with "
      "no session recording running. Replays never get auto-culled."),
     ("hotkey", "Hotkey",
-     "One global key toggles monitoring from anywhere, even mid-game."),
+     "One global key toggles monitoring from anywhere, even mid-game. "
+     "Run as administrator is what lets the dial hear the knob while "
+     "HoYoPlay, or another admin window, is in front."),
     ("gamesync", "Game list sync",
      "Every install pulls the same games and non-games list from GitHub on "
      "launch. Upload sends this PC's list there (names only, no clips). A "
@@ -198,6 +200,12 @@ FIELDS = (
           hint="Optional. Binds this exact physical key instead of resolving "
                "the name \u2014 needed when one character maps to several scan "
                "codes (41 is the backtick key). Blank = bind by name."),
+    Field("run_as_administrator", "Run as administrator", "bool", "hotkey",
+          hint="The dial hears the knob while HoYoPlay or another admin "
+               "window is in front only when Nebula is administrator too. "
+               "Turning this on asks Windows and restarts Nebula. Leave it "
+               "off if you do not want that. A recording in progress waits "
+               "until the next start."),
 
     # ---- game-list sync (NAS hub + optional GitHub) ----
     Field("games_sync_nas", "Sync via NAS", "bool", "gamesync",

@@ -18,13 +18,22 @@ into design/update-window/.
 from __future__ import annotations
 
 import argparse
+import base64
+import hashlib
 import html
+import http.server
 import json
+import msvcrt
 import os
 import re
+import secrets
 import sys
+import threading
+import time
 import urllib.error
+import urllib.parse
 import urllib.request
+import webbrowser
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 MCP_URL = "https://api.anthropic.com/v1/design/mcp"
@@ -47,20 +56,210 @@ class DesignError(RuntimeError):
     pass
 
 
-def _token() -> str:
-    path = os.path.join(os.path.expanduser("~"), ".claude", ".credentials.json")
+_CREDENTIALS = os.path.join(os.path.expanduser("~"), ".claude", ".credentials.json")
+_TOKEN_URL = "https://platform.claude.com/v1/oauth/token"
+_AUTHORIZE_URL = "https://claude.com/cai/oauth/authorize"
+_SUCCESS_URL = "https://platform.claude.com/oauth/code/success?app=claude-code"
+_DESIGN_CLIENT = "59637612-477b-4836-a601-b0589eda7704"
+_DESIGN_SCOPES = ("user:design:read", "user:design:write")
+_UA = "claude-code/2.1.267"
+
+
+class LoginRejected(DesignError):
+    pass
+
+
+def _load_credentials() -> dict | None:
+    if not os.path.exists(_CREDENTIALS):
+        return None
     try:
-        data = json.load(open(path, encoding="utf-8"))
+        return json.load(open(_CREDENTIALS, encoding="utf-8"))
     except (OSError, ValueError) as exc:
         raise DesignError(
-            "No design login at %s. Open Claude Code once so it can sign in."
-            % path
+            "Design login file is unreadable. It was not overwritten."
         ) from exc
-    oauth = data.get("designOauth") or {}
-    token = oauth.get("accessToken") or ""
-    if not token:
-        raise DesignError("Design login has no access token. Open Claude Code once.")
-    return token
+
+
+def _save_credentials(data: dict) -> None:
+    tmp = _CREDENTIALS + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump(data, fh)
+    os.replace(tmp, _CREDENTIALS)
+
+
+def _client_id(oauth: dict) -> str:
+    return (
+        os.environ.get("CLAUDE_CODE_DESIGN_OAUTH_CLIENT_ID")
+        or oauth.get("clientId")
+        or _DESIGN_CLIENT
+    )
+
+
+def _post_token(fields: dict) -> dict:
+    body = urllib.parse.urlencode(fields).encode("utf-8")
+    req = urllib.request.Request(
+        _TOKEN_URL,
+        data=body,
+        method="POST",
+        headers={
+            "Content-Type": "application/x-www-form-urlencoded",
+            "Accept": "application/json",
+            "User-Agent": _UA,
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            granted = json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", "replace")
+        if exc.code == 400 and "invalid_grant" in detail:
+            raise LoginRejected("design login was rejected") from exc
+        raise DesignError("Design login server returned %s." % exc.code) from exc
+    return granted
+
+
+def _slot(granted: dict, client_id: str, previous_refresh: str) -> dict:
+    access = granted.get("access_token") or ""
+    expires_in = int(granted.get("expires_in") or 0)
+    if not access or not expires_in:
+        raise DesignError("Design login returned no token.")
+    scopes = str(granted.get("scope") or "").split()
+    if not scopes:
+        scopes = list(_DESIGN_SCOPES)
+    missing = [scope for scope in _DESIGN_SCOPES if scope not in scopes]
+    if missing:
+        raise DesignError("Design login did not grant %s." % ", ".join(missing))
+    return {
+        "accessToken": access,
+        "refreshToken": granted.get("refresh_token") or previous_refresh,
+        "expiresAt": int(time.time() * 1000) + expires_in * 1000,
+        "scopes": [scope for scope in scopes if scope in _DESIGN_SCOPES],
+        "clientId": client_id,
+    }
+
+
+def _refresh(oauth: dict) -> dict:
+    """Exchange the refresh token. The server rotates it, so the caller must
+    store the pair before any other request."""
+    refresh = oauth.get("refreshToken") or ""
+    client_id = _client_id(oauth)
+    if not refresh or not client_id:
+        raise LoginRejected("design login has nothing to refresh")
+    granted = _post_token({
+        "grant_type": "refresh_token",
+        "refresh_token": refresh,
+        "client_id": client_id,
+    })
+    return _slot(granted, client_id, refresh)
+
+
+def _browser_login(oauth: dict) -> dict:
+    """Open the design sign-in. The only click is Approve in the browser."""
+    client_id = _client_id(oauth)
+    verifier = secrets.token_urlsafe(64)
+    challenge = base64.urlsafe_b64encode(
+        hashlib.sha256(verifier.encode("ascii")).digest()
+    ).rstrip(b"=").decode("ascii")
+    state = secrets.token_urlsafe(32)
+    got = threading.Event()
+    box: dict[str, str] = {}
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            parsed = urllib.parse.urlparse(self.path)
+            if parsed.path != "/callback":
+                self.send_error(404)
+                return
+            query = urllib.parse.parse_qs(parsed.query)
+            if query.get("state", [""])[0] != state:
+                box["error"] = "state"
+            elif query.get("error"):
+                box["error"] = "cancelled"
+            else:
+                box["code"] = query.get("code", [""])[0]
+            got.set()
+            self.send_response(302)
+            self.send_header("Location", _SUCCESS_URL)
+            self.end_headers()
+
+        def log_message(self, fmt: str, *args) -> None:
+            return
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    port = server.server_address[1]
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    url = _AUTHORIZE_URL + "?" + urllib.parse.urlencode({
+        "code": "true",
+        "client_id": client_id,
+        "response_type": "code",
+        "redirect_uri": "http://localhost:%s/callback" % port,
+        "scope": " ".join(_DESIGN_SCOPES),
+        "code_challenge": challenge,
+        "code_challenge_method": "S256",
+        "state": state,
+    })
+    print("Design login needs a fresh approval. Opening the browser.", file=sys.stderr)
+    try:
+        if not webbrowser.open(url, new=1):
+            raise DesignError("Could not open the design sign-in window.")
+        if not got.wait(180):
+            raise DesignError(
+                "The design sign-in window was not approved. Run the pull again and approve it."
+            )
+        if box.get("error") == "cancelled":
+            raise DesignError("Design sign-in was cancelled. Run the pull again and approve it.")
+        if box.get("error") or not box.get("code"):
+            raise DesignError("Design sign-in did not return a code. Run the pull again.")
+        granted = _post_token({
+            "grant_type": "authorization_code",
+            "code": box["code"],
+            "redirect_uri": "http://localhost:%s/callback" % port,
+            "client_id": client_id,
+            "code_verifier": verifier,
+            "state": state,
+        })
+        return _slot(granted, client_id, "")
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def _locked(fn):
+    os.makedirs(os.path.dirname(_CREDENTIALS), exist_ok=True)
+    handle = open(_CREDENTIALS + ".lock", "a+b")
+    try:
+        if handle.seek(0, os.SEEK_END) == 0:
+            handle.write(b"\0")
+            handle.flush()
+        handle.seek(0)
+        msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK, 1)
+        return fn()
+    finally:
+        handle.seek(0)
+        msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+        handle.close()
+
+
+def _token() -> str:
+    def once() -> str:
+        data = _load_credentials() or {}
+        oauth = dict(data.get("designOauth") or {})
+        token = oauth.get("accessToken") or ""
+        expires = int(oauth.get("expiresAt") or 0)
+        # Refresh a few minutes early. A refresh token is single-use, so the
+        # new pair is stored before the caller talks to the design server.
+        if token and expires >= int(time.time() * 1000) + 5 * 60 * 1000:
+            return token
+        try:
+            oauth = _refresh(oauth)
+        except LoginRejected:
+            oauth = _browser_login(oauth)
+        data["designOauth"] = oauth
+        _save_credentials(data)
+        return oauth["accessToken"]
+
+    return _locked(once)
 
 
 def _dest(into: str) -> str:

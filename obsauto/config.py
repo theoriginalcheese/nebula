@@ -80,6 +80,10 @@ DEFAULTS = {
     "appearance_orbit": design_v3.ORBIT_DEFAULT,
     # ---- command palette (spec 7e) ----
     "palette_hotkey": "ctrl+k",       # blank = no global palette key
+    # Off for a new install. HoYoPlay runs elevated, and the dial hook
+    # cannot see keys aimed at an admin window unless Nebula is admin too.
+    # Turning it on asks Windows and restarts. See obsauto/admin_launch.py.
+    "run_as_administrator": False,
     # Legacy folder-based sync for games.json / steam_appid_cache.json (was
     # OneDrive). Superseded by the GitHub sync below, which is instant and
     # reliable; leave blank. Kept so an old config still resolves.

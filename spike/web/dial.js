@@ -99,9 +99,21 @@ function setPauseLabel(text) {
   if (label) label.textContent = text || "Pause recording";
 }
 
+function setDeleteLabel(text, armed) {
+  const row = document.querySelector('[data-i="4"]');
+  if (!row) return;
+  const label = row.querySelector(".label");
+  if (label) label.textContent = text || "Delete this clip";
+  row.classList.toggle("is-armed", !!armed);
+}
+
+function rowCount() {
+  return document.querySelectorAll(".row").length || 1;
+}
+
 function highlight(index, instant) {
   const dial = $("dial");
-  const i = Math.max(0, Math.min(2, index | 0));
+  const i = Math.max(0, Math.min(rowCount() - 1, index | 0));
   if (instant) dial.classList.add("no-travel");
   dial.style.setProperty("--sel", String(i));
   document.querySelectorAll(".row").forEach((row) => {
@@ -116,7 +128,20 @@ function highlight(index, instant) {
 function applyChrome(payload) {
   setStatus(payload.status);
   setPauseLabel(payload.pauseLabel);
+  setDeleteLabel(payload.deleteLabel, payload.deleteArmed);
   highlight(payload.index || 0, true);
+}
+
+function sizeCanvas(cv) {
+  const cssW = cv.clientWidth || 314;
+  const cssH = cv.clientHeight || 154;
+  const scale = 2 * Math.min(2, window.devicePixelRatio || 1);
+  const wantW = Math.round(cssW * scale);
+  const wantH = Math.round(cssH * scale);
+  if (cv.width !== wantW || cv.height !== wantH) {
+    cv.width = wantW;
+    cv.height = wantH;
+  }
 }
 
 function dialOpen(payload) {
@@ -126,11 +151,7 @@ function dialOpen(payload) {
   t = Number.isFinite(payload.t) ? payload.t : Math.random() * 18;
   const cv = $("bg");
   if (cv) {
-    const want = Math.round(314 * 2 * Math.min(2, window.devicePixelRatio || 1));
-    if (cv.width !== want) {
-      cv.width = want;
-      cv.height = Math.round(want * 154 / 314);
-    }
+    sizeCanvas(cv);
     cv.dataset.bg = bgKey;
   }
   if (reduced()) {
@@ -152,6 +173,7 @@ function dialStatus(payload) {
   if (!payload) return;
   setStatus(payload.status);
   setPauseLabel(payload.pauseLabel);
+  setDeleteLabel(payload.deleteLabel, payload.deleteArmed);
 }
 window.dialStatus = dialStatus;
 

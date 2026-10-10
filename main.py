@@ -17,8 +17,15 @@ import sys
 
 def main(argv=None):
     # Preserve argv for spike flags (--show, --dev, --toast-demo, --url=…).
+    # The admin hand-off has to happen before spike is imported: the Start
+    # Menu shortcut launches spike/app.py directly, and that path checks
+    # again. Doing it here as well keeps ``python main.py`` from loading
+    # the whole UI just to exit into the UAC prompt.
     if argv is not None:
         sys.argv = [sys.argv[0], *argv]
+    from obsauto.admin_launch import maybe_relaunch_elevated
+    if maybe_relaunch_elevated():
+        return 0
     from spike.app import main as spike_main
     return spike_main() or 0
 

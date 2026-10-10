@@ -48,6 +48,7 @@ and `RESOURCE_DIR` (`sys._MEIPASS` when frozen) only for bundled read-only asset
 | `obsauto/updater.py` | `check_for_update`, `save_source_snapshot`, `load_source_snapshot`, `relaunch_source`, `sync_source_checkout` (back-compat) | Updates: packaged = Releases; source = Save this machine / Load latest / Restart now on `main`. No wip shuttle |
 | `obsauto/monitor.py` | `Monitor` | Core loop: foreground/idle detection, ensure/launch OBS, start/stop + retarget recording, manual-stop hold-off (`Classifier.peek()` on UI paths - never network there) |
 | `obsauto/hotkey.py` | `register`, `unregister`, `hook`, `unhook` | Global hotkey toggle via low-level keyboard hook; callers must pair register/unregister or hook/unhook or stale hooks pile up |
+| `obsauto/admin_launch.py` | `should_elevate`, `maybe_relaunch_elevated` | Opt-in administrator relaunch so the dial hook can see keys aimed at an elevated window (HoYoPlay). Off unless `run_as_administrator` is set |
 | `obsauto/fsprobe.py` | `isdir_within`, `filesize_within` | Bounded filesystem probes: `os.path.isdir` on a dead mapped/SMB drive blocks 20–60s, so probe with a worker + timeout; negative verdicts memoised ~10s |
 | `obsauto/obs_client.py` | `OBSClient`, `OBSError` | Minimal obs-websocket **v5** client |
 | `obsauto/classifier.py` | `Classifier`, `merge_classifications()` | Game vs non-game classification (Steam-aware hybrid); `peek()` = cache-only variant |

@@ -1,0 +1,566 @@
+<!DOCTYPE html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<title>Dial background — preference gallery</title>
+<style>
+  :root {
+    --ground: #100D1C;
+    --deep: #0A0812;
+    --core: #181428;
+    --accent: #8B7CF6;
+    --text: #F5F3FF;
+    --muted: #9A93C4;
+    --faint: #6E678F;
+    --line: rgba(245,243,255,.08);
+    --ease: cubic-bezier(.32,.72,0,1);
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    background: var(--deep);
+    color: var(--text);
+    font-family: "Segoe UI Variable", "Segoe UI", sans-serif;
+  }
+  body { padding: 72px 28px 80px; }
+  .bar {
+    position: sticky;
+    top: 0;
+    z-index: 5;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    margin: -72px -28px 28px;
+    padding: 14px 28px;
+    background: rgba(10,8,18,.92);
+    border-bottom: 1px solid var(--line);
+    backdrop-filter: blur(16px);
+  }
+  .bar b { font-weight: 560; letter-spacing: -.01em; }
+  .counts { color: var(--muted); font-size: 13px; }
+  .hint { color: var(--faint); font-size: 12px; margin-left: auto; }
+  button.tool, button.vote {
+    appearance: none;
+    border: 0;
+    border-radius: 999px;
+    font: inherit;
+    cursor: pointer;
+  }
+  button.tool {
+    height: 36px;
+    padding: 0 14px;
+    background: var(--core);
+    color: var(--text);
+    box-shadow: inset 0 0 0 1px var(--line);
+  }
+  button.tool:hover { background: #221c36; }
+  .intro { max-width: 760px; color: var(--muted); font-size: 14.5px; line-height: 1.55; }
+  .intro strong { color: var(--text); font-weight: 560; }
+  .legend { color: var(--faint); font-size: 12.5px; margin-top: 8px; }
+  section { margin-top: 36px; }
+  section h2 { font-size: 18px; font-weight: 560; margin: 0 0 4px; }
+  section .slot { color: var(--muted); font-size: 13px; margin: 0 0 14px; }
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(400px, 1fr));
+    gap: 16px;
+  }
+  .card {
+    background: var(--ground);
+    border-radius: 18px;
+    padding: 14px 14px 12px;
+    box-shadow: inset 0 0 0 1px var(--line);
+    outline: none;
+  }
+  .card:focus-visible { box-shadow: inset 0 0 0 1px var(--accent); }
+  .card .headrow { display: flex; gap: 10px; align-items: baseline; }
+  .id { font-variant-numeric: tabular-nums; color: var(--accent); font-size: 12px; letter-spacing: .04em; }
+  .card h3 { margin: 0; font-size: 15px; font-weight: 560; }
+  .why { color: var(--muted); font-size: 13px; line-height: 1.45; margin: 6px 0 12px; }
+  .badge {
+    margin-left: auto;
+    font-size: 10px;
+    letter-spacing: .14em;
+    color: var(--faint);
+  }
+  .badge.current { color: #FF5C7A; }
+  .stage {
+    height: 220px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: radial-gradient(ellipse at 50% 42%, #1a1430, #07060d 72%);
+    border-radius: 12px;
+    overflow: hidden;
+  }
+  .src { color: var(--faint); font-size: 11px; margin: 8px 0 10px; }
+  .votes { display: flex; gap: 8px; }
+  button.vote {
+    flex: 1;
+    height: 44px;
+    background: #141022;
+    color: var(--muted);
+    box-shadow: inset 0 0 0 1px var(--line);
+  }
+  button.vote.on[data-v="like"] { background: #24381f; color: #d7f5c8; }
+  button.vote.on[data-v="nope"] { background: #3a1822; color: #ffd0da; }
+  button.vote.on[data-v="undecided"] { background: #2a2640; color: var(--text); }
+  .note, #freeNote {
+    width: 100%;
+    margin-top: 8px;
+    height: 36px;
+    border: 0;
+    border-radius: 10px;
+    background: #0c0a14;
+    color: var(--text);
+    font: inherit;
+    font-size: 13px;
+    padding: 0 10px;
+    box-shadow: inset 0 0 0 1px var(--line);
+  }
+  .info {
+    margin-top: 28px;
+    color: var(--faint);
+    font-size: 13px;
+    line-height: 1.5;
+  }
+  #export {
+    display: none;
+    width: min(720px, 100%);
+    margin-top: 18px;
+    min-height: 180px;
+    background: #0c0a14;
+    color: var(--text);
+    border: 0;
+    border-radius: 12px;
+    padding: 12px;
+    font: 13px/1.45 Consolas, monospace;
+    box-shadow: inset 0 0 0 1px var(--line);
+  }
+
+  .menu {
+    position: relative;
+    width: 320px;
+    height: 160px;
+    border-radius: 16px;
+    overflow: hidden;
+    background: rgba(16,13,28,.92);
+    box-shadow:
+      inset 0 1px 0 rgba(245,243,255,.16),
+      inset 0 0 0 1px rgba(139,124,246,.28);
+  }
+  .menu .well {
+    position: absolute;
+    inset: 3px;
+    border-radius: 13px;
+    overflow: hidden;
+    background: rgba(10,8,18,.55);
+  }
+  .bg { position: absolute; inset: 0; }
+  .fg { position: relative; z-index: 1; height: 100%; padding: 5px 5px 0; }
+  .mhead {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    height: 30px;
+    padding: 0 12px;
+  }
+  .brand { font-size: 12px; font-weight: 600; color: var(--muted); }
+  .status { display: flex; align-items: center; gap: 7px; font-size: 12px; font-weight: 500; color: #C9BFFF; }
+  .dot {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: var(--accent);
+    animation: breathe 1.9s var(--ease) infinite alternate;
+  }
+  .rule {
+    height: 1px;
+    margin: 0 14px;
+    background: linear-gradient(90deg, transparent, rgba(245,243,255,.16) 18%, rgba(245,243,255,.16) 82%, transparent);
+  }
+  .row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    height: 38px;
+    padding: 0 14px;
+    color: var(--muted);
+    font-size: 14px;
+    font-weight: 500;
+  }
+  .row svg { flex: none; }
+  .row.on {
+    margin: 0 4px;
+    padding: 0 10px;
+    border-radius: 999px;
+    color: var(--text);
+    background: rgba(139,124,246,.14);
+    box-shadow: inset 0 0 0 1px rgba(139,124,246,.26);
+  }
+  .filament {
+    width: 2px; height: 18px; border-radius: 2px;
+    background: var(--accent);
+    margin-left: -7px;
+  }
+  .row.on svg { stroke: #B9AEF9; }
+
+  .mote {
+    position: absolute;
+    border-radius: 50%;
+    background: #c4b6ff;
+    box-shadow: 0 0 6px rgba(139,124,246,.85);
+  }
+  .wash, .blob, .band, .sheen {
+    position: absolute;
+    pointer-events: none;
+  }
+
+  .bg-speck .mote.drift { animation: drift 3.6s ease-in-out infinite alternate; opacity: .4; }
+  .bg-speck .mote.rise { animation: rise 2.6s var(--ease) infinite; }
+  .bg-speck .mote.scatter { animation: scatter 1.8s ease-in-out infinite; opacity: .4; }
+
+  .bg-veil .wash {
+    width: 200px; height: 140px; left: -40px; top: -10px;
+    background: radial-gradient(circle, rgba(139,124,246,.42), transparent 68%);
+    filter: blur(10px);
+    animation: veil 8s var(--ease) infinite alternate;
+  }
+  .bg-depth .mote.far { animation: drift 11s var(--ease) infinite alternate; opacity: .22; }
+  .bg-depth .mote.mid { animation: drift 7s var(--ease) infinite alternate; opacity: .45; }
+  .bg-depth .mote.near { animation: drift 4.2s var(--ease) infinite alternate; opacity: .8; }
+  .bg-silk .mote { animation: silk 5.5s var(--ease) infinite; opacity: .45; }
+  .bg-twinkle .mote { animation: twinkle 2.8s var(--ease) infinite; }
+  .bg-mist .blob {
+    width: 150px; height: 90px; border-radius: 50%;
+    background: rgba(139,124,246,.35);
+    filter: blur(18px);
+    animation: mist 9s var(--ease) infinite alternate;
+  }
+  .bg-field .mote { animation: drift 14s var(--ease) infinite alternate; opacity: .35; }
+  .bg-sheen .sheen {
+    inset: -30% -60%;
+    background: linear-gradient(105deg, transparent 42%, rgba(245,243,255,.16) 50%, transparent 58%);
+    animation: sheen 5.2s var(--ease) infinite;
+  }
+  .bg-lift .mote { animation: lift 4.4s var(--ease) infinite; }
+  .bg-aurora .band {
+    width: 280px; height: 70px; left: -30px; top: 36px;
+    background: linear-gradient(90deg, transparent, rgba(139,124,246,.55), rgba(201,191,255,.25), transparent);
+    filter: blur(14px);
+    animation: aurora 7.5s var(--ease) infinite alternate;
+  }
+
+  @keyframes breathe { from { opacity: .35; } to { opacity: .95; } }
+  @keyframes drift {
+    from { transform: translate3d(0,0,0); }
+    to { transform: translate3d(12px,-8px,0); }
+  }
+  @keyframes rise {
+    0% { transform: translate3d(0,10px,0); opacity: .15; }
+    45% { opacity: .55; }
+    100% { transform: translate3d(0,-16px,0); opacity: 0; }
+  }
+  @keyframes scatter {
+    0%, 100% { transform: translate3d(0,0,0); }
+    50% { transform: translate3d(7px,5px,0); }
+  }
+  @keyframes veil {
+    from { transform: translate3d(0,0,0); }
+    to { transform: translate3d(150px,24px,0); }
+  }
+  @keyframes silk {
+    0% { transform: translate3d(-18px,0,0); opacity: 0; }
+    20% { opacity: .55; }
+    80% { opacity: .4; }
+    100% { transform: translate3d(46px,-4px,0); opacity: 0; }
+  }
+  @keyframes twinkle {
+    0%, 100% { opacity: .15; }
+    50% { opacity: .85; }
+  }
+  @keyframes mist {
+    from { transform: translate3d(0,0,0) scale(1); }
+    to { transform: translate3d(36px,14px,0) scale(1.15); }
+  }
+  @keyframes sheen {
+    from { transform: translate3d(-18%,0,0); }
+    to { transform: translate3d(18%,0,0); }
+  }
+  @keyframes lift {
+    0% { transform: translate3d(0,18px,0); opacity: 0; }
+    30% { opacity: .6; }
+    100% { transform: translate3d(0,-28px,0); opacity: 0; }
+  }
+  @keyframes aurora {
+    from { transform: translate3d(0,8px,0) rotate(-8deg); opacity: .45; }
+    to { transform: translate3d(48px,-10px,0) rotate(7deg); opacity: .9; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .bg *, .dot { animation-play-state: paused; }
+  }
+</style>
+</head>
+<body>
+  <div class="bar">
+    <b>~/prefs-dial-bg</b>
+    <span class="counts" id="counts">liked 0 · noped 0 · undecided 0 · open 0</span>
+    <span class="hint">L like · N nope · U undecided · J / K move</span>
+    <button class="tool" id="exportBtn" type="button">export picks</button>
+    <button class="tool" id="resetBtn" type="button">reset</button>
+  </div>
+
+  <p class="intro">
+    Backgrounds for the dial menu you just kept. Every card is the <strong>same 320×160 panel</strong>. Only the layer behind the words changes. The menu does not play its open, so you can watch the motion.
+  </p>
+  <p class="legend">CURRENT is the seven specks already in the app. TRIAL is a different background. One pick. A note can ask to mix two.</p>
+
+  <div id="root"></div>
+  <p class="info">Not in the grid, because they were already rejected for this menu: dust that bursts, sinks, or orbits, and anything ember. The panel shape, the three rows, and the pill are not up for a vote here.</p>
+  <input id="freeNote" type="text" placeholder="Notes for the export, if the votes are not enough">
+  <textarea id="export" readonly></textarea>
+
+<script>
+const KEY = "ajt_prefs_dial-bg_2026-10-04";
+
+const ICON = {
+  start: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4h6v6M20 4l-8 8M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/></svg>',
+  pause: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M8 5v14M16 5v14"/></svg>',
+  save: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4h11l3 3v12a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V4zM8 4v5h7V4M8 20v-6h8v6"/></svg>'
+};
+
+const sections = [
+  {
+    id: "S1",
+    title: "Background",
+    hint: "One pick. Same menu in every card.",
+    options: [
+      { id: "BG-SPECK", title: "Seven specks", badge: "CURRENT", style: "speck",
+        why: "Drift, rise, and scatter, the mix already in the app. Quiet. Easy to stop noticing." },
+      { id: "BG-VEIL", title: "Violet veil", badge: "TRIAL", style: "veil",
+        why: "One soft wash crossing the glass. Almost no points of light. Calmer, and less ‘alive’." },
+      { id: "BG-DEPTH", title: "Three depths", badge: "TRIAL", style: "depth",
+        why: "More specks, three speeds. Reads as space behind the type. Busier than the seven." },
+      { id: "BG-SILK", title: "Silk", badge: "TRIAL", style: "silk",
+        why: "Specks travel one way, like a slow current. Directional. Can feel like the menu is sliding." },
+      { id: "BG-TWINKLE", title: "Twinkle", badge: "TRIAL", style: "twinkle",
+        why: "Specks stay put and only brighten. Still, which keeps the panel from feeling in motion." },
+      { id: "BG-MIST", title: "Mist", badge: "TRIAL", style: "mist",
+        why: "Two blurred blooms drifting. No sharp specks. Soft, and it can look foggy." },
+      { id: "BG-FIELD", title: "Star field", badge: "TRIAL", style: "field",
+        why: "Many tiny stars, very slow. The panel feels deeper. Closer to the main window’s dust." },
+      { id: "BG-SHEEN", title: "Sheen", badge: "TRIAL", style: "sheen",
+        why: "A diagonal band of light passes through, then the glass rests. One event, on a loop." },
+      { id: "BG-LIFT", title: "Lift", badge: "TRIAL", style: "lift",
+        why: "Motes rise and fade, like heat, in violet only. Constant motion. Never ember." },
+      { id: "BG-AURORA", title: "Aurora band", badge: "TRIAL", style: "aurora",
+        why: "One wide band shifts and breathes behind the rows. The most ‘Nebula’. Also the loudest." }
+    ]
+  }
+];
+
+function mote(x, y, size, cls, delay) {
+  return `<i class="mote ${cls}" style="left:${x}%;top:${y}%;width:${size}px;height:${size}px;animation-delay:${delay}s"></i>`;
+}
+
+function background(style) {
+  if (style === "speck") {
+    const trail = [[62,22,1.2,"drift"],[74,60,1.8,"rise"],[84,30,1,"scatter"],[90,74,2.2,"drift"],[95,46,1.4,"rise"],[70,86,1.1,"scatter"],[80,12,1.6,"drift"]];
+    return trail.map((p, i) => mote(p[0], p[1], p[2], p[3], -(i * 0.4))).join("");
+  }
+  if (style === "veil") return `<div class="wash"></div>`;
+  if (style === "depth") {
+    const far = [[12,20],[28,70],[44,30],[70,80],[88,18]];
+    const mid = [[18,48],[40,62],[66,28],[82,58]];
+    const near = [[24,24],[58,46],[76,72]];
+    return far.map((p,i) => mote(p[0], p[1], 1.1, "far", -i)).join("")
+      + mid.map((p,i) => mote(p[0], p[1], 1.6, "mid", -i * 0.8)).join("")
+      + near.map((p,i) => mote(p[0], p[1], 2.2, "near", -i * 0.5)).join("");
+  }
+  if (style === "silk") {
+    const row = [[8,22],[18,48],[30,70],[42,30],[54,58],[66,18],[78,46],[88,74]];
+    return row.map((p,i) => mote(p[0], p[1], 1.5, "", -i * 0.45)).join("");
+  }
+  if (style === "twinkle") {
+    const pts = [[16,24],[30,68],[48,36],[62,78],[74,22],[86,52],[40,16],[22,50]];
+    return pts.map((p,i) => mote(p[0], p[1], 1.4 + (i % 3) * 0.4, "", -i * 0.35)).join("");
+  }
+  if (style === "mist") {
+    return `<div class="blob" style="left:8%;top:18%"></div><div class="blob" style="left:48%;top:40%;animation-delay:-4s;opacity:.7"></div>`;
+  }
+  if (style === "field") {
+    const pts = [[8,14],[14,42],[22,78],[28,26],[36,58],[44,16],[48,84],[56,38],[62,68],[70,12],[74,48],[82,76],[88,28],[92,58],[18,60],[40,44],[66,22],[84,40]];
+    return pts.map((p,i) => mote(p[0], p[1], i % 4 === 0 ? 1.6 : 1, "", -(i * 0.7))).join("");
+  }
+  if (style === "sheen") {
+    return `<div class="sheen"></div>` + mote(72, 30, 1.2, "", 0) + mote(84, 62, 1.4, "", -1);
+  }
+  if (style === "lift") {
+    const pts = [[12,70],[26,40],[38,82],[50,55],[62,28],[74,74],[86,46],[20,20],[68,60]];
+    return pts.map((p,i) => mote(p[0], p[1], 1.3 + (i % 2) * 0.5, "", -(i * 0.42))).join("");
+  }
+  if (style === "aurora") return `<div class="band"></div>` + mote(78, 24, 1.2, "", 0) + mote(88, 70, 1.1, "", -2);
+  return "";
+}
+
+function menu(style) {
+  return `<div class="menu" aria-hidden="true">
+    <div class="well"><div class="bg bg-${style}">${background(style)}</div></div>
+    <div class="fg">
+      <div class="mhead"><span class="brand">Nebula</span><span class="status"><i class="dot"></i>Recording</span></div>
+      <div class="rule"></div>
+      <div class="row on"><i class="filament"></i>${ICON.start}<span>Start Nebula</span></div>
+      <div class="row">${ICON.pause}<span>Pause recording</span></div>
+      <div class="row">${ICON.save}<span>Save replay</span></div>
+    </div>
+  </div>`;
+}
+
+const store = JSON.parse(localStorage.getItem(KEY) || "{\"votes\":{},\"notes\":{},\"free\":\"\"}");
+store.votes = store.votes || {};
+store.notes = store.notes || {};
+
+function save() {
+  localStorage.setItem(KEY, JSON.stringify(store));
+  paintCounts();
+}
+
+function allOptions() {
+  return sections.flatMap(s => s.options);
+}
+
+function paintCounts() {
+  const all = allOptions();
+  let like = 0, nope = 0, und = 0;
+  all.forEach(o => {
+    const v = store.votes[o.id];
+    if (v === "like") like++;
+    else if (v === "nope") nope++;
+    else if (v === "undecided") und++;
+  });
+  const open = all.length - like - nope - und;
+  document.getElementById("counts").textContent =
+    `liked ${like} · noped ${nope} · undecided ${und} · open ${open}`;
+}
+
+function cardEl(o) {
+  const art = document.createElement("div");
+  art.className = "card";
+  art.tabIndex = 0;
+  art.dataset.id = o.id;
+  const badge = o.badge === "CURRENT" ? "current" : "";
+  art.innerHTML = `
+    <div class="headrow"><span class="id">${o.id}</span><h3>${o.title}</h3><span class="badge ${badge}">${o.badge}</span></div>
+    <p class="why">${o.why}</p>
+    <div class="stage">${menu(o.style)}</div>
+    <p class="src">Same panel as the frames you kept. Background only.</p>
+    <div class="votes">
+      <button class="vote" type="button" data-v="like">LIKE</button>
+      <button class="vote" type="button" data-v="nope">NOPE</button>
+      <button class="vote" type="button" data-v="undecided">UNDECIDED</button>
+    </div>
+    <input class="note" type="text" placeholder="Note, if you like it but…" value="${(store.notes[o.id] || "").replace(/"/g, "&quot;")}">
+  `;
+  const v = store.votes[o.id];
+  art.querySelectorAll(".vote").forEach(btn => {
+    if (btn.dataset.v === v) btn.classList.add("on");
+    btn.addEventListener("click", () => {
+      store.votes[o.id] = store.votes[o.id] === btn.dataset.v ? "" : btn.dataset.v;
+      if (!store.votes[o.id]) delete store.votes[o.id];
+      art.querySelectorAll(".vote").forEach(b => b.classList.toggle("on", b.dataset.v === store.votes[o.id]));
+      save();
+    });
+  });
+  const note = art.querySelector(".note");
+  note.addEventListener("keydown", ev => ev.stopPropagation());
+  note.addEventListener("input", () => {
+    store.notes[o.id] = note.value;
+    save();
+  });
+  return art;
+}
+
+const root = document.getElementById("root");
+sections.forEach(s => {
+  const sec = document.createElement("section");
+  sec.innerHTML = `<h2>${s.id} · ${s.title}</h2><p class="slot">${s.hint}</p>`;
+  const grid = document.createElement("div");
+  grid.className = "grid";
+  s.options.forEach(o => grid.appendChild(cardEl(o)));
+  sec.appendChild(grid);
+  root.appendChild(sec);
+});
+
+const freeNote = document.getElementById("freeNote");
+freeNote.value = store.free || "";
+freeNote.addEventListener("keydown", ev => ev.stopPropagation());
+freeNote.addEventListener("input", () => {
+  store.free = freeNote.value;
+  save();
+});
+paintCounts();
+
+function cards() { return [...document.querySelectorAll(".card")]; }
+function focusCard(el) {
+  el.focus();
+  const r = el.getBoundingClientRect();
+  window.scrollBy(0, r.top + r.height / 2 - window.innerHeight / 2);
+}
+
+document.addEventListener("keydown", ev => {
+  const tag = (ev.target.tagName || "").toLowerCase();
+  if (tag === "input" || tag === "textarea") return;
+  const list = cards();
+  let i = list.indexOf(document.activeElement);
+  if (ev.key === "j" || ev.key === "J" || ev.key === "k" || ev.key === "K") {
+    if (i < 0) i = 0;
+    else i = ev.key.toLowerCase() === "j" ? Math.min(list.length - 1, i + 1) : Math.max(0, i - 1);
+    focusCard(list[i]);
+    ev.preventDefault();
+    return;
+  }
+  if (i < 0) return;
+  const map = { l: "like", n: "nope", u: "undecided" };
+  const vote = map[ev.key.toLowerCase()];
+  if (!vote) return;
+  list[i].querySelector(`.vote[data-v="${vote}"]`).click();
+});
+
+function line(o) {
+  const note = (store.notes[o.id] || "").trim();
+  return `- ${o.id} — ${o.title}${note ? " · " + note : ""}`;
+}
+
+document.getElementById("exportBtn").addEventListener("click", async () => {
+  const all = allOptions();
+  const bucket = { like: [], nope: [], undecided: [] };
+  all.forEach(o => {
+    const v = store.votes[o.id];
+    if (v === "like") bucket.like.push(line(o));
+    else if (v === "nope") bucket.nope.push(line(o));
+    else bucket.undecided.push(`- ${o.id} — ${o.title} (not voted)`);
+  });
+  const text = [
+    "PREFS-DIAL-BG 2026-10-04",
+    "LIKE:",
+    bucket.like.length ? bucket.like.join("\n") : "- none",
+    "NOPE:",
+    bucket.nope.length ? bucket.nope.join("\n") : "- none",
+    "UNDECIDED:",
+    bucket.undecided.length ? bucket.undecided.join("\n") : "- none",
+    "NOTES:",
+    (store.free || "").trim()
+  ].join("\n");
+  const box = document.getElementById("export");
+  box.style.display = "block";
+  box.value = text;
+  box.focus();
+  box.select();
+  try { await navigator.clipboard.writeText(text); } catch (e) {}
+});
+
+document.getElementById("resetBtn").addEventListener("click", () => {
+  localStorage.removeItem(KEY);
+  location.reload();
+});
+</script>
+</body>
+</html>

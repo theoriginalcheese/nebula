@@ -74,8 +74,25 @@ POOL = (
     "hdusk",
 )
 
-ROW_COUNT = 3
-ROW_LABELS = ("Start Nebula", "Pause recording", "Save replay")
+# Five, not six. Stop keeps the file. Delete bins the one being recorded,
+# and only after a second press. A sixth row would only lengthen the menu.
+ROWS = (
+    ("show", "Start Nebula"),
+    ("pause", "Pause recording"),
+    ("stop", "Stop recording"),
+    ("replay", "Save replay"),
+    ("discard", "Delete this clip"),
+)
+ROW_COUNT = len(ROWS)
+ROW_LABELS = tuple(label for _action, label in ROWS)
+DELETE_ROW = next(i for i, (action, _label) in enumerate(ROWS) if action == "discard")
+DELETE_CONFIRM = "Press again to delete"
+
+
+def row_action(index):
+    if 0 <= index < len(ROWS):
+        return ROWS[index][0]
+    return None
 
 
 def status_word(hero_state):
@@ -230,6 +247,7 @@ class DialKnob:
         self._lock = threading.Lock()
         self.phase = "closed"  # closed | open | closing
         self.index = 0
+        self._armed = None
         self._down = set()
         self._swallowed = set()
         self._seen = set()
@@ -297,22 +315,34 @@ class DialKnob:
             if kind == "mute":
                 self.phase = "open"
                 self.index = 0
+                self._armed = None
                 self._epoch += 1
                 return True, {
                     "type": "open", "index": 0, "epoch": self._epoch,
                 }
             return False, None
         if kind == "volume_up":
+            was = self._armed
+            self._armed = None
             if self.index < ROW_COUNT - 1:
                 self.index += 1
                 return True, {"type": "move", "index": self.index}
+            if was is not None:
+                return True, {"type": "move", "index": self.index}
             return True, None
         if kind == "volume_down":
+            was = self._armed
+            self._armed = None
             if self.index > 0:
                 self.index -= 1
                 return True, {"type": "move", "index": self.index}
+            if was is not None:
+                return True, {"type": "move", "index": self.index}
             return True, None
         if kind == "mute":
+            if self.index == DELETE_ROW and self._armed != DELETE_ROW:
+                self._armed = DELETE_ROW
+                return True, {"type": "arm", "index": self.index}
             index = self.index
             token = self._begin_close()
             return True, {"type": "activate", "index": index, "token": token}
@@ -322,6 +352,7 @@ class DialKnob:
         return False, None
 
     def _begin_close(self):
+        self._armed = None
         self._close_token += 1
         self.phase = "closing"
         return self._close_token

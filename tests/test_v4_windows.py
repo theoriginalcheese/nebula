@@ -451,6 +451,91 @@ def test_toast_stays_above_other_windows():
         nw_mod._set_window_pos = old_pos
 
 
+def test_place_stays_topmost():
+    class Handle:
+        @staticmethod
+        def ToInt64():
+            return 77
+
+    handle = Handle()
+
+    class Native:
+        pass
+
+    native = Native()
+    native.Handle = handle
+
+    win = FakeWindow("Nebula Dial")
+    win.native = native
+    calls = []
+
+    def fake_pos(hwnd, insert_after, flags, x=0, y=0):
+        calls.append((hwnd, insert_after, flags, x, y))
+        return True
+
+    old = nw_mod._set_window_pos
+    nw_mod._set_window_pos = fake_pos
+    try:
+        nw_mod._place_physical(win, 11, 22, host=None)
+    finally:
+        nw_mod._set_window_pos = old
+    check("place raises with the move", len(calls) == 1, calls)
+    hwnd, after, flags, x, y = calls[0]
+    check("place targets this hwnd", hwnd == 77, hwnd)
+    check("place uses HWND_TOPMOST", after == nw_mod.HWND_TOPMOST, after)
+    check("place keeps the physical point", (x, y) == (11, 22), (x, y))
+    check(
+        "place does not activate",
+        bool(flags & nw_mod.SWP_NOACTIVATE) and not (flags & 0x0040),
+        hex(flags),
+    )
+
+
+def test_toast_stays_above_the_dial():
+    class Handle:
+        def __init__(self, n):
+            self.n = n
+
+        def ToInt64(self):
+            return self.n
+
+    class Native:
+        def __init__(self, n):
+            self.Handle = Handle(n)
+            self.IsDisposed = False
+            self.TopMost = False
+
+    class Ctrl:
+        def __init__(self, n, showing):
+            self._showing = showing
+            self._window = FakeWindow("aux")
+            self._window.native = Native(n)
+
+    dial = Ctrl(1, True)
+    toast = Ctrl(2, True)
+    host = type("H", (), {})()
+    host._windows = type("W", (), {"dial": dial, "toast": toast})()
+    calls = []
+
+    def fake_pos(hwnd, insert_after, flags, x=0, y=0):
+        calls.append(hwnd)
+        return True
+
+    old = nw_mod._set_window_pos
+    nw_mod._set_window_pos = fake_pos
+    try:
+        ok = nw_mod._raise_visible_aux(host)
+        check("both open windows are raised", ok is True)
+        check("dial is raised, then the toast", calls == [1, 2], calls)
+        toast._showing = False
+        calls.clear()
+        nw_mod._raise_visible_aux(host)
+        check("a hidden toast is left alone", calls == [1], calls)
+        check("raise never sets Form.TopMost", dial._window.native.TopMost is False)
+    finally:
+        nw_mod._set_window_pos = old
+
+
 if __name__ == "__main__":
     test_replace_one_slot()
     test_pending_before_ready()
@@ -464,6 +549,8 @@ if __name__ == "__main__":
     test_reclaim_dead_pid()
     test_liveness_teardown()
     test_toast_stays_above_other_windows()
+    test_place_stays_topmost()
+    test_toast_stays_above_the_dial()
     print("\n%d passed, %d failed" % (len(PASS), len(FAIL)))
     if FAIL:
         print("FAILED:", ", ".join(FAIL))
