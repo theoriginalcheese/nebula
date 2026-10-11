@@ -37,8 +37,8 @@ import webview
 from obsauto import design_v3 as dv
 from obsauto.config import save_config
 from spike.dial import (
-    CLOSE_MS, DODGE_MS, OPEN_TOTAL_MS, close_pose, corner_dy, dodge_lift,
-    open_pose,
+    CLOSE_MS, DODGE_MS, OPEN_TOTAL_MS, ROW_COUNT, close_pose, corner_dy,
+    dodge_lift, open_pose,
 )
 from spike.webview_power import apply_webview_power
 
@@ -52,8 +52,10 @@ OVERLAY_HTML = os.path.join(WEB, "overlay.html")
 # track obsauto/design_v3.py TOAST_*.
 TOAST_W, TOAST_H = dv.TOAST_W, dv.TOAST_H
 TOAST_PROMPT_W, TOAST_PROMPT_H = dv.TOAST_PROMPT_W, dv.TOAST_PROMPT_H
-# The drawn menu: 8px pad + 30px header + three 38px rows. Not a capsule.
-DIAL_W, DIAL_H = 320, 160
+# The drawn menu: 3px well inset, 30px header, 2px row pad, 8px slack,
+# then one 38px row each. Three rows were 160px. Five are 236.
+DIAL_W = 320
+DIAL_H = 46 + ROW_COUNT * 38
 DIAL_HTML = os.path.join(WEB, "dial.html")
 
 # Segoe Fluent Icons — same verified codepoints as gui.py, keyed by Phosphor name.
@@ -179,6 +181,21 @@ def _dial_place():
     x = (rect[2] / scale) - DIAL_W - dv.TOAST_MARGIN
     y = (rect[3] / scale) - DIAL_H - dv.TOAST_MARGIN
     return x, y
+
+
+def _form_alive(window):
+    """True when the WinForms host still has a window we can show.
+
+    A disposed form stays on the Python object. The toast then looks open,
+    the dial keeps the gap, and nothing on screen is actually there.
+    """
+    if window is None:
+        return False
+    try:
+        form = window.native
+        return form is not None and not bool(form.IsDisposed)
+    except Exception:
+        return False
 
 
 def _corner_physical(w_css, h_css, lift=0):
@@ -1012,6 +1029,11 @@ class ToastController:
         # Track prompt before create/ready — JS may consume_pending and skip
         # _push, which used to leave the HWND at status 60px (buttons clipped).
         self._prompt = bool(content.get("prompt") or content.get("actions"))
+        if self._window is not None and not _form_alive(self._window):
+            self._log("[Toast] window was disposed — building a new one")
+            self._window = None
+            self._ready.clear()
+            self._alive = False
         if self._window is None:
             self._pending = content
             self._create()
@@ -1038,7 +1060,7 @@ class ToastController:
         dial = getattr(windows, "dial", None) if windows is not None else None
         if dial is None:
             return
-        if self._showing:
+        if self._showing and _form_alive(self._window):
             height = TOAST_PROMPT_H if self._prompt else TOAST_H
             dial.note_toast(height + dv.TOAST_MARGIN)
         else:
@@ -1997,6 +2019,9 @@ class DialController:
             self._rest = _corner_physical(DIAL_W, DIAL_H)
         except Exception:
             self._rest = None
+        # A toast whose window has died never sends the all-clear. Drop the
+        # gap before the rise, or the menu opens in an empty slot.
+        self._reconcile_lift(glide=False)
         self._arm_open_deadline(gen, self._open_epoch)
         if self._window is None:
             self._pending = payload
@@ -2156,6 +2181,35 @@ class DialController:
     def _can_pose(self):
         native = getattr(self._window, "native", None)
         return native is not None and hasattr(native, "Opacity")
+
+    def _toast_holds_corner(self):
+        windows = getattr(self._host, "_windows", None)
+        toast = getattr(windows, "toast", None) if windows is not None else None
+        if toast is None or not getattr(toast, "_showing", False):
+            return False
+        return _form_alive(getattr(toast, "_window", None))
+
+    def _reconcile_lift(self, glide=False):
+        """Come back to the corner when nothing is actually in it."""
+        if self._toast_holds_corner():
+            return
+        if self._lift_target <= 0 and self._lift <= 0.5:
+            return
+        if self._lift_target <= 0:
+            if self._dodge_timer is not None:
+                return
+            self._lift = 0.0
+            if self._window and self._rest:
+                self._place()
+            return
+        self._lift_target = 0.0
+        if glide and self._showing and self._window and self._rest:
+            self._start_dodge()
+            return
+        self._lift = 0.0
+        self._stop_dodge()
+        if self._window and self._rest:
+            self._place()
 
     def note_toast(self, clearance_css):
         """Reserve CSS px above the corner. ``0`` once the toast has gone."""
@@ -2449,6 +2503,7 @@ class DialController:
                     except Exception:
                         pass
                     return
+                self._reconcile_lift(glide=True)
                 if self._lift_target > 0:
                     self._yield_to_toast()
                     return

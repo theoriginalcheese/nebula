@@ -13,7 +13,10 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from spike import windows as nw
 from spike.dial import (
     BG_HOLD_S,
+    DELETE_CONFIRM,
+    DELETE_ROW,
     POOL,
+    ROW_COUNT,
     DialKnob,
     background_for_open,
     close_pose,
@@ -108,6 +111,45 @@ def test_hidden_menu_remembers_the_gap():
     ctl.note_toast(0)
     check("once the toast is gone the corner is free again",
           ctl._lift == 0 and ctl._lift_target == 0)
+
+
+def test_dead_toast_releases_the_corner():
+    host = StubHost()
+    ctl = nw.DialController(host)
+    ctl._lift = 84
+    ctl._lift_target = 84
+    ctl._reconcile_lift()
+    check("no toast means the corner is free",
+          ctl._lift == 0 and ctl._lift_target == 0)
+
+    class _Form:
+        def __init__(self, disposed):
+            self.IsDisposed = disposed
+
+    class _Win:
+        def __init__(self, disposed):
+            self.native = _Form(disposed)
+
+    class _Toast:
+        _showing = True
+        _window = _Win(True)
+
+    class _Windows:
+        toast = _Toast()
+
+    host._windows = _Windows()
+    ctl._lift = 84
+    ctl._lift_target = 84
+    ctl._reconcile_lift()
+    check("a disposed toast does not keep the gap",
+          ctl._lift == 0 and ctl._lift_target == 0)
+
+    host._windows.toast._window = _Win(False)
+    ctl._lift = 84
+    ctl._lift_target = 84
+    ctl._reconcile_lift()
+    check("a live toast keeps the gap",
+          ctl._lift == 84 and ctl._lift_target == 84)
 
 
 def test_pool():
@@ -212,6 +254,52 @@ def test_knob():
     knob.note_closed(action["token"])
     allow, _action = knob.handle(down("volume down", 57390))
     check("volume down passes after the run", allow is True)
+
+
+def _open(knob):
+    knob.handle(down("volume mute", 57376))
+    knob.handle(up("volume mute", 57376))
+
+
+def _notch(knob, name, scan):
+    knob.handle(down(name, scan))
+    knob.handle(up(name, scan))
+
+
+def test_five_rows_and_delete():
+    check("five rows", ROW_COUNT == 5 and DELETE_ROW == 4)
+    knob = DialKnob(on_log=lambda _msg: None)
+    _open(knob)
+    for _ in range(4):
+        _notch(knob, "volume up", 57392)
+    check("the last row is delete", knob.index == DELETE_ROW)
+    allow, action = knob.handle(down("volume up", 57392))
+    check("the bottom notch does not wrap", allow is False and action is None)
+    knob.handle(up("volume up", 57392))
+    allow, action = knob.handle(down("volume mute", 57376))
+    check("the first delete press only arms",
+          allow is False and action and action["type"] == "arm"
+          and knob.phase == "open")
+    knob.handle(up("volume mute", 57376))
+    allow, action = knob.handle(down("volume mute", 57376))
+    check("the second delete press runs it",
+          allow is False and action and action["type"] == "activate"
+          and action["index"] == DELETE_ROW and knob.phase == "closing")
+    knob.note_closed(action["token"])
+
+    knob = DialKnob(on_log=lambda _msg: None)
+    _open(knob)
+    for _ in range(4):
+        _notch(knob, "volume up", 57392)
+    knob.handle(down("volume mute", 57376))
+    knob.handle(up("volume mute", 57376))
+    _notch(knob, "volume down", 57390)
+    check("turning away clears the confirm", knob._armed is None and knob.index == 3)
+    allow, action = knob.handle(down("volume mute", 57376))
+    check("that press runs save, not delete",
+          allow is False and action and action["type"] == "activate"
+          and action["index"] == 3)
+    check("confirm copy", DELETE_CONFIRM == "Press again to delete")
 
 
 def test_live_k762_scans():
@@ -492,6 +580,9 @@ def test_shell_on_disk():
     check("start path copied", "M14 4h6v6M20 4l-8 8" in html)
     check("pause path copied", "M8 5v14M16 5v14" in html)
     check("save path copied", "M5 4h11l3 3v12a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V4z" in html)
+    check("stop and delete are on the menu",
+          "Stop recording" in html and "Delete this clip" in html)
+    check("five rows", html.count('class="row"') == 5)
     check("no gallery chrome", "prefs-dial-menu" not in html and "LIKE" not in html)
     check("canvas is the background", 'id="bg"' in html and "dial-bg.js" in html)
     check("reduced motion pauses", "animation-play-state: paused" in css)
@@ -517,11 +608,13 @@ def main():
     test_dodge()
     test_pool()
     test_knob()
+    test_five_rows_and_delete()
     test_live_k762_scans()
     test_numpad_ins()
     test_hook_pairs()
     test_one_window()
     test_hidden_menu_remembers_the_gap()
+    test_dead_toast_releases_the_corner()
     test_close_beats_a_late_reveal()
     test_activate_still_closes()
     test_abandon_ignores_a_newer_open()

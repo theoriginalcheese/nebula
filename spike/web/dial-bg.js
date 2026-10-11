@@ -49,12 +49,18 @@ function ringCell(g, x, y, t) {
   if (g.depth) a *= .5 + .5 * (Math.sin(Math.atan2(py, px)) * .5 + .5);
   return [c, a * (g.dim || 1)];
 }
-function drawRing(ctx, k, t, spec) {
+function drawRing(ctx, k, t, spec, h, dy) {
   ctx.imageSmoothingEnabled = false;
-  for (let j = 0; j < Math.ceil(H / CELL); j++) for (let i = 0; i < Math.ceil(W / CELL); i++) {
+  const limit = h || H;
+  const shift = dy || 0;
+  for (let j = 0; j < Math.ceil(limit / CELL); j++) for (let i = 0; i < Math.ceil(W / CELL); i++) {
     const x = i * CELL + CELL / 2, y = j * CELL + CELL / 2;
     let hit = null;
-    for (const g of spec.rings) { const r = ringCell(g, x, y, t); if (r) { hit = r; break; } }
+    for (const g of spec.rings) {
+      const placed = shift && g.cy >= H * 0.5 ? { ...g, cy: g.cy + shift } : g;
+      const r = ringCell(placed, x, y, t);
+      if (r) { hit = r; break; }
+    }
     if (!hit) continue;
     ctx.globalAlpha = hit[1] * (y < 32 ? .55 : 1) * (x < 150 ? .5 : 1);
     ctx.fillStyle = hit[0];
@@ -102,14 +108,17 @@ const FIELDS = {
   ], pal: sparsePal },
   hwarm: { cores: BLOOM, pal: warmPal }
 };
-function drawField(ctx, k, t, f) {
+function drawField(ctx, k, t, f, h, dy) {
   ctx.setTransform(k, 0, 0, k, 0, 0);
-  const cs = f.cores.map(c => {
+  const limit = h || H;
+  const shift = dy || 0;
+  const cores = shift ? f.cores.map(c => ({ ...c, by: c.by + shift })) : f.cores;
+  const cs = cores.map(c => {
     let x = c.bx + Math.sin(TAU * t / c.px + c.phx) * c.ax, y = c.by + Math.sin(TAU * t / c.py + c.phy) * c.ay;
     if (c.op) { x += Math.sin(TAU * t / c.op) * c.ox; y += Math.cos(TAU * t / c.op) * c.oy; }
     return { x, y, R: c.R * (1 + Math.sin(TAU * t / c.rp + c.phx) * c.ra), w: c.w || 1 };
   });
-  for (let gy = 4; gy < H + 4; gy += 8) for (let gx = 4; gx < W + 4; gx += 8) {
+  for (let gy = 4; gy < limit + 4; gy += 8) for (let gx = 4; gx < W + 4; gx += 8) {
     let v = 0;
     for (const c of cs) { const dx = Math.abs(gx - c.x), dy = Math.abs(gy - c.y), d = Math.cbrt(dx * dx * dx + dy * dy * dy), q = 1 - d / c.R; if (q > 0) v += c.w * q * q * (3 - 2 * q); }
     const cap = (gy < 32 && gx > 200) || (gx < 150 && gy > 32) ? .45 : 1, e = Math.min(cap, v);
@@ -124,10 +133,12 @@ function paint(cv, t) {
   if (!ctx) return;
   if (!Number.isFinite(t)) t = 0;
   const key = cv.dataset.bg, k = cv.width / W;
+  const h = k > 0 ? cv.height / k : H;
+  const dy = h - H;
   ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.globalAlpha = 1;
   ctx.fillStyle = "#100D1C"; ctx.fillRect(0, 0, cv.width, cv.height);
-  if (RINGS[key]) drawRing(ctx, k, t, RINGS[key]);
-  else if (FIELDS[key]) drawField(ctx, k, t, FIELDS[key]);
+  if (RINGS[key]) drawRing(ctx, k, t, RINGS[key], h, dy);
+  else if (FIELDS[key]) drawField(ctx, k, t, FIELDS[key], h, dy);
   ctx.globalAlpha = 1;
 }
 

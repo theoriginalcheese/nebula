@@ -75,6 +75,21 @@ const moved = paintAll("trail", 22).filter((c) => c.op === "rect" && c.s !== "#1
 const sig = (rows) => rows.map((c) => c.x + "," + c.y + ":" + c.s).join("|");
 check("the ring has travelled", sig(trail) !== sig(moved));
 
+function mockTall(key) {
+  const cv = mockCanvas(key, 628);
+  cv.height = Math.round(628 * 230 / 314);
+  return cv;
+}
+const tallTrail = (() => {
+  const cv = mockTall("trail");
+  bg.paint(cv, 4);
+  return cv.calls.filter((c) => c.op === "rect" && c.s !== "#100D1C");
+})();
+check("a tall panel still draws the ring", tallTrail.length > 20, tallTrail.length);
+check("the ring follows the taller corner",
+  tallTrail.some((c) => c.y > 320),
+  tallTrail.reduce((m, c) => Math.max(m, c.y), 0));
+
 for (const key of Object.keys(bg.FIELDS)) {
   const a = paintAll(key, 0).filter((c) => c.op === "arc");
   const b = paintAll(key, 10).filter((c) => c.op === "arc");
