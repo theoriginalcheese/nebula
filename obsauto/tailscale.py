@@ -10,7 +10,6 @@ No new dependencies. Missing CLI / timeout / bad JSON → degrade quietly.
 from __future__ import annotations
 
 import json
-import os
 import shutil
 import subprocess
 import time
@@ -363,7 +362,11 @@ def diagnose(root):
     root = (root or "").strip()
     if not root:
         return "off"
-    up = os.path.isdir(root)
+    # Bounded, not a bare os.path.isdir(): this is called from
+    # Offloader.status_snapshot(), which is polled from the WebView
+    # JS-bridge snapshot - a dead mapped drive / SMB UNC must not be able
+    # to hold that thread for the 20-60s a raw isdir() can take.
+    up = isdir_within(root)
     st = status()
 
     if up:

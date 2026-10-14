@@ -384,6 +384,14 @@ def parse(field, raw):
     if field.kind == "optional_int" and not text:
         return None, None
 
+    if field.kind == "bool":
+        low = text.lower()
+        if low in ("1", "true", "yes", "on"):
+            return True, None
+        if low in ("0", "false", "no", "off"):
+            return False, None
+        return None, "must be true or false"
+
     try:
         value = int(text, 10)
     except ValueError:

@@ -21,8 +21,14 @@ def check(name, passed, detail=""):
 def run():
     work = tempfile.mkdtemp(prefix="nebula-moon-test-")
     real_glob = sd.MOONLIGHT_LOG_GLOB
-    # Point the module at our temp dir's Moonlight-*.log pattern.
+    real_proc = sd._moonlight_process_alive
+    real_win = sd._moonlight_window_alive
+    # Point the module at our temp dir's Moonlight-*.log pattern, and
+    # pretend Moonlight isn't running. Otherwise a real Moonlight.exe on
+    # this machine with no stream window would overturn the log.
     sd.MOONLIGHT_LOG_GLOB = os.path.join(work, "Moonlight-*.log")
+    sd._moonlight_process_alive = lambda: False
+    sd._moonlight_window_alive = lambda: False
 
     try:
         check("no log -> None", sd.moonlight_session_active() is None)
@@ -66,6 +72,8 @@ def run():
               sd.moonlight_session_active() is False)
     finally:
         sd.MOONLIGHT_LOG_GLOB = real_glob
+        sd._moonlight_process_alive = real_proc
+        sd._moonlight_window_alive = real_win
 
 
 run()

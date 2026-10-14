@@ -19,7 +19,11 @@ import time
 # stack one stuck thread per tick - remember "not a dir" verdicts briefly so
 # a dead path costs at most one thread per TTL window instead of per call.
 _NEG_TTL_S = 10.0
+# Separate memos. "Not a directory" and "not a file" are different answers
+# for the same path. Sharing one dict made a filesize miss on a folder
+# poison the next isdir, and the other way round.
 _neg_until: dict[str, float] = {}
+_neg_size_until: dict[str, float] = {}
 _neg_lock = threading.Lock()
 
 
@@ -88,6 +92,13 @@ def filesize_within(path, timeout=2.0):
     if timeout <= 0:
         timeout = 2.0
 
+    key = _key(path)
+    now = time.monotonic()
+    with _neg_lock:
+        until = _neg_size_until.get(key)
+        if until is not None and now < until:
+            return None
+
     box = []
 
     def check():
@@ -103,8 +114,14 @@ def filesize_within(path, timeout=2.0):
     worker.start()
     worker.join(timeout)
     if worker.is_alive() or not box:
+        with _neg_lock:
+            _neg_size_until[key] = time.monotonic() + _NEG_TTL_S
         return None
-    return box[0]
+    result = box[0]
+    if result is None:
+        with _neg_lock:
+            _neg_size_until[key] = time.monotonic() + _NEG_TTL_S
+    return result
 
 
 def forget(path):
@@ -123,3 +140,4 @@ def forget(path):
         return
     with _neg_lock:
         _neg_until.pop(key, None)
+        _neg_size_until.pop(key, None)

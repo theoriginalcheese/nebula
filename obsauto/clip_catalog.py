@@ -411,7 +411,22 @@ class ClipCatalog:
         rel = _safe_rel(rel)
         if not rel:
             return None
-        return os.path.join(self._cache_root, *rel.split("/"))
+        path = os.path.join(self._cache_root, *rel.split("/"))
+        # _safe_rel only rejects ".." segments. A segment shaped like a
+        # drive letter ("Q:") is not ".." but still makes os.path.join
+        # discard every earlier component including cache_root (Windows
+        # join rule for a bare drive-letter component) - so confirm the
+        # result actually landed under the cache dir before handing it
+        # back to callers like evict() / _prune_cache() that delete files.
+        try:
+            root_abs = os.path.abspath(self._cache_root)
+            path_abs = os.path.abspath(path)
+            prefix = root_abs.rstrip("\\/") + os.sep
+            if not path_abs.lower().startswith(prefix.lower()):
+                return None
+        except (OSError, ValueError):
+            return None
+        return path
 
     def cached_file(self, rel: str) -> str | None:
         path = self.cache_path(rel)

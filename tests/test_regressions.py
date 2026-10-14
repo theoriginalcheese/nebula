@@ -427,20 +427,97 @@ settle(150)
 work2 = tempfile.mkdtemp(prefix="nebula-today-")
 today_log = os.path.join(work2, "sessions.jsonl")
 session_log.log_path = lambda: today_log
-now = time.time()
 import json as _json
 
-with open(today_log, "w", encoding="utf-8") as f:
-    for r in ({"ts": now - 7200, "type": "rec_start", "game": "A"},
-              {"ts": now - 5400, "type": "rec_stop", "game": "A",
-               "duration": 1800, "size": 10 ** 9},
-              {"ts": now - 3600, "type": "rec_start", "game": "B"}):
-        f.write(_json.dumps(r) + "\n")
-stats = session_log.today()
+# "now" is pinned to a fixed offset past real midnight rather than read from
+# the wall clock - otherwise this flakes for the ~90 minutes after midnight
+# each night, when `now - 7200` lands yesterday and the window below never
+# sees any of these rows (that's exactly the bug the next check hunts for).
+midnight = session_log.day_start()
+real_time_time = session_log.time.time
+fixed_now = midnight + 7200
+session_log.time.time = lambda: fixed_now
+try:
+    with open(today_log, "w", encoding="utf-8") as f:
+        for r in ({"ts": fixed_now - 7200, "type": "rec_start", "game": "A"},
+                  {"ts": fixed_now - 5400, "type": "rec_stop", "game": "A",
+                   "duration": 1800, "size": 10 ** 9},
+                  {"ts": fixed_now - 3600, "type": "rec_start", "game": "B"}):
+            f.write(_json.dumps(r) + "\n")
+    stats = session_log.today()
+finally:
+    session_log.time.time = real_time_time
 check("Recorded counts the recording still in progress",
       5000 < stats["recorded_seconds"] < 5600,
       f"{stats['recorded_seconds']:.0f}s, expected ~5400 (30m done + 60m live)")
 check("...without inventing a finished clip", stats["clips"] == 1, stats)
+
+# An unclosed rec_start from before midnight is the same shape as a crash.
+# Counting up to "now" would invent the whole day. The tile stays at zero
+# until a real rec_stop arrives.
+work2b = tempfile.mkdtemp(prefix="nebula-today-midnight-")
+midnight_log = os.path.join(work2b, "sessions.jsonl")
+session_log.log_path = lambda: midnight_log
+fixed_now2 = midnight + 5400   # 01:30am
+session_log.time.time = lambda: fixed_now2
+try:
+    with open(midnight_log, "w", encoding="utf-8") as f:
+        f.write(_json.dumps({"ts": midnight - 3600, "type": "rec_start",
+                              "game": "C"}) + "\n")
+    stats2 = session_log.today()
+finally:
+    session_log.time.time = real_time_time
+check("an unclosed start before midnight is not counted as today",
+      stats2["recorded_seconds"] == 0 and stats2["clips"] == 0, stats2)
+
+# Stopping that same take must not pull yesterday back in. rec_stop's
+# duration is the whole recording (here 2.5h), and the tile answers how
+# long OBS wrote *today*.
+work2c = tempfile.mkdtemp(prefix="nebula-today-midnight-stop-")
+stop_log = os.path.join(work2c, "sessions.jsonl")
+session_log.log_path = lambda: stop_log
+fixed_now3 = midnight + 5400
+session_log.time.time = lambda: fixed_now3
+try:
+    with open(stop_log, "w", encoding="utf-8") as f:
+        f.write(_json.dumps({"ts": midnight - 3600, "type": "rec_start",
+                              "game": "C"}) + "\n")
+        f.write(_json.dumps({"ts": fixed_now3, "type": "rec_stop",
+                              "game": "C", "path": os.path.join(work2c, "c.mkv"),
+                              "duration": 9000, "size": 10 ** 9}) + "\n")
+    stats3 = session_log.today()
+finally:
+    session_log.time.time = real_time_time
+check("stopping after midnight does not count the hour before it",
+      5300 < stats3["recorded_seconds"] < 5500,
+      f"{stats3['recorded_seconds']:.0f}s, expected ~5400 not the full 9000")
+check("...and the finished clip still belongs to today",
+      stats3["clips"] == 1 and stats3["bytes"] == 10 ** 9, stats3)
+
+# A replay saved after midnight, during a take that started before it,
+# is its own clip. Its seconds are already inside the parent, so they
+# must not be added again when the parent stops.
+work2d = tempfile.mkdtemp(prefix="nebula-today-midnight-replay-")
+replay_log = os.path.join(work2d, "sessions.jsonl")
+session_log.log_path = lambda: replay_log
+session_log.time.time = lambda: fixed_now3
+try:
+    with open(replay_log, "w", encoding="utf-8") as f:
+        f.write(_json.dumps({"ts": midnight - 3600, "type": "rec_start",
+                              "game": "C"}) + "\n")
+        f.write(_json.dumps({"ts": midnight + 1800, "type": "rec_stop",
+                              "game": "C", "replay": True, "duration": 30,
+                              "path": os.path.join(work2d, "replay.mkv"),
+                              "size": 10}) + "\n")
+        f.write(_json.dumps({"ts": fixed_now3, "type": "rec_stop",
+                              "game": "C", "path": os.path.join(work2d, "full.mkv"),
+                              "duration": 9000, "size": 10 ** 9}) + "\n")
+    stats4 = session_log.today()
+finally:
+    session_log.time.time = real_time_time
+check("an overnight replay is not counted twice when the take stops",
+      abs(stats4["recorded_seconds"] - 5400) < 2 and stats4["clips"] == 2,
+      stats4)
 
 # ---------------------------------------------------------------------------
 # The hero named Nebula's own window as the foreground it rejected

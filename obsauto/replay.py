@@ -309,12 +309,30 @@ class ReplayBuffer:
             saved = self._request_save()
             if saved:
                 self._saved_event.wait(self.SAVE_FLUSH_S)
+            # The wait above can run for seconds - long enough for the user
+            # to stop being idle for real. Monitor's own idle check (the same
+            # get_idle_duration/idle_timeout_seconds comparison it uses to
+            # decide should_pause) would no longer want this paused; blindly
+            # restoring the pause here would leave the recording stuck paused
+            # with Monitor._auto_paused already False and nothing left to
+            # notice or correct it.
             try:
-                self.obs.pause_record()
-                self.log("[Replay] Recording paused again.")
-            except OBSError as exc:
-                error = str(exc)
-                self.log(f"[Replay] Saved, but couldn't restore the recording pause: {error}")
+                from .monitor import get_idle_duration
+                idle_for = get_idle_duration()
+            except Exception:
+                # If we cannot tell, put the pause back. Leaving it running
+                # is the stuck state this function exists to avoid.
+                idle_for = None
+            idle_timeout = self.config.get("idle_timeout_seconds", 9999)
+            if idle_for is not None and idle_for < idle_timeout:
+                self.log("[Replay] Skipped restoring the pause - you're active again.")
+            else:
+                try:
+                    self.obs.pause_record()
+                    self.log("[Replay] Recording paused again.")
+                except OBSError as exc:
+                    error = str(exc)
+                    self.log(f"[Replay] Saved, but couldn't restore the recording pause: {error}")
         finally:
             with self._pause_save_lock:
                 self._pause_save_inflight = False

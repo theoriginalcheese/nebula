@@ -113,6 +113,27 @@ def run():
     check("hold logged Discord call reason",
           any("Discord call" in m for m in logs), logs[-3:])
 
+    # A buffer-only game must not inherit the live file. Holding would
+    # leave OBS writing while _applied_capture says nothing is recording.
+    class BufferClassifier(FakeClassifier):
+        def snapshot(self):
+            return {"games": {"gameb.exe": {"capture": "buffer"}}}
+
+    mon.classifier = BufferClassifier()
+    mon._recording_target = target_a
+    mon._applied_capture = "record"
+    obs._recording = True
+    obs.stopped = 0
+    obs.started = 0
+    mon._apply_target(target_b, hold_recording=True)
+    check("hold onto a buffer game stops the file", obs.stopped == 1, obs.stopped)
+    check("hold onto a buffer game does not start another",
+          obs.started == 0 and obs._recording is False,
+          (obs.started, obs._recording))
+    check("hold onto a buffer game is not a hidden live recording",
+          mon._applied_capture == "buffer" and mon._nothing_recording(),
+          (mon._applied_capture, mon._nothing_recording()))
+
     # Same target is a no-op.
     before = (obs.stopped, obs.started, obs.dir)
     mon._apply_target(target_b, hold_recording=True)

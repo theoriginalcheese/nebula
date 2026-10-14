@@ -173,18 +173,30 @@ def merge_classifications(base, overlay):
     wins outright and is dropped from the opposite bucket. Additions made
     elsewhere still survive, which is the property the merge existed for.
     """
+    # A key sitting in both buckets of the *same* side is damage from the old
+    # union merge, not two opinions - and that damage can live in `base` just
+    # as easily as in `overlay` (a remote/on-disk copy nobody has reclassified
+    # since the old merge corrupted it). Heal each side on its own terms
+    # before merging, or an unhealed `base` entry neither side has a fresh
+    # opinion on would survive the union untouched and get written straight
+    # back out - which is exactly how GameSync.push() kept re-uploading
+    # stale double-filing to the shared store. Treating a same-side double
+    # file as two opinions would also make the two strips below cancel: games
+    # removes it from non_games, then non_games removes it from games, and
+    # the exe vanishes from the list entirely. games wins, same rule as
+    # Classifier._heal.
+    base_games = dict(base.get("games") or {})
+    base_non = dict(base.get("non_games") or {})
+    for key in list(base_non):
+        if key in base_games:
+            base_non.pop(key, None)
     overlay_games = dict(overlay.get("games") or {})
     overlay_non = dict(overlay.get("non_games") or {})
-    # A key sitting in both overlay buckets is damage from the old union
-    # merge, not two opinions. Treating it as both makes the two strips
-    # below cancel: games removes it from non_games, then non_games removes
-    # it from games, and the exe vanishes from the list entirely.
-    # games wins, same rule as Classifier._heal.
     for key in list(overlay_non):
         if key in overlay_games:
             overlay_non.pop(key, None)
-    games = {**(base.get("games") or {}), **overlay_games}
-    non_games = {**(base.get("non_games") or {}), **overlay_non}
+    games = {**base_games, **overlay_games}
+    non_games = {**base_non, **overlay_non}
     for key in overlay_games:
         non_games.pop(key, None)
     for key in overlay_non:

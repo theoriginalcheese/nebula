@@ -1117,8 +1117,15 @@ class Monitor:
         if target == self._recording_target and mode == self._applied_capture:
             return
 
+        # A buffer-only target must never inherit a live recording via the
+        # Discord-hold path: _retarget_live only repoints capture/directory
+        # and leaves OBS running, so a switch onto a buffer-configured game
+        # would keep writing a session file under its name while
+        # _applied_capture (and therefore _nothing_recording()) claims
+        # nothing is recording at all.
         if (hold_recording and target is not None
                 and self._recording_target is not None
+                and mode != "buffer"
                 and self._output_active()):
             self._retarget_live(target)
             return

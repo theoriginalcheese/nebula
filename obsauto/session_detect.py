@@ -34,6 +34,26 @@ def _newest_moonlight_log():
         return None
 
 
+def _moonlight_process_alive():
+    """True if a Moonlight.exe process currently exists. False (not None)
+    on any failure - this is only used to narrow an existing "live" verdict,
+    never to grant one, so failing closed here is the safe direction."""
+    try:
+        from . import moonlight
+        return bool(moonlight._moonlight_pids())
+    except Exception:
+        return False
+
+
+def _moonlight_window_alive():
+    """True if a Moonlight stream-surface window currently exists."""
+    try:
+        from . import moonlight
+        return bool(moonlight._stream_window_present())
+    except Exception:
+        return False
+
+
 def moonlight_session_active():
     """Return True if a Moonlight stream is currently live, False if it isn't,
     or None if it can't be determined (no log / unreadable). Callers treat
@@ -56,4 +76,16 @@ def moonlight_session_active():
     last_stop = text.rfind(_STOP_MARKER)
     if last_start == -1 and last_stop == -1:
         return False  # log exists but no session has started yet
-    return last_start > last_stop
+    live = last_start > last_stop
+
+    # The log can only say what Moonlight chose to write, and a crash / GPU
+    # reset / network drop can kill the stream window without ever writing
+    # "Stopping video stream...". If the process is confirmed still running
+    # but has no stream window left, the log's stale "Starting" must not
+    # keep reading as live forever. Only narrows True -> False: when the
+    # process state can't be determined at all, this defers to the log
+    # exactly as before (fails toward "assume active", per the module's own
+    # rule above).
+    if live and _moonlight_process_alive() and not _moonlight_window_alive():
+        return False
+    return live

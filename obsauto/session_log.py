@@ -232,6 +232,40 @@ def summarise(span_list):
             "marks": sum(len(s["marks"]) for s in span_list)}
 
 
+def _stop_seconds_today(row, prior_start, span_list):
+    """Seconds of a finished take that belong on today's Recorded tile.
+
+    ``duration`` is the whole take. When the ``rec_start`` is already inside
+    today's window, that whole take is today's. When it isn't, the start
+    fell before midnight (or the log has no start at all) and adding
+    ``duration`` raw counts yesterday's writing as today's — the tile then
+    jumps the moment an overnight recording stops.
+    """
+    duration = float(row.get("duration") or 0)
+    window_start = day_start()
+    if prior_start is not None and prior_start >= window_start:
+        return duration
+    stop_ts = float(row.get("ts") or 0)
+    if stop_ts <= window_start:
+        return 0.0
+    path = (row.get("path") or "").strip()
+    match = None
+    for span in span_list:
+        if span.get("live"):
+            continue
+        if path and span.get("path") == path:
+            match = span
+            break
+        if match is None and abs(float(span.get("end") or 0) - stop_ts) < 1.0:
+            match = span
+    if match is None or float(match.get("start") or 0) >= window_start:
+        # Began today (or we cannot find a span). The logged duration is
+        # the figure the tile already used; a second rec_stop for the same
+        # path often carries it, and that stop no longer has `started` set.
+        return duration
+    return span_recorded_seconds(match, window=(window_start, stop_ts))
+
+
 def today():
     """The four figures the dashboard's stat tiles show (6.3).
 
@@ -249,21 +283,54 @@ def today():
     kept_by_path = {}
     kept_anon = []
     culled_paths = set()
+    # spans() reads the whole log. today() only calls it when a stop has no
+    # rec_start in the window, and a single call pays that once.
+    span_cache = []
+
+    def seconds_for(row, prior_start):
+        if prior_start is not None and prior_start >= day_start():
+            return float(row.get("duration") or 0)
+        if not span_cache:
+            span_cache.append(spans())
+        return _stop_seconds_today(row, prior_start, span_cache[0])
+
+    def _replay_inside_take(row):
+        """True when this replay save sits inside a recording, not on its own.
+
+        ``spans()`` gives a nested replay no span of its own. An orphan
+        replay (nothing was recording) becomes its own finished span, and
+        that one should count its duration like any other clip.
+        """
+        if started is not None:
+            return True
+        path = (row.get("path") or "").strip()
+        ts = float(row.get("ts") or 0)
+        if not span_cache:
+            span_cache.append(spans())
+        for span in span_cache[0]:
+            if (path and span.get("path") == path and not span.get("live")
+                    and abs(float(span.get("end") or 0) - ts) < 1.0):
+                return False
+        return True
+
     for row in rows:
         kind = row.get("type")
         if kind == "rec_start":
             started = row.get("ts")
             live_gaps = 0.0
             idle_since = None
-        elif kind == "rec_stop" and row.get("replay") and started is not None:
+        elif kind == "rec_stop" and row.get("replay") and _replay_inside_take(row):
             # Inside a recording that is still going. Count the file, but not
-            # its duration: that time is already in the live wall clock, and
+            # its duration: that time is already in the parent take, and
             # clearing `started` here made the Recorded tile show only the
-            # replay's length.
+            # replay's length. A take that began before midnight has no
+            # rec_start in today's rows, so `started` stays None — the replay
+            # still must not be added again on top of the parent.
             clips += 1
             bytes_written += int(row.get("size") or 0)
             continue
         elif kind == "rec_stop":
+            prior_start = started
             started = None
             live_gaps = 0.0
             idle_since = None
@@ -277,12 +344,12 @@ def today():
                 # A culled clip still records time: the Recorded tile answers
                 # "how long did OBS write today", not "how much survived".
                 # Bytes stay kept-only so storage figures never double-count.
-                recorded += float(row.get("duration") or 0)
+                recorded += seconds_for(row, prior_start)
                 continue
             if path:
-                kept_by_path[path] = row  # last wins — later stop often has duration
+                kept_by_path[path] = (row, prior_start)  # last wins — later stop often has duration
             else:
-                kept_anon.append(row)
+                kept_anon.append((row, prior_start))
         elif kind == "idle_in":
             idle_pauses += 1
             if started is not None and idle_since is None:
@@ -291,9 +358,9 @@ def today():
             if idle_since is not None:
                 live_gaps += max(0.0, float(row.get("ts") or 0) - idle_since)
                 idle_since = None
-    for row in list(kept_by_path.values()) + kept_anon:
+    for row, prior_start in list(kept_by_path.values()) + kept_anon:
         clips += 1
-        recorded += float(row.get("duration") or 0)
+        recorded += seconds_for(row, prior_start)
         bytes_written += int(row.get("size") or 0)
     # A recording still in progress counts too. Without this the Recorded tile
     # read "0m today" beside "2 clips · 7.3 GB" an hour into a session, because
@@ -305,5 +372,10 @@ def today():
         if idle_since is not None:   # still paused right now
             live -= max(0.0, now - idle_since)
         recorded += max(0.0, live)
+    # An unclosed rec_start from before midnight is not counted up to now.
+    # A crash leaves the same row as a recording that is genuinely still
+    # going, and treating it as live made the tile climb all day with
+    # nothing writing. The minutes since midnight land when the rec_stop
+    # does, clipped so yesterday stays out.
     return {"clips": clips, "recorded_seconds": recorded, "bytes": bytes_written,
             "culled": culled, "idle_pauses": idle_pauses}

@@ -24,6 +24,7 @@ hotkey.register = lambda *a, **k: None
 gui.ensure_obs_running = lambda *a, **k: None
 
 from obsauto import config as config_module
+from obsauto import monitor as monitor_mod
 from obsauto import replay as replay_mod
 from obsauto import session_log
 from obsauto.classifier import Classifier
@@ -212,6 +213,12 @@ check("a replay counts as a kept clip",
 # write and puts it back, and putting it back is the load-bearing half: an idle
 # auto-pause leaves Monitor._auto_paused set, so a recording left running here
 # would never be paused again for the rest of the session.
+#
+# The restore is skipped if the user has stopped being idle in the meantime.
+# Pin real idle duration to "still away" for these pause-mechanics checks so
+# they stay deterministic regardless of this machine's last-input time.
+real_get_idle_duration = monitor_mod.get_idle_duration
+monitor_mod.get_idle_duration = lambda: 9999.0
 rb.armed = True
 obs.rec_active, obs.rec_paused = True, True
 obs.calls.clear()
@@ -266,6 +273,7 @@ check("double request: every request saved", obs.calls.count("save") >= 2,
       obs.calls)
 check("double request: ends paused", obs.rec_paused is True)
 obs.rec_active, obs.rec_paused = False, False
+monitor_mod.get_idle_duration = real_get_idle_duration
 
 # An unpaused recording must not be touched - no resume, no pause, just the save.
 obs.rec_paused = False
