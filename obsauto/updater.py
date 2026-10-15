@@ -21,6 +21,10 @@ DEFAULT_REPO = "theoriginalcheese/nebula"
 # Laptop/desktop Save/Load always uses this branch. No wip shuttle — Anthony
 # tracks one place, and leftover cursor/* branches were the whole problem.
 SYNC_BRANCH = "main"
+# How often a running source checkout fetches origin/main and, when the
+# tree is clean, rebases its own commits on top. Once-at-boot left the two
+# PCs diverged for as long as they stayed open.
+SOURCE_SYNC_INTERVAL_S = 15 * 60
 USER_AGENT = f"Nebula/{__version__} (+https://github.com/{DEFAULT_REPO})"
 
 
@@ -429,6 +433,48 @@ def _ahead_count(root, a, b):
         return 0
 
 
+def _push_rejected(err):
+    err = err or ""
+    return (
+        "non-fast-forward" in err
+        or "Updates were rejected" in err
+        or "failed to push some refs" in err
+    )
+
+
+def _rebase_onto_origin(root, branch, timeout):
+    """Replay local commits onto ``origin/<branch>`` when it has moved.
+
+    A clean fast-forward is a rebase too. A conflict aborts, so neither
+    side is replaced: the other PC's commits stay on origin, and this
+    PC's commits stay where they were. Never force-pushes.
+    """
+    remote = "origin/%s" % branch
+    if not _rev_parse(root, remote):
+        return {"ok": True, "rebased": False, "message": ""}
+    if _ahead_count(root, "HEAD", remote) <= 0:
+        return {"ok": True, "rebased": False, "message": ""}
+    rebase = _run_git(root, ["git", "rebase", remote], timeout)
+    if rebase.returncode != 0:
+        _run_git(root, ["git", "rebase", "--abort"], 30)
+        detail = (rebase.stderr or rebase.stdout or "rebase failed").strip()
+        tip = detail.splitlines()[-1] if detail else "conflict"
+        return {
+            "ok": False,
+            "rebased": False,
+            "message": (
+                "This PC and origin/%s each have commits that do not "
+                "combine (%s). Neither side was overwritten."
+                % (branch, tip)
+            ),
+        }
+    return {
+        "ok": True,
+        "rebased": True,
+        "message": "Combined this PC's commits onto origin/%s." % branch,
+    }
+
+
 def _refresh_version():
     try:
         from . import version as version_mod
@@ -489,7 +535,11 @@ def check_source_sync(root=None, timeout=90):
 
 
 def save_source_snapshot(root=None, timeout=90, now=None, host=None):
-    """Commit the working tree onto ``main`` and push it."""
+    """Commit the working tree onto ``main`` and push it.
+
+    If the other PC pushed in the meantime, local commits are replayed on
+    top of theirs. A conflict is reported and origin is left alone.
+    """
     root = root or source_checkout_root()
     if not root:
         return {"ok": False, "message": "Not a git checkout.", "head": ""}
@@ -547,45 +597,75 @@ def save_source_snapshot(root=None, timeout=90, now=None, host=None):
             else:
                 committed = True
 
-        push = _run_git(
-            root, ["git", "push", "-u", "origin", SYNC_BRANCH], timeout)
-        replaced = False
-        if push.returncode != 0:
+        fetch, rewrite = _fetch_origin(root, timeout)
+        integrated = False
+        if fetch.returncode != 0:
+            err = (fetch.stderr or fetch.stdout or "fetch failed").strip()
+            return {
+                "ok": False,
+                "message": "%s — origin was not replaced." % err,
+                "head": _head_oneline(root),
+            }
+        last_err = "push failed"
+        pushed = False
+        for _attempt in range(3):
+            rebase = _rebase_onto_origin(root, SYNC_BRANCH, timeout)
+            if not rebase.get("ok"):
+                return {
+                    "ok": False,
+                    "message": rebase.get("message") or "rebase failed",
+                    "head": _head_oneline(root),
+                    "replaced": False,
+                    "committed": committed,
+                }
+            integrated = integrated or bool(rebase.get("rebased"))
+            push = _run_git(
+                root, ["git", "push", "-u", "origin", SYNC_BRANCH],
+                timeout, rewrite=rewrite)
+            if push.returncode == 0:
+                pushed = True
+                break
             err = (push.stderr or push.stdout or "push failed").strip()
-            rejected = (
-                "non-fast-forward" in err
-                or "Updates were rejected" in err
-                or "failed to push some refs" in err
-            )
-            if rejected:
-                lease = _run_git(
-                    root,
-                    ["git", "push", "--force-with-lease",
-                     "origin", SYNC_BRANCH],
-                    timeout,
-                )
-                if lease.returncode == 0:
-                    replaced = True
-                else:
-                    err2 = (lease.stderr or lease.stdout or err).strip()
-                    return {"ok": False, "message": err2,
-                            "head": _head_oneline(root)}
-            else:
-                return {"ok": False, "message": err,
-                        "head": _head_oneline(root)}
+            last_err = err
+            if not _push_rejected(err):
+                return {
+                    "ok": False, "message": err,
+                    "head": _head_oneline(root),
+                    "replaced": False, "committed": committed,
+                }
+            fetch, rewrite = _fetch_origin(root, timeout)
+            if fetch.returncode != 0:
+                err = (fetch.stderr or fetch.stdout or last_err).strip()
+                return {
+                    "ok": False,
+                    "message": "%s — origin was not replaced." % err,
+                    "head": _head_oneline(root),
+                    "replaced": False, "committed": committed,
+                }
+        if not pushed:
+            return {
+                "ok": False,
+                "message": "%s — origin was not replaced." % last_err,
+                "head": _head_oneline(root),
+                "replaced": False, "committed": committed,
+            }
 
         _refresh_version()
         head = _head_oneline(root)
-        if replaced:
+        if integrated and committed:
             out_msg = (
-                "Saved — replaced the previous GitHub snapshot (%s)." % head)
+                "Saved this machine on top of the other PC's commits (%s)."
+                % head)
+        elif integrated:
+            out_msg = "Brought in the other PC's commits (%s)." % head
         elif committed:
             out_msg = "Saved this machine to GitHub (%s)." % head
         else:
             out_msg = "Already saved (%s)." % head
         return {
             "ok": True, "message": out_msg, "head": head,
-            "replaced": replaced, "committed": committed,
+            "replaced": False, "committed": committed,
+            "integrated": integrated,
         }
     except Exception as exc:
         return _git_exc_result(exc, _head_oneline(root) if root else "")
@@ -670,9 +750,10 @@ def sync_source_checkout(root=None, timeout=90, branch=None, do_push=True):
 
     1. Fetch
     2. Refuse if local edits (porcelain non-empty) — never clobber WIP
-    3. Fast-forward pull if behind
-    4. Push if ahead (and ``do_push``)
-    5. Refuse if diverged (needs a real merge)
+    3. If both sides committed, rebase ours onto origin. A conflict aborts
+       and leaves both histories intact — never a force push
+    4. Fast-forward pull if still behind
+    5. Push if ahead (and ``do_push``)
 
     Returns ``{"ok", "message", "head", "pulled", "pushed", "skipped"}``.
     """
@@ -784,25 +865,30 @@ def sync_source_checkout(root=None, timeout=90, branch=None, do_push=True):
         parts = (counts.stdout or "0\t0").strip().split()
         ahead = int(parts[0]) if parts else 0
         behind = int(parts[1]) if len(parts) > 1 else 0
-
-        if ahead and behind:
-            head = run(["git", "log", "-1", "--oneline"], t=15)
-            return {
-                "ok": False,
-                "message": (
-                    "Branch has diverged from origin/%s (%d ahead, %d behind). "
-                    "Resolve in git, then Sync."
-                    % (sync, ahead, behind)
-                ),
-                "head": (head.stdout or "").strip(),
-                "pulled": False,
-                "pushed": False,
-                "skipped": False,
-            }
-
         pulled = False
         pushed = False
         bits = []
+
+        if ahead and behind:
+            # Both PCs committed. Replay ours onto theirs. A conflict stops
+            # here with both histories intact — never a force push.
+            integrated = _rebase_onto_origin(root, sync, timeout)
+            if not integrated.get("ok"):
+                head = run(["git", "log", "-1", "--oneline"], t=15)
+                return {
+                    "ok": False,
+                    "message": integrated.get("message") or "rebase failed",
+                    "head": (head.stdout or "").strip(),
+                    "pulled": False,
+                    "pushed": False,
+                    "skipped": False,
+                }
+            ahead = _ahead_count(root, remote_ref, "HEAD")
+            behind = 0
+            pulled = True
+            bits.append(
+                integrated.get("message")
+                or ("Combined this PC's commits onto origin/%s." % sync))
 
         if behind:
             pull = pull_source_update(root=root, timeout=timeout, branch=sync)

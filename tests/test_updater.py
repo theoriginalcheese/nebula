@@ -419,6 +419,110 @@ finally:
     shutil.rmtree(work, ignore_errors=True)
 
 
+# --- Two PCs committing must combine, never replace each other ---------------
+from obsauto.updater import sync_source_checkout
+
+split = _tempfile.mkdtemp(prefix="nebula-split-")
+split_bare = os.path.join(split, "origin.git")
+pc_a = os.path.join(split, "a")
+pc_b = os.path.join(split, "b")
+try:
+    os.makedirs(split_bare)
+    _git(split_bare, "init", "--bare", "-b", SYNC_BRANCH)
+    split_seed = os.path.join(split, "seed")
+    os.makedirs(split_seed)
+    _git(split_seed, "init", "-b", SYNC_BRANCH)
+    _git(split_seed, "config", "user.email", "nebula-test@local")
+    _git(split_seed, "config", "user.name", "Nebula Test")
+    with open(os.path.join(split_seed, "README.md"), "w", encoding="utf-8") as fh:
+        fh.write("seed\n")
+    _git(split_seed, "add", "README.md")
+    _git(split_seed, "commit", "-m", "seed")
+    _git(split_seed, "remote", "add", "origin", split_bare)
+    _git(split_seed, "push", "-u", "origin", SYNC_BRANCH)
+    subprocess.run(
+        ["git", "clone", split_bare, pc_a], check=True,
+        capture_output=True, text=True)
+    subprocess.run(
+        ["git", "clone", split_bare, pc_b], check=True,
+        capture_output=True, text=True)
+    for clone in (pc_a, pc_b):
+        _git(clone, "config", "user.email", "nebula-test@local")
+        _git(clone, "config", "user.name", "Nebula Test")
+
+    with open(os.path.join(pc_a, "from-a.txt"), "w", encoding="utf-8") as fh:
+        fh.write("desktop\n")
+    saved_a = save_source_snapshot(root=pc_a, host="ALIEN-PC", now="2026-10-15 12:00")
+    check("first PC save still pushes", saved_a.get("ok"), saved_a.get("message"))
+
+    with open(os.path.join(pc_b, "from-b.txt"), "w", encoding="utf-8") as fh:
+        fh.write("laptop\n")
+    saved_b = save_source_snapshot(root=pc_b, host="STRIX-LAPTOP", now="2026-10-15 12:05")
+    check("second PC save combines instead of replacing",
+          saved_b.get("ok") and not saved_b.get("replaced"),
+          saved_b.get("message"))
+    check("combined save kept both files",
+          os.path.isfile(os.path.join(pc_b, "from-a.txt"))
+          and os.path.isfile(os.path.join(pc_b, "from-b.txt")))
+    caught_up = load_source_snapshot(root=pc_a)
+    check("first PC load receives the other commit",
+          caught_up.get("ok")
+          and os.path.isfile(os.path.join(pc_a, "from-b.txt")),
+          caught_up.get("message"))
+
+    # Same file, two edits: refuse, and do not leave a rebase half-done.
+    with open(os.path.join(pc_a, "README.md"), "w", encoding="utf-8") as fh:
+        fh.write("desktop edit\n")
+    clash_a = save_source_snapshot(root=pc_a, host="ALIEN-PC", now="2026-10-15 12:10")
+    check("desktop clash commit pushed", clash_a.get("ok"), clash_a.get("message"))
+    with open(os.path.join(pc_b, "README.md"), "w", encoding="utf-8") as fh:
+        fh.write("laptop edit\n")
+    clash_b = save_source_snapshot(root=pc_b, host="STRIX-LAPTOP", now="2026-10-15 12:11")
+    check("clashing save does not overwrite origin",
+          not clash_b.get("ok")
+          and "Neither side was overwritten" in (clash_b.get("message") or ""),
+          clash_b.get("message"))
+    origin_readme = _git(split_bare, "show", "%s:README.md" % SYNC_BRANCH).stdout
+    check("origin still has the first PC's edit",
+          origin_readme == "desktop edit\n", repr(origin_readme))
+    local_readme = open(os.path.join(pc_b, "README.md"), encoding="utf-8").read()
+    check("second PC still has its own edit", local_readme == "laptop edit\n",
+          repr(local_readme))
+    rebase_head = _git(
+        pc_b, "rev-parse", "--verify", "--quiet", "REBASE_HEAD", check=False)
+    check("failed combine is not left mid-rebase",
+          rebase_head.returncode != 0)
+
+    # Auto-sync heals a clean divergence the same way, without Save.
+    heal_b = os.path.join(split, "heal")
+    subprocess.run(
+        ["git", "clone", split_bare, heal_b], check=True,
+        capture_output=True, text=True)
+    _git(heal_b, "config", "user.email", "nebula-test@local")
+    _git(heal_b, "config", "user.name", "Nebula Test")
+    with open(os.path.join(pc_a, "later-a.txt"), "w", encoding="utf-8") as fh:
+        fh.write("later\n")
+    later = save_source_snapshot(root=pc_a, host="ALIEN-PC", now="2026-10-15 12:20")
+    check("later desktop save pushed", later.get("ok"), later.get("message"))
+    with open(os.path.join(heal_b, "later-b.txt"), "w", encoding="utf-8") as fh:
+        fh.write("also\n")
+    _git(heal_b, "add", "later-b.txt")
+    _git(heal_b, "commit", "-m", "laptop only")
+    healed = sync_source_checkout(root=heal_b)
+    check("auto-sync rebases a clean split and pushes",
+          healed.get("ok") and healed.get("pushed"), healed.get("message"))
+    both = load_source_snapshot(root=pc_a)
+    check("auto-sync kept both later files",
+          both.get("ok")
+          and os.path.isfile(os.path.join(pc_a, "later-b.txt"))
+          and os.path.isfile(os.path.join(heal_b, "later-a.txt")),
+          both.get("message"))
+except Exception as exc:
+    check("two-PC combine", False, str(exc))
+finally:
+    shutil.rmtree(split, ignore_errors=True)
+
+
 # --- relaunch_source: waiter goes to TEMP, argv mirrors the shortcut ---------
 import tempfile
 import subprocess as _subprocess_mod

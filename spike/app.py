@@ -150,7 +150,14 @@ def _seed_nas_games_from_legacy(config, classifier, log):
 
 
 class _GameListSync:
-    """Pull remote classifications at startup; debounce pushes on local save."""
+    """Pull remote classifications at startup and on a timer.
+
+    A pull only at startup is how the laptop and the desktop drifted for
+    days while both stayed open. The timer absorbs the other machine and
+    pushes the merge back, same as startup.
+    """
+
+    INTERVAL_S = 15 * 60
 
     def __init__(self, gamesync, classifier, log, config=None):
         self._sync = gamesync
@@ -158,7 +165,9 @@ class _GameListSync:
         self._log = log
         self._config = config or {}
         self._timer = None
+        self._periodic = None
         self._lock = threading.Lock()
+        self._pull_lock = threading.Lock()
 
     def _shared_url(self):
         if "shared_games_url" in self._config:
@@ -176,8 +185,32 @@ class _GameListSync:
                 self._log("[Sync] Shared list skipped: %s" % exc)
 
         threading.Thread(target=worker, daemon=True).start()
+        self._arm_periodic()
+
+    def _arm_periodic(self):
+        # One chain. A second timer would pull twice and race the push.
+        if self._periodic is not None:
+            self._periodic.cancel()
+        self._periodic = threading.Timer(self.INTERVAL_S, self._periodic_pull)
+        self._periodic.daemon = True
+        self._periodic.start()
+
+    def _periodic_pull(self):
+        try:
+            if self._sync.enabled:
+                self._pull_private()
+        finally:
+            self._arm_periodic()
 
     def _pull_private(self):
+        if not self._pull_lock.acquire(blocking=False):
+            return
+        try:
+            self._pull_private_locked()
+        finally:
+            self._pull_lock.release()
+
+    def _pull_private_locked(self):
         remote = self._sync.fetch()
         if remote is None:
             self._log("[Sync] GitHub fetch failed — local games.json unchanged.")
@@ -3626,8 +3659,10 @@ def main():
                 log_to_file("[PHONE] agent did not start: %s" % exc)
 
         _start_phone_agent()
-        # Quiet machine-to-machine sync: when the tree is clean, pull/push
-        # origin/main so Alien ↔ Strix stay aligned without opening Settings.
+        # Quiet machine-to-machine sync: when the tree is clean, rebase/push
+        # origin/main so Alien and Strix stay aligned without opening Settings.
+        # Repeats for the life of the process. Once at boot is how a commit
+        # on one PC sat unseen on the other until somebody noticed.
         def _auto_sync():
             try:
                 from obsauto import updater as updater_mod
@@ -3649,17 +3684,31 @@ def main():
                 finally:
                     api._update_busy = False
                 msg = (result.get("message") or "").strip()
-                if not msg:
-                    return
-                if result.get("skipped"):
-                    return  # dirty WIP — stay quiet
+                if not msg or result.get("skipped"):
+                    return  # dirty WIP stays quiet
                 api._update_last_message = msg
                 host._log("[Update] %s" % msg)
             except Exception as exc:
                 api._update_busy = False
                 host._log("[Update] auto-sync skipped: %s" % exc)
+            finally:
+                # Daemon: a non-daemon timer would keep the process up for
+                # the whole interval after Quit.
+                try:
+                    from obsauto import updater as updater_mod
+                    if (updater_mod.is_frozen()
+                            or not updater_mod.source_checkout_root()):
+                        return
+                    delay = updater_mod.SOURCE_SYNC_INTERVAL_S
+                except Exception:
+                    return
+                again = threading.Timer(delay, _auto_sync)
+                again.daemon = True
+                again.start()
 
-        threading.Timer(12.0, _auto_sync).start()
+        first = threading.Timer(12.0, _auto_sync)
+        first.daemon = True
+        first.start()
         # --toast-demo: fire real toast events through the real pipeline
         # (host._on_notify -> NebulaWindows.toast_replace), so 2i can be looked
         # at without OBS. Monitor is the only other thing that emits these, and
