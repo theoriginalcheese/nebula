@@ -18,6 +18,7 @@ import threading
 import time
 
 APPLY_FLAG = "--apply-update"
+SOURCE_FLAG = "--source-update"
 UPDATER_NAME = "_nebula_updater.exe"
 
 # Stages the bar is allowed to show. Each one is a real step, not a guess.
@@ -313,6 +314,166 @@ def cleanup_updater_copy():
         os.remove(path)
     except OSError:
         pass
+
+
+def pythonw_for(executable=None):
+    """``pythonw`` beside ``executable``, so a restart does not flash a console."""
+    pyw = executable or sys.executable
+    if pyw.lower().endswith("python.exe"):
+        candidate = pyw[:-len("python.exe")] + "pythonw.exe"
+        if os.path.isfile(candidate):
+            return candidate
+    return pyw
+
+
+def mutex_held(name="Nebula.SingleInstance"):
+    """True when another Nebula already owns the single-instance mutex."""
+    try:
+        import ctypes
+        SYNCHRONIZE = 0x00100000
+        kernel32 = ctypes.windll.kernel32
+        kernel32.OpenMutexW.restype = ctypes.c_void_p
+        kernel32.CloseHandle.argtypes = [ctypes.c_void_p]
+        handle = kernel32.OpenMutexW(SYNCHRONIZE, False, name)
+    except Exception:
+        return False
+    if not handle:
+        return False
+    kernel32.CloseHandle(handle)
+    return True
+
+
+def pulse_wake(name="Local\\Nebula.Wake"):
+    """Ask the copy that already holds the mutex to show itself."""
+    try:
+        import ctypes
+        SYNCHRONIZE = 0x00100000
+        EVENT_MODIFY_STATE = 0x0002
+        kernel32 = ctypes.windll.kernel32
+        kernel32.OpenEventW.restype = ctypes.c_void_p
+        kernel32.SetEvent.argtypes = [ctypes.c_void_p]
+        kernel32.CloseHandle.argtypes = [ctypes.c_void_p]
+        handle = kernel32.OpenEventW(SYNCHRONIZE | EVENT_MODIFY_STATE, False, name)
+    except Exception:
+        return False
+    if not handle:
+        return False
+    try:
+        kernel32.SetEvent(handle)
+    finally:
+        kernel32.CloseHandle(handle)
+    return True
+
+
+def source_restart_after(pid, pyw, entry, root, on_status=None):
+    """Wait until ``pid`` has quit, then bring the checkout back.
+
+    If the game watcher already took the mutex in that gap, pulse
+    ``Nebula.Wake`` instead of starting a second window. Otherwise start
+    ``pythonw spike/app.py --show``, the same argv as the Start Menu shortcut.
+    """
+    def report(text, pct):
+        if on_status:
+            on_status(text, int(pct))
+
+    report(_WAIT, 8)
+    pids = _as_pids(pid)
+    for i in range(120):
+        if not any(pid_alive(item) for item in pids):
+            break
+        report(_WAIT, min(40, 8 + i // 3))
+        time.sleep(0.5)
+    else:
+        _log(root, "source restart: pid %s still running; starting anyway" % pid)
+    time.sleep(0.4)
+    report(_REPLACE, 60)
+    if mutex_held():
+        woke = False
+        for _ in range(40):
+            if pulse_wake():
+                woke = True
+                break
+            time.sleep(0.25)
+        if not woke:
+            _log(root, "source restart: mutex held but wake was not pulsed")
+    else:
+        flags = 0
+        if hasattr(subprocess, "DETACHED_PROCESS"):
+            flags |= subprocess.DETACHED_PROCESS
+        if hasattr(subprocess, "CREATE_NEW_PROCESS_GROUP"):
+            flags |= subprocess.CREATE_NEW_PROCESS_GROUP
+        subprocess.Popen(
+            [pyw, entry, "--show"], cwd=root, close_fds=True,
+            creationflags=flags,
+            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL)
+    report(_START, 100)
+
+
+def _parse_source_argv(argv):
+    args = list(argv or [])
+    pid = 0
+    for i, arg in enumerate(args):
+        if arg == "--pid" and i + 1 < len(args):
+            try:
+                pid = int(args[i + 1])
+            except ValueError:
+                pid = 0
+            break
+    return pid
+
+
+def run_source_update(argv):
+    """Entry for ``pythonw spike/app.py --source-update``.
+
+    Draws the same dialog as a packaged swap, then
+    :func:`source_restart_after`. This process must not take the
+    single-instance mutex.
+    """
+    pid = _parse_source_argv(argv)
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    entry = os.path.join(root, "spike", "app.py")
+    pyw = pythonw_for()
+    if os.name != "nt":
+        source_restart_after(pid, pyw, entry, root)
+        return 0
+    _dpi_aware()
+    window = _UpdateWindow()
+    try:
+        window._open(root)
+    except Exception as exc:
+        _log(root, "update window unavailable: %s" % exc)
+        source_restart_after(pid, pyw, entry, root)
+        return 0
+
+    def work():
+        window._ready.wait(15)
+        try:
+            source_restart_after(
+                pid, pyw, entry, root, on_status=window.report)
+        except Exception as exc:
+            _log(root, "source restart: %s" % exc)
+            window._finished.set()
+            window._push("failed")
+            for _ in range(16):
+                if window.allow_close:
+                    return
+                time.sleep(0.5)
+            window._close()
+            return
+        window._finished.set()
+        window._push("done")
+        time.sleep(_DONE_HOLD_S)
+        window._fade_window_closed()
+
+    worker = threading.Thread(target=work, daemon=False)
+    worker.start()
+    import webview
+    try:
+        webview.start()
+    finally:
+        worker.join(timeout=90)
+    return 0
 
 
 def run_from_argv(argv):

@@ -23,7 +23,8 @@ try:
 except ImportError:
     wintypes = None
 
-_SKIP = ("--dev", "--allow-multi", "--toast-demo", "--apply-update")
+_SKIP = ("--dev", "--allow-multi", "--toast-demo", "--apply-update",
+         "--source-update")
 # On-demand task. Highest privileges, no logon trigger. Same shape as
 # NebulaLaunchOBS: one approval when the task is created, then silent.
 NEBULA_ADMIN_TASK = "NebulaRunElevated"

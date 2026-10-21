@@ -3719,6 +3719,12 @@ def main():
     exe_name = os.path.basename(sys.executable).lower()
     if "--apply-update" in sys.argv or exe_name == UPDATER_NAME.lower():
         return run_from_argv(sys.argv) or 0
+    # Source Restart now. Same dialog as a packaged swap, and the same rule:
+    # this process must not take the mutex or it will see the copy that's
+    # about to quit and never start the new one.
+    if "--source-update" in sys.argv:
+        from obsauto.update_apply import run_source_update
+        return run_source_update(sys.argv) or 0
     from obsauto.version import is_frozen
     if is_frozen():
         from obsauto.update_apply import cleanup_updater_copy

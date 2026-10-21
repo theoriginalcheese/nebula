@@ -34,6 +34,8 @@ def test_should_elevate():
           should_elevate(True, False, ["main.py", "--toast-demo"]) is False)
     check("apply-update skip",
           should_elevate(True, False, ["main.py", "--apply-update"]) is False)
+    check("source-update skip",
+          should_elevate(True, False, ["spike/app.py", "--source-update"]) is False)
     check("show still elevates when the switch is on",
           should_elevate(True, False, ["spike/app.py", "--show"]) is True)
 

@@ -981,17 +981,15 @@ def relaunch_source(root=None, pid=None):
     pull new code, but a Python process never re-imports itself, so "Load
     latest" needs a clean restart before the new code runs.
 
-    Writes a tiny waiter into %TEMP% - deliberately **not** beside the repo,
-    where a stray helper file would dirty the tree and ship on the next
-    Save this machine. The waiter waits until ``pid`` has actually exited.
-    If the single-instance mutex is already held (the game watcher starts a
-    hidden copy in that gap), it asks that copy to show itself. Otherwise it
-    starts ``pythonw spike/app.py --show`` from the repo root - the same argv
-    as the Start Menu shortcut.
+    Starts ``pythonw spike/app.py --source-update``. That process draws the
+    update window, waits until ``pid`` has actually exited, then either asks
+    the copy that already holds the mutex to show itself or starts
+    ``pythonw spike/app.py --show``. A silent helper in %TEMP% is what made
+    Restart now look like nothing had happened.
     """
     import subprocess
-    import tempfile
-    import textwrap
+
+    from .update_apply import SOURCE_FLAG, pythonw_for
 
     if is_frozen():
         return {"ok": False,
@@ -1003,80 +1001,8 @@ def relaunch_source(root=None, pid=None):
     if not os.path.isfile(entry):
         return {"ok": False, "message": "spike/app.py missing."}
 
-    pyw = sys.executable
-    if pyw.lower().endswith("python.exe"):
-        candidate = pyw[:-len("python.exe")] + "pythonw.exe"
-        if os.path.isfile(candidate):
-            pyw = candidate
-
+    pyw = pythonw_for()
     pid = int(pid or os.getpid())
-    helper = os.path.join(tempfile.gettempdir(), "_nebula_relaunch.py")
-    # Wait until that pid has actually exited, then either start a fresh
-    # window or — if something else already took the single-instance mutex,
-    # usually the game watcher — ask that copy to show. OpenProcess failing
-    # is not "the process is gone" (access denied looks the same), and
-    # starting --show while the mutex is held focuses a hidden window.
-    script = textwrap.dedent("""\
-        import os, sys, time, subprocess, ctypes
-        pid, pyw, entry, root = (sys.argv[1], sys.argv[2], sys.argv[3],
-                                 sys.argv[4])
-        kernel = ctypes.windll.kernel32
-        SYNCHRONIZE = 0x00100000
-        WAIT_TIMEOUT = 0x102
-        kernel.OpenProcess.restype = ctypes.c_void_p
-        kernel.OpenMutexW.restype = ctypes.c_void_p
-        kernel.OpenEventW.restype = ctypes.c_void_p
-        kernel.WaitForSingleObject.argtypes = [ctypes.c_void_p, ctypes.c_uint]
-        kernel.WaitForSingleObject.restype = ctypes.c_uint
-        kernel.CloseHandle.argtypes = [ctypes.c_void_p]
-
-        def pid_alive():
-            handle = kernel.OpenProcess(SYNCHRONIZE, False, int(pid))
-            if not handle:
-                return False
-            try:
-                return kernel.WaitForSingleObject(handle, 0) == WAIT_TIMEOUT
-            finally:
-                kernel.CloseHandle(handle)
-
-        def mutex_held():
-            handle = kernel.OpenMutexW(SYNCHRONIZE, False, "Nebula.SingleInstance")
-            if not handle:
-                return False
-            kernel.CloseHandle(handle)
-            return True
-
-        def pulse_wake():
-            handle = kernel.OpenEventW(
-                SYNCHRONIZE | 0x0002, False, "Local\\\\Nebula.Wake")
-            if not handle:
-                return False
-            kernel.SetEvent(handle)
-            kernel.CloseHandle(handle)
-            return True
-
-        for _ in range(120):
-            if not pid_alive():
-                break
-            time.sleep(0.5)
-        time.sleep(0.4)
-        if mutex_held():
-            for _ in range(40):
-                if pulse_wake():
-                    break
-                time.sleep(0.25)
-        else:
-            flags = 0x00000008 | 0x00000200  # DETACHED | NEW_GROUP
-            subprocess.Popen([pyw, entry, "--show"], cwd=root,
-                             close_fds=True, creationflags=flags)
-        try:
-            os.remove(__file__)
-        except OSError:
-            pass
-        """)
-    with open(helper, "w", encoding="utf-8", newline="\n") as fh:
-        fh.write(script)
-
     flags = 0
     if hasattr(subprocess, "DETACHED_PROCESS"):
         flags |= subprocess.DETACHED_PROCESS
@@ -1085,8 +1011,8 @@ def relaunch_source(root=None, pid=None):
     if hasattr(subprocess, "CREATE_NO_WINDOW"):
         flags |= subprocess.CREATE_NO_WINDOW
     subprocess.Popen(
-        [pyw, helper, str(pid), pyw, entry, root],
-        cwd=tempfile.gettempdir(),
+        [pyw, entry, SOURCE_FLAG, "--pid", str(pid)],
+        cwd=root,
         close_fds=True,
         creationflags=flags,
         stdin=subprocess.DEVNULL,

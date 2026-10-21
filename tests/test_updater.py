@@ -323,6 +323,11 @@ with mock.patch.object(sys, "argv", [sys.argv[0], "--apply-update"]):
     from spike.app import main as _spike_main
     check("apply-update exits before the app", _spike_main() == 0)
 
+with mock.patch.object(sys, "argv", [sys.argv[0], "--source-update", "--pid", "1"]):
+    with mock.patch("obsauto.update_apply.run_source_update", return_value=0) as _src:
+        check("source-update exits before the app",
+              _spike_main() == 0 and _src.called)
+
 
 # --- Save / Load on a throwaway pair of clones --------------------------------
 import shutil
@@ -523,7 +528,7 @@ finally:
     shutil.rmtree(split, ignore_errors=True)
 
 
-# --- relaunch_source: waiter goes to TEMP, argv mirrors the shortcut ---------
+# --- relaunch_source: the update window is the waiter ------------------------
 import tempfile
 import subprocess as _subprocess_mod
 
@@ -557,7 +562,7 @@ try:
     r = updater_mod.relaunch_source(root=os.path.join(_fake_root, "nope"))
     check("relaunch refuses non-checkout", not r.get("ok"), r)
 
-    # Happy path: entry exists, Popen gets waiter + shortcut argv.
+    # Happy path: entry exists, Popen gets the update window, not a silent helper.
     os.makedirs(os.path.join(_fake_root, "spike"), exist_ok=True)
     _entry = os.path.join(_fake_root, "spike", "app.py")
     with open(_entry, "w", encoding="utf-8") as fh:
@@ -566,26 +571,44 @@ try:
     r = updater_mod.relaunch_source(root=_fake_root, pid=4321)
     check("relaunch happy path ok", bool(r.get("ok")), r)
     _argv = list(_FakePopen.calls[0][0][0]) if _FakePopen.calls else []
-    check("waiter spawned with pyw+waiter+pid+pyw+entry+root",
-          len(_argv) == 6 and _argv[1].endswith("_nebula_relaunch.py")
-          and _argv[2] == "4321" and _argv[4] == _entry
-          and _argv[5] == _fake_root, _argv)
-    _waiter = _argv[1] if len(_argv) > 1 else ""
-    check("waiter lives in TEMP, not the repo",
-          bool(_waiter) and
-          os.path.dirname(os.path.abspath(_waiter)) ==
-          os.path.abspath(tempfile.gettempdir()), _waiter)
-    if _waiter and os.path.isfile(_waiter):
-        with open(_waiter, encoding="utf-8") as fh:
-            _src = fh.read()
-        check("waiter waits on the given pid", "int(pid)" in _src, "")
-        check("waiter passes --show like the Start Menu shortcut",
-              '"--show"' in _src, "")
-        check("waiter shows a copy that already holds the mutex",
-              "Nebula.SingleInstance" in _src and "Nebula.Wake" in _src, "")
-        os.remove(_waiter)
+    _cwd = _FakePopen.calls[0][1].get("cwd") if _FakePopen.calls else ""
+    check("update window spawned with --source-update and the pid",
+          _argv[-4:] == [_entry, "--source-update", "--pid", "4321"]
+          and _cwd == _fake_root, (_argv, _cwd))
+    check("relaunch does not write a temp helper",
+          not os.path.isfile(os.path.join(
+              tempfile.gettempdir(), "_nebula_relaunch.py")))
 finally:
     _subprocess_mod.Popen = _real_popen
+
+# The window process waits, then either starts --show or wakes the mutex holder.
+from obsauto import update_apply as _apply
+
+
+def _restart_calls(held):
+    with mock.patch.object(_apply, "pid_alive", return_value=False), \
+            mock.patch.object(_apply, "mutex_held", return_value=held), \
+            mock.patch.object(_apply, "pulse_wake", return_value=True) as wake, \
+            mock.patch.object(_apply.subprocess, "Popen") as popen, \
+            mock.patch.object(_apply.time, "sleep"):
+        _apply.source_restart_after(4321, "pythonw", _entry, _fake_root)
+    return popen, wake
+
+
+try:
+    _popen, _wake = _restart_calls(False)
+    _show = list(_popen.call_args[0][0]) if _popen.call_args else []
+    check("source restart starts --show when the mutex is free",
+          _show == ["pythonw", _entry, "--show"]
+          and _popen.call_args[1].get("cwd") == _fake_root
+          and not _wake.called, _show)
+    _popen, _wake = _restart_calls(True)
+    check("source restart wakes the copy that already holds the mutex",
+          _wake.called and not _popen.called)
+except Exception as exc:
+    check("source restart handoff", False, str(exc))
+finally:
+    shutil.rmtree(_fake_root, ignore_errors=True)
 
 # A short body must not be renamed onto the download path.
 import io
