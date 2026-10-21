@@ -1723,23 +1723,55 @@ class Api:
             "can_test": False,
         }
 
+    SYNC_NOW_WAIT_S = 3.0
+
     def sync_offload_now(self):
-        """Settings → Offload → Sync now. Scans the recording root onto the NAS."""
+        """Settings → Offload → Sync now. Scans the recording root onto the NAS.
+
+        sync_now() starts with a bare isdir() on the NAS root and a Tailscale
+        diagnose, which sit 20-60s on a dead share. It runs on a worker; the
+        bridge waits a few seconds for it and otherwise lets the footer report
+        the result when it lands.
+        """
         offloader = None
         if self._host:
             offloader = getattr(self._host, "offloader", None)
         if offloader is None:
             return {"ok": False, "message": "Offloader not running.",
                     "sync_footer": self._settings_sync_footer()}
-        result = offloader.sync_now(self.cfg.get("recording_root"))
-        if self._host:
+        if getattr(self, "_sync_now_busy", False):
+            return {"ok": False, "message": "A sync is already running.",
+                    "sync_footer": self._settings_sync_footer()}
+        self._sync_now_busy = True
+        box = {}
+        root = self.cfg.get("recording_root")
+
+        def work():
             try:
-                self._host.on_offload_state(
-                    offloader.pending_count(), offloader.reachability())
-            except Exception:
-                pass
-        self._swr_drop("offload_status")
-        out = dict(result)
+                box["result"] = offloader.sync_now(root)
+                if self._host:
+                    try:
+                        self._host.on_offload_state(
+                            offloader.pending_count(), offloader.reachability())
+                    except Exception:
+                        pass
+                self._swr_drop("offload_status")
+            except Exception as exc:
+                box["result"] = {"ok": False, "message": "Sync failed: %s" % exc}
+            finally:
+                self._sync_now_busy = False
+
+        worker = threading.Thread(target=work, daemon=True,
+                                  name="nebula-offload-sync-now")
+        worker.start()
+        worker.join(self.SYNC_NOW_WAIT_S)
+        result = box.get("result")
+        if result is None:
+            out = {"ok": True, "pending": True,
+                   "message": "Still checking the NAS. The result will show "
+                              "here when it finishes."}
+        else:
+            out = dict(result)
         out["sync_footer"] = self._settings_sync_footer()
         return out
 
@@ -2199,12 +2231,16 @@ class Api:
         if kind == "transport" and host:
             (host._toggle_record if arg == "record" else host._toggle_pause)()
             return {"ok": True}
+        # Host queue, like hero_action: pausing waits on the monitor's OBS
+        # lock (held through a 15s readiness wait while OBS starts), and the
+        # buffer calls are OBS requests with their own 5s timeouts.
         if kind == "monitoring" and host:
-            (host.resume_monitoring if arg == "resume"
-             else host.pause_monitoring)()
+            host.call_soon(host.resume_monitoring if arg == "resume"
+                           else host.pause_monitoring)
             return {"ok": True}
         if kind == "replay" and host:
-            (host._save_replay if arg == "save" else host.toggle_replay_arm)()
+            host.call_soon(host._save_replay if arg == "save"
+                           else host.toggle_replay_arm)
             return {"ok": True}
         if kind == "open":
             (self.open_recording_root if arg == "recordings" else self.reveal_config)()
@@ -2290,7 +2326,8 @@ class Api:
 
     def open_recording_root(self):
         root = self.cfg.get("recording_root") or ""
-        if not root or not os.path.isdir(root):
+        # Bounded: a recording root on a dead mapped drive blocks isdir 20-60s.
+        if not root or not fsprobe.isdir_within(root):
             return {"ok": False, "error": "recording root missing"}
         try:
             subprocess_reveal(root)

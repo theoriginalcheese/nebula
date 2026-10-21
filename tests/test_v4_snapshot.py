@@ -198,6 +198,84 @@ def test_clip_clicks_never_resolve_the_nas_root():
         app_mod.subprocess_reveal, app_mod.subprocess_open = real_reveal, real_open
 
 
+def test_bridge_buttons_never_wait_on_a_dead_share_or_obs():
+    """Sync now, palette monitoring/replay rows and Open recording folder run
+    on the JS bridge. Each could sit 15-60s on a dead NAS or a booting OBS."""
+    import threading
+    from obsauto import fsprobe
+
+    work = tempfile.mkdtemp(prefix="nebula-bridge-")
+    api = _stub_api(work, os.path.join(work, "rec"))
+    api.SYNC_NOW_WAIT_S = 0.2
+    api._settings_sync_footer = lambda: {"text": "footer"}
+    api._swr_drop = lambda key: None
+    release = threading.Event()
+    calls = []
+
+    class Offloader:
+        def sync_now(self, root):
+            calls.append(root)
+            release.wait(5)
+            return {"ok": True, "message": "Queued 1 clip for the NAS."}
+
+        def pending_count(self):
+            return 0
+
+        def reachability(self):
+            return "ok"
+
+    queued = []
+
+    class Host:
+        offloader = Offloader()
+
+        def call_soon(self, fn):
+            queued.append(fn)
+
+        def on_offload_state(self, *_a):
+            pass
+
+        def pause_monitoring(self):
+            raise AssertionError("paused on the bridge")
+
+        resume_monitoring = _save_replay = toggle_replay_arm = pause_monitoring
+
+    api._host = Host()
+    t = time.monotonic()
+    res = api.sync_offload_now()
+    check("sync now: returns while the NAS hangs",
+          time.monotonic() - t < 2.0 and res.get("pending") is True, res)
+    check("  ...footer still sent", res.get("sync_footer") == {"text": "footer"}, res)
+    res = api.sync_offload_now()
+    check("  ...second click does not stack a worker",
+          len(calls) == 1 and "already running" in res.get("message", ""), res)
+    release.set()
+    for _ in range(50):
+        if not api._sync_now_busy:
+            break
+        time.sleep(0.02)
+    res = api.sync_offload_now()
+    check("sync now: a fast NAS still returns its result",
+          res.get("ok") is True and res.get("message", "").startswith("Queued"), res)
+
+    for action in (["monitoring", "pause"], ["monitoring", "resume"],
+                   ["replay", "save"], ["replay", "arm"]):
+        res = api.palette_run(action)
+        check("palette %s:%s goes through the host queue" % tuple(action),
+              res.get("ok") is True, res)
+    check("  ...all four queued", len(queued) == 4, queued)
+
+    probed = []
+    real = fsprobe.isdir_within
+    fsprobe.isdir_within = lambda p, timeout=2.0: probed.append(p) or False
+    try:
+        res = api.open_recording_root()
+    finally:
+        fsprobe.isdir_within = real
+    check("open recording folder: bounded probe",
+          probed == [api.cfg["recording_root"]] and res.get("ok") is False, res)
+
+
 def test_snapshot_isolates_section_faults():
     work = tempfile.mkdtemp(prefix="nebula-snap-")
     api = _stub_api(work, os.path.join(work, "rec"))
@@ -496,6 +574,7 @@ if __name__ == "__main__":
     test_clips_panel_skips_nas_isdir()
     test_nas_backfill_resolves_root_off_the_bridge()
     test_clip_clicks_never_resolve_the_nas_root()
+    test_bridge_buttons_never_wait_on_a_dead_share_or_obs()
     test_snapshot_isolates_section_faults()
     test_hero_survives_host_without_preview()
     test_start_menu_shortcut_is_not_dev()
