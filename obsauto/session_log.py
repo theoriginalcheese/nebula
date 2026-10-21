@@ -77,6 +77,102 @@ def append(event_type, game=None, appid=None, path=None, **fields):
 # a year of heavy use is far below this many events.
 MAX_READ_BYTES = 4 * 1024 * 1024
 
+# Api.snapshot() reads this file several times a poll (today(), spans() and
+# spans() again from inside today()), and every read re-parsed up to 4 MB of
+# JSON. The file is append-only, so the parsed rows are kept and only the bytes
+# appended since are parsed on the next call. Each row carries the byte offset
+# its line starts at, which is what lets the cache reproduce the MAX_READ_BYTES
+# window exactly instead of approximating it.
+_ANCHOR_BYTES = 64
+_cache_lock = threading.Lock()
+_cache = {"path": None, "end": 0, "mtime": None, "anchor": b"", "rows": []}
+
+
+def _parse_line(raw):
+    try:
+        line = raw.decode("utf-8").strip()
+    except UnicodeDecodeError:
+        return None
+    if not line:
+        return None
+    try:
+        row = json.loads(line)
+    except ValueError:
+        return None
+    if not isinstance(row, dict) or "ts" not in row:
+        return None
+    return row
+
+
+def _parse_from(f, start, size):
+    """Parse complete lines in [start, size). Returns (rows, end, tail).
+
+    `end` is the offset after the last newline; `tail` holds whatever follows
+    it - a line still being appended, parsed per call but never cached, just
+    as the old line iterator yielded a final line with no newline.
+    """
+    f.seek(start)
+    data = f.read(size - start)
+    rows, pos = [], 0
+    while True:
+        nl = data.find(b"\n", pos)
+        if nl < 0:
+            break
+        row = _parse_line(data[pos:nl])
+        if row is not None:
+            rows.append((start + pos, row))
+        pos = nl + 1
+    fragment = _parse_line(data[pos:]) if pos < len(data) else None
+    tail = [(start + pos, fragment)] if fragment is not None else []
+    return rows, start + pos, tail
+
+
+def _rows():
+    """Every row in the read window, oldest-first, shared with the cache.
+
+    Internal: callers here only read the dicts. read() hands out copies.
+    """
+    p = log_path()
+    try:
+        st = os.stat(p)
+    except OSError:
+        return []
+    size = st.st_size
+    window = size - MAX_READ_BYTES if size > MAX_READ_BYTES else None
+    try:
+        with _cache_lock, open(p, "rb") as f:
+            c = _cache
+            reuse = (c["path"] == p and c["end"] <= size
+                     and (c["end"] < size or c["mtime"] == st.st_mtime_ns))
+            if reuse and c["anchor"]:
+                # Same path, not shorter - but was it rewritten rather than
+                # appended to? The bytes just before the old end must match.
+                f.seek(c["end"] - len(c["anchor"]))
+                reuse = f.read(len(c["anchor"])) == c["anchor"]
+            if not reuse:
+                c.update(path=p, end=0, mtime=None, anchor=b"", rows=[])
+            start = c["end"]
+            if window is not None and start <= window:
+                # The window start falls inside unparsed bytes: drop the line
+                # the old seek landed in, exactly as before.
+                f.seek(window)
+                f.readline()
+                start = f.tell()
+            new, end, tail = _parse_from(f, start, size)
+            anchor_start = max(0, end - _ANCHOR_BYTES)
+            f.seek(anchor_start)
+            anchor = f.read(end - anchor_start)
+            # Every read has succeeded; only now is the cache advanced, so an
+            # OSError above can never leave rows counted twice.
+            rows = c["rows"]
+            if window is not None:
+                rows = [r for r in rows if r[0] > window]
+            rows = rows + new
+            c.update(end=end, mtime=st.st_mtime_ns, anchor=anchor, rows=rows)
+            return [r for _, r in rows] + [r for _, r in tail]
+    except OSError:
+        return []
+
 
 def read(since=None, limit=None):
     """Events oldest-first, optionally only those at or after `since` (epoch).
@@ -87,36 +183,15 @@ def read(since=None, limit=None):
 
     Only the last MAX_READ_BYTES are parsed. Events are appended in time order,
     so the tail is the recent history every caller actually wants, and the cost
-    of a refresh stops growing with the age of the install.
+    of a refresh stops growing with the age of the install. Repeated calls only
+    parse what was appended since the last one.
     """
-    p = log_path()
-    if not os.path.exists(p):
-        return []
-    rows = []
-    try:
-        with open(p, "r", encoding="utf-8") as f:
-            try:
-                if os.path.getsize(p) > MAX_READ_BYTES:
-                    f.seek(os.path.getsize(p) - MAX_READ_BYTES)
-                    f.readline()      # drop the partial line the seek landed in
-            except OSError:
-                pass
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    row = json.loads(line)
-                except ValueError:
-                    continue
-                if not isinstance(row, dict) or "ts" not in row:
-                    continue
-                if since is not None and row["ts"] < since:
-                    continue
-                rows.append(row)
-    except OSError:
-        return []
-    return rows[-limit:] if limit else rows
+    rows = _rows()
+    if since is not None:
+        rows = [r for r in rows if not r["ts"] < since]
+    if limit:
+        rows = rows[-limit:]
+    return [dict(r) for r in rows]
 
 
 def day_start(when=None):
@@ -139,7 +214,7 @@ def spans(rows=None, now=None):
     (the log can begin mid-recording, e.g. after a crash); it just starts at
     the stop minus its recorded duration rather than being thrown away.
     """
-    rows = read() if rows is None else rows
+    rows = _rows() if rows is None else rows
     now = time.time() if now is None else now
     out, current = [], None
     for row in sorted(rows, key=lambda r: r.get("ts", 0)):
@@ -273,7 +348,8 @@ def today():
     fallback that invents a plausible number, so a fresh install shows zeros
     because zero is true, not because the source is missing.
     """
-    rows = read(since=day_start())
+    since = day_start()
+    rows = [r for r in _rows() if not r["ts"] < since]
     clips = culled = idle_pauses = 0
     recorded = 0.0
     bytes_written = 0

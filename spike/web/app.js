@@ -1269,6 +1269,11 @@ function showPane(name) {
     actions.appendChild(b);
   }
 
+  // load() skips panes that are off screen. Paint this one from the latest
+  // snapshot now, before its entrance animation starts, so it never opens
+  // stale or empty. No snapshot yet (boot): load() paints it on arrival.
+  if (lastSnapshot && staleSections.has(name)) paintPane(name, lastSnapshot);
+
   const body = document.querySelector(`.pane-body[data-pane="${name}"]`);
   if (body) {
     body.classList.remove("switching");
@@ -1387,14 +1392,25 @@ function dashContentFrozen() {
   return dashEditing && currentPane === "dashboard";
 }
 
+/* Write innerHTML only when the markup differs from what this helper last
+   wrote. Polls every second while recording and most of them carry identical
+   tiles / log rows; re-assigning identical markup still tears down and
+   rebuilds the subtree (layout + paint). Only for elements nothing else
+   writes to. */
+function setHtmlIfChanged(el, html) {
+  if (!el || el._lastHtml === html) return;
+  el._lastHtml = html;
+  el.innerHTML = html;
+}
+
 function renderTiles(d) {
   if (dashContentFrozen()) return;
-  $("tiles").innerHTML = d.tiles.map((t) => `
+  setHtmlIfChanged($("tiles"), d.tiles.map((t) => `
     <div class="tile"><div class="tile-core">
       <span class="k">${esc(t.k)}</span>
       <span class="v">${esc(t.v)}</span><span class="u">${esc(t.u || "")}</span>
       ${t.sub ? `<span class="sub">${esc(t.sub)}</span>` : ""}
-    </div></div>`).join("");
+    </div></div>`).join(""));
 }
 
 function renderActivity(d) {
@@ -1404,15 +1420,15 @@ function renderActivity(d) {
   $("btn-log-filter").textContent = filt === "All" ? "All tags" : filt;
   const rows = a.rows.filter((r) => filt === "All" || r.tag === filt);
   if (!rows.length) {
-    $("activity").innerHTML = `<div class="empty" style="min-height:80px">No activity yet</div>`;
+    setHtmlIfChanged($("activity"), `<div class="empty" style="min-height:80px">No activity yet</div>`);
     return;
   }
-  $("activity").innerHTML = rows.map((r) => `
+  setHtmlIfChanged($("activity"), rows.map((r) => `
     <div class="log-row">
       <span class="ts">${esc(r.ts)}</span>
       <span class="tag" style="${r.color ? `color:${r.color}` : ""}">[${esc(r.tag || "—")}]</span>
       <span class="msg">${esc(r.text)}</span>
-    </div>`).join("");
+    </div>`).join(""));
 }
 
 /* The ribbon used to be one flat bar with everything - which game, how long,
@@ -2980,6 +2996,42 @@ function paintUpdatePrompt(d) {
    promise instead of bouncing off a busy flag. A failed run surfaces via
    fail() and resolves with whatever the last good snapshot was, so fire-
    and-forget callers never need a catch. */
+/* Pane-scoped renderers. Everything here lives inside exactly one pane body,
+   so it only needs to run while that pane is on screen. The rest (connection
+   badge, hero + preview, the rail's forecast, the update prompt) is chrome
+   or the always-shown hero and is painted on every snapshot - see load().
+   Each pane that was skipped is remembered in `staleSections` and painted
+   from `lastSnapshot` the moment showPane() reveals it, so switching never
+   shows a stale or blank pane. */
+const PANE_SECTIONS = {
+  dashboard: [
+    ["tiles", renderTiles],
+    ["activity", renderActivity],
+  ],
+  clips: [
+    ["ribbon", renderRibbon],
+    ["clips", renderClips],
+  ],
+  games: [
+    ["games", renderGames],
+    ["profile", () => renderProfilePanel()],
+  ],
+  macropad: [["macropad", renderMacropad]],
+  remote: [["remote", renderRemote]],
+  settings: [["settings", renderSettings]],
+};
+const staleSections = new Set(Object.keys(PANE_SECTIONS));
+
+function paintPane(name, d) {
+  const list = PANE_SECTIONS[name];
+  if (!list || !d) return;
+  let ok = true;
+  for (const [label, fn] of list) {
+    try { fn(d); } catch (e) { ok = false; fail(label, e); }
+  }
+  if (ok) staleSections.delete(name);
+}
+
 function load() {
   if (loadPromise) return loadPromise;
   loadPromise = (async () => {
@@ -2991,16 +3043,18 @@ function load() {
       try { renderConn(d); } catch (e) { fail("conn", e); }
       try { renderHero(d); } catch (e) { fail("hero", e); }
       try { await applyPreviewStill(d.hero); } catch (e) { fail("preview", e); }
-      try { renderTiles(d); } catch (e) { fail("tiles", e); }
-      try { renderActivity(d); } catch (e) { fail("activity", e); }
-      try { renderRibbon(d); } catch (e) { fail("ribbon", e); }
-      try { renderClips(d); } catch (e) { fail("clips", e); }
       try { renderForecast(d); } catch (e) { fail("forecast", e); }
-      try { renderGames(d); } catch (e) { fail("games", e); }
-      try { renderProfilePanel(); } catch (e) { fail("profile", e); }
-      try { renderMacropad(d); } catch (e) { fail("macropad", e); }
-      try { renderRemote(d); } catch (e) { fail("remote", e); }
-      try { renderSettings(d); } catch (e) { fail("settings", e); }
+      // The visible pane repaints from this snapshot; every other pane is
+      // marked stale and repaints when it is next shown.
+      for (const name of Object.keys(PANE_SECTIONS)) {
+        if (name === currentPane) paintPane(name, d);
+        else staleSections.add(name);
+      }
+      // renderSettings also applies the appearance (global CSS vars / star
+      // density). That must follow the snapshot even when Settings is hidden.
+      if (currentPane !== "settings") {
+        try { applyAppearance(d.settings.appearance); } catch (e) { fail("settings", e); }
+      }
       try { paintUpdatePrompt(d); } catch (e) { fail("update", e); }
       try { ensureSpots(); } catch (e) { fail("spots", e); }
       dataReady = true;

@@ -44,7 +44,13 @@ def _run(host):
     poll_ms = 0.08
     tick_ms = 0.36
     idle_ms = 0.50
+    # Cursor nowhere near a taskbar: nothing can start a hover, so there is no
+    # reason to wake every 80ms or to run UI Automation. Check a few times a
+    # second with a plain Win32 rect test and only do the real work once the
+    # pointer enters the taskbar strip.
+    away_ms = 0.30
     rect_refresh_s = 1.0
+    near_margin_px = 12
 
     work = tempfile.mkdtemp(prefix="nebula-tbicon-")
     paths = []
@@ -150,17 +156,23 @@ def _run(host):
                     time.sleep(poll_ms)
                     continue
 
+                pt = POINT()
+                user32.GetCursorPos(byref(pt))
+                # Mid-orbit we always take the full path below. Otherwise the
+                # UIA query and the button hit-test only matter once the
+                # cursor is on a taskbar.
+                near = hovering or _near_taskbar(
+                    user32, pt.x, pt.y, near_margin_px)
+
                 # Don't re-query the button while the icon is changing.
                 # A fresh rect mid-orbit drops the cursor "off" the button,
                 # snaps back to rest, then hits again — a one-second flash.
-                if not hovering and (
+                if near and not hovering and (
                         now - last_rect_at >= rect_refresh_s or not button_rects):
                     button_rects = _our_button_rects(uia)
                     last_rect_at = now
 
-                pt = POINT()
-                user32.GetCursorPos(byref(pt))
-                over = _point_in_rects(pt.x, pt.y, button_rects)
+                over = near and _point_in_rects(pt.x, pt.y, button_rects)
 
                 if over:
                     if over_since is None:
@@ -196,7 +208,7 @@ def _run(host):
                         applied_rest = True
                         if was:
                             host._log("[Icon] Taskbar hover ended — rest.")
-                    time.sleep(poll_ms)
+                    time.sleep(poll_ms if near else away_ms)
             except Exception:
                 hwnd = 0
                 hovering = False
@@ -341,6 +353,38 @@ def _our_button_rects(uia):
             except Exception:
                 continue
     return rects
+
+
+def _near_taskbar(user32, x, y, margin):
+    """True when (x, y) is on, or within ``margin`` px of, any taskbar window.
+
+    Plain Win32 (a couple of FindWindow + GetWindowRect calls), so it is cheap
+    enough to run every poll. The margin covers an auto-hidden taskbar, which
+    parks a sliver at the screen edge. If no taskbar window can be found at
+    all, answer True so the caller falls back to full hit-testing.
+    """
+    import ctypes
+    from ctypes import wintypes
+
+    rect = wintypes.RECT()
+    found = False
+    hwnd = user32.FindWindowW("Shell_TrayWnd", None)
+    if hwnd and user32.GetWindowRect(hwnd, ctypes.byref(rect)):
+        found = True
+        if (rect.left - margin <= x < rect.right + margin
+                and rect.top - margin <= y < rect.bottom + margin):
+            return True
+    hwnd = 0
+    while True:
+        hwnd = user32.FindWindowExW(None, hwnd, "Shell_SecondaryTrayWnd", None)
+        if not hwnd:
+            break
+        if user32.GetWindowRect(hwnd, ctypes.byref(rect)):
+            found = True
+            if (rect.left - margin <= x < rect.right + margin
+                    and rect.top - margin <= y < rect.bottom + margin):
+                return True
+    return not found
 
 
 def _point_in_rects(x, y, rects):

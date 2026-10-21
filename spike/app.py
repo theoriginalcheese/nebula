@@ -683,9 +683,142 @@ class Api:
 
     # --- real data, straight out of the existing modules ----------------
 
+    # --- snapshot caches -------------------------------------------------
+    #
+    # snapshot() runs on the JS-bridge thread every second while recording and
+    # the page waits for it. Anything that shells out (git, tailscale), probes
+    # a NAS path or re-reads a log is served from its last real result and
+    # refreshed on a worker, so that cost never lands on the bridge thread.
+
+    SWR_TTL = {
+        "offload_status": 3.0,   # path_mode() re-probes SMB roots every 30s
+        "remote_probe": 3.0,     # Moonlight log reads + tailscale status
+        "version": 30.0,         # three git shell-outs once the 60s cache expires
+        "games": 5.0,            # hundreds of rows, each with an icon
+        "forecast": 10.0,        # disk_usage on recording_root + session log
+    }
+    MEMO_TTL = 5.0
+    ICON_URL_CAP = 2048
+
+    def _swr_state(self):
+        state = getattr(self, "_swr", None)
+        if state is None:
+            with _SWR_INIT_LOCK:
+                state = getattr(self, "_swr", None)
+                if state is None:
+                    state = self._swr = {"lock": threading.Lock(), "values": {},
+                                         "busy": set(), "gen": {}, "faults": set()}
+        return state
+
+    def _swr_get(self, key, fn, ttl=None):
+        """Last real value for `key`, refreshed on a worker once it is `ttl` old.
+
+        The first call has nothing to serve, so it computes inline. A failed
+        refresh keeps the previous value rather than inventing one.
+        """
+        ttl = self.SWR_TTL.get(key, 5.0) if ttl is None else ttl
+        st = self._swr_state()
+        now = time.monotonic()
+        with st["lock"]:
+            hit = st["values"].get(key)
+            gen = st["gen"].get(key, 0)
+            spawn = (hit is not None and now - hit[1] >= ttl
+                     and key not in st["busy"])
+            if spawn:
+                st["busy"].add(key)
+        if hit is None:
+            value = fn()
+            self._swr_put(key, value, gen)
+            return value
+        if spawn:
+            threading.Thread(target=self._swr_refresh, args=(key, fn, gen),
+                             daemon=True, name="nebula-snap-%s" % key).start()
+        return hit[0]
+
+    def _swr_refresh(self, key, fn, gen):
+        st = self._swr_state()
+        try:
+            value = fn()
+        except Exception as exc:
+            fault = "%s:%s" % (key, type(exc).__name__)
+            with st["lock"]:
+                st["busy"].discard(key)
+                first = fault not in st["faults"]
+                st["faults"].add(fault)
+            if first:
+                log_to_file("[UI] snapshot %s refresh failed: %s" % (key, exc))
+            return
+        with st["lock"]:
+            st["busy"].discard(key)
+        self._swr_put(key, value, gen)
+
+    def _swr_put(self, key, value, gen=None):
+        """Store a fresh value. A refresh carries the generation it started
+        from, so one that began before a mutation can't put the old answer
+        back after it."""
+        st = self._swr_state()
+        with st["lock"]:
+            current = st["gen"].get(key, 0)
+            if gen is not None and gen != current:
+                return
+            st["gen"][key] = current + 1
+            st["values"][key] = (value, time.monotonic())
+
+    def _swr_drop(self, key):
+        """Forget `key` so the next read computes inline (after a user action)."""
+        st = self._swr_state()
+        with st["lock"]:
+            st["values"].pop(key, None)
+            st["gen"][key] = st["gen"].get(key, 0) + 1
+
+    def _memo_get(self, key, fn, fingerprint):
+        """Inline TTL cache that also recomputes the moment `fingerprint` moves."""
+        memo = getattr(self, "_snapshot_memo", None)
+        if memo is None:
+            memo = self._snapshot_memo = {}
+        now = time.monotonic()
+        hit = memo.get(key)
+        if hit is not None and hit[1] == fingerprint and now - hit[2] < self.MEMO_TTL:
+            return hit[0]
+        value = fn()
+        memo[key] = (value, fingerprint, now)
+        return value
+
+    def _offload_status(self):
+        if not self._host:
+            return None
+        return self._swr_get("offload_status", self._host.offload_status)
+
+    def _snapshot_games(self):
+        return self._swr_get("games", self._build_games)
+
+    def _snapshot_forecast(self):
+        return self._swr_get("forecast", self._forecast)
+
+    def _snapshot_ribbon(self):
+        state = self._host.hero_state() if self._host else "disconnected"
+        return self._memo_get("ribbon", self._ribbon,
+                              (state, session_log.day_start()))
+
+    def _snapshot_clips_panel(self):
+        self._seed_clips_from_index()
+        self._ensure_clips_scan()
+        cache = self._clips_cache
+        fingerprint = (
+            id(cache), len(cache) if cache is not None else -1,
+            self._clips_error is None, self._clips_root,
+            bool(getattr(self, "_clips_backfill_busy", False)),
+            self._nas_up_hint(), len(self._clip_durations),
+            len(self._thumb_data_cache),
+        )
+        return self._memo_get("clips_panel", self._clips_panel, fingerprint)
+
     def snapshot(self):
         """UI payload. Each section is isolated so one hang/fault cannot blank the rest."""
+        timings = {}
+
         def part(name, fn, fallback):
+            t = time.perf_counter()
             try:
                 return fn()
             except Exception as exc:
@@ -697,6 +830,8 @@ class Api:
                     seen[key] = True
                     log_to_file("[UI] snapshot %s failed: %s" % (name, exc))
                 return fallback
+            finally:
+                timings[name] = (time.perf_counter() - t) * 1000.0
 
         t0 = time.perf_counter()
         try:
@@ -717,22 +852,22 @@ class Api:
                 "tiles": part("tiles", self._tiles, []),
                 "activity": part("activity", self._activity,
                                  {"rows": [], "tags": ["All"], "filter": "All"}),
-                "ribbon": part("ribbon", self._ribbon, {
+                "ribbon": part("ribbon", self._snapshot_ribbon, {
                     "spans": [], "total_s": 0,
                     "axis": ["00:00", "06:00", "12:00", "18:00", "24:00"],
                     "by_game": [], "now_pct": 0, "hour_marks": [],
                 }),
-                "clips_panel": part("clips_panel", self._clips_panel, {
+                "clips_panel": part("clips_panel", self._snapshot_clips_panel, {
                     "scanning": False, "indexing": False, "root": "",
                     "error": None, "clips": [], "games": [],
                     "summary": {"count": 0, "total_bytes": 0, "total_label": ""},
                     "min_clip_note": "", "ffmpeg": False,
                 }),
-                "forecast": part("forecast", self._forecast, {
+                "forecast": part("forecast", self._snapshot_forecast, {
                     "label": "Not enough history",
                     "rate": "", "used_pct": 0,
                 }),
-                "games": part("games", self._games, {
+                "games": part("games", self._snapshot_games, {
                     "pending": [], "games": [], "non_games": [],
                     "foot_games": "", "foot_non": "",
                 }),
@@ -760,6 +895,8 @@ class Api:
             ms = (time.perf_counter() - t0) * 1000.0
             if ms >= 750:
                 log_to_file("[UI] snapshot slow: %.0f ms" % ms)
+                log_to_file("[UI] snapshot slow sections: %s"
+                            % _slow_sections(timings))
 
     def _obs(self):
         """One source of truth for connection state: the host.
@@ -975,14 +1112,28 @@ class Api:
             ),
         }
 
-    def _remote(self):
-        """Moonlight + Tailscale — honest status only, nothing fabricated."""
+    def _remote_probe(self):
+        """The slow half of _remote: log reads, a process walk, tailscale CLI."""
         from obsauto import session_detect as sd
         from obsauto import tailscale as ts
         from obsauto import moonlight as moon_mod
 
-        moon = sd.moonlight_session_active()
-        log = moon_mod.log_details()
+        available = ts.available()
+        return {
+            "moon": sd.moonlight_session_active(),
+            "log": moon_mod.log_details(),
+            "ts_available": available,
+            "ts_status": ts.status() if available else None,
+        }
+
+    def _remote(self):
+        """Moonlight + Tailscale — honest status only, nothing fabricated."""
+        from obsauto import tailscale as ts
+        from obsauto import moonlight as moon_mod
+
+        probe = self._swr_get("remote_probe", self._remote_probe)
+        moon = probe["moon"]
+        log = probe["log"]
         host_hint = log.get("last_host") or ""
         addr_hint = log.get("last_address") or ""
 
@@ -1098,7 +1249,7 @@ class Api:
                 bits.append(dns)
             return " · ".join(bits)
 
-        if not ts.available():
+        if not probe["ts_available"]:
             nas = any((self.cfg.get(key) or "").strip() for key in (
                 "nas_offload_root", "nas_offload_root_lan",
                 "nas_offload_root_remote"))
@@ -1130,9 +1281,9 @@ class Api:
                     "peers": [],
                 }
         else:
-            # Honour the 5s cache — snapshot polls every 1–5s while awake;
-            # force=True was shelling tailscale (+ conhost flash) every beat.
-            st = ts.status()
+            # Never force=True here — that shelled tailscale (+ conhost flash)
+            # every beat. The probe refreshes off the bridge thread.
+            st = probe["ts_status"]
             root = (self.cfg.get("nas_offload_root") or "").strip()
             peer = ts.peer_for_path(root) if root else None
             if st is None:
@@ -1197,7 +1348,7 @@ class Api:
 
         offload = {"enabled": False, "text": ""}
         if self._host:
-            st_off = self._host.offload_status()
+            st_off = self._offload_status() or {}
             if st_off.get("enabled"):
                 offload["enabled"] = True
                 reach = st_off.get("reachability")
@@ -1438,10 +1589,7 @@ class Api:
 
     def _settings_updates_footer(self):
         """Version + what the Updates pane can do right now."""
-        from obsauto import updater as updater_mod
-        from obsauto.version import version_info
-
-        info = version_info()
+        info, checkout_root = self._swr_get("version", _version_facts)
         frozen = info["frozen"]
         pending = getattr(self, "_update_pending", None) or {}
         last = getattr(self, "_update_last_message", "") or ""
@@ -1458,7 +1606,7 @@ class Api:
         can_install = bool(
             pending.get("status") == "update" and pending.get("release", {}).get("asset_url")
             and frozen)
-        can_sync = (not frozen) and bool(updater_mod.source_checkout_root())
+        can_sync = (not frozen) and bool(checkout_root)
         return {
             "text": blurb,
             "kind": info["channel"],
@@ -1478,9 +1626,8 @@ class Api:
         """NAS offload status, plus the shared-list note for Game list sync."""
         from obsauto import tailscale as ts
 
-        if self._host:
-            st = self._host.offload_status()
-        else:
+        st = self._offload_status() if self._host else None
+        if st is None:
             st = {"pending": 0, "reachability": None, "enabled": False,
                   "can_sync": False}
 
@@ -1590,6 +1737,7 @@ class Api:
                     offloader.pending_count(), offloader.reachability())
             except Exception:
                 pass
+        self._swr_drop("offload_status")
         out = dict(result)
         out["sync_footer"] = self._settings_sync_footer()
         return out
@@ -2597,6 +2745,30 @@ class Api:
     # --- Games (frame 2d) ----------------------------------------------
 
     def _games(self):
+        """Fresh Games payload, also stored as what snapshot() serves next."""
+        value = self._build_games()
+        self._swr_put("games", value)
+        return value
+
+    def _icon_url(self, basename, display_name):
+        """app_icons.data_url, kept per row and keyed on the learned exe path.
+
+        app_icons' own memo holds 128 and a real games.json has hundreds of
+        apps, so walking the list every poll evicted it every poll."""
+        cache = getattr(self, "_icon_urls", None)
+        if cache is None:
+            cache = self._icon_urls = {}
+        key = ((basename or "").lower(), display_name or "",
+               app_icons.known_path(basename))
+        url = cache.get(key)
+        if url is None:
+            url = app_icons.data_url(basename, display_name)
+            if len(cache) >= self.ICON_URL_CAP:
+                cache.clear()
+            cache[key] = url
+        return url
+
+    def _build_games(self):
         snap = self._classifier.snapshot()
         games_raw, non_raw = snap.get("games", {}), snap.get("non_games", {})
         by_name = {}
@@ -2631,7 +2803,7 @@ class Api:
                 "name": name,
                 "exes": e["exes"],
                 "meta": e["appid"] or e["source"] or e["exes"][0],
-                "icon": app_icons.data_url(e["exes"][0], name),
+                "icon": self._icon_url(e["exes"][0], name),
                 "capture": capture,
             })
 
@@ -2641,7 +2813,7 @@ class Api:
             non_games.append({
                 "name": basename,
                 "meta": "keep-alive" if basename.lower() in keep else "",
-                "icon": app_icons.data_url(basename, basename),
+                "icon": self._icon_url(basename, basename),
             })
 
         pending = []
@@ -3266,6 +3438,22 @@ class Api:
                 usage.free / 1073741824.0, need, "" if need == 1 else "s")
         return {"label": label, "rate": rate,
                 "used_pct": usage.used / float(usage.total or 1)}
+
+
+_SWR_INIT_LOCK = threading.Lock()
+
+
+def _version_facts():
+    from obsauto import updater as updater_mod
+    from obsauto.version import version_info
+    return version_info(), updater_mod.source_checkout_root()
+
+
+def _slow_sections(timings, limit=4):
+    """'games 612 ms, remote 140 ms' — the sections that ate a slow snapshot."""
+    ranked = sorted(timings.items(), key=lambda kv: -kv[1])
+    shown = ["%s %.0f ms" % (name, ms) for name, ms in ranked[:limit] if ms >= 1]
+    return ", ".join(shown) or "no single section (bridge or GIL contention)"
 
 
 def _settings_display(field, value):

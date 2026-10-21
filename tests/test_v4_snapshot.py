@@ -232,12 +232,155 @@ def test_set_setting_never_logs_secrets():
         app_module.save_config = real_save
 
 
+def test_swr_serves_last_real_value_while_refreshing():
+    """A slow probe (NAS path, tailscale, git) runs off the bridge thread
+    once there is a real answer to serve."""
+    import threading
+    work = tempfile.mkdtemp(prefix="nebula-swr-")
+    api = _stub_api(work, os.path.join(work, "rec"))
+    calls = []
+    release = threading.Event()
+
+    def slow():
+        calls.append(time.monotonic())
+        if len(calls) > 1:
+            release.wait(5)
+        return {"pending": len(calls) - 1}
+
+    first = api._swr_get("probe", slow, ttl=0.0)
+    check("swr first call is computed inline", first == {"pending": 0}, first)
+    t0 = time.perf_counter()
+    second = api._swr_get("probe", slow, ttl=0.0)
+    dt = time.perf_counter() - t0
+    check("swr stale read does not wait for the refresh", dt < 0.1, "%.3fs" % dt)
+    check("swr stale read is the last real value", second == {"pending": 0}, second)
+    api._swr_get("probe", slow, ttl=0.0)
+    time.sleep(0.05)
+    check("swr runs one refresh at a time", len(calls) == 2, len(calls))
+    release.set()
+    deadline = time.time() + 2
+    while time.time() < deadline and api._swr_get("probe", slow, ttl=60) != {"pending": 1}:
+        time.sleep(0.01)
+    check("swr refresh lands", api._swr_get("probe", slow, ttl=60) == {"pending": 1})
+
+    zero = api._swr_get("zero", lambda: 0, ttl=60)
+    again = api._swr_get("zero", lambda: 99, ttl=60)
+    check("a real zero stays a zero", zero == 0 and again == 0, (zero, again))
+
+
+def test_swr_mutation_beats_stale_refresh():
+    import threading
+    work = tempfile.mkdtemp(prefix="nebula-swr-")
+    api = _stub_api(work, os.path.join(work, "rec"))
+    api._swr_get("games", lambda: "old", ttl=60)
+    started, release = threading.Event(), threading.Event()
+
+    def stale_refresh():
+        started.set()
+        release.wait(5)
+        return "stale"
+
+    api._swr_get("games", stale_refresh, ttl=0.0)
+    started.wait(2)
+    api._swr_put("games", "renamed")
+    release.set()
+    time.sleep(0.1)
+    got = api._swr_get("games", lambda: "never", ttl=60)
+    check("refresh that started before a rename can't undo it",
+          got == "renamed", got)
+
+
+def test_settings_and_remote_use_cached_offload_status():
+    """host.offload_status() re-probes SMB roots; snapshot asks it once per TTL,
+    not once per section per poll."""
+    work = tempfile.mkdtemp(prefix="nebula-off-")
+    api = _stub_api(work, os.path.join(work, "rec"))
+    seen = []
+
+    class Host:
+        def offload_status(self):
+            seen.append(1)
+            return {"pending": 2, "reachability": "nas_up", "enabled": True,
+                    "can_sync": True, "root": "Z:/OBS"}
+
+    api._host = Host()
+    a = api._settings_sync_footer()
+    b = api._settings_sync_footer()
+    check("offload status fetched once across reads", len(seen) == 1, len(seen))
+    check("sync footer shows the real pending count",
+          a["pending"] == 2 and b["pending"] == 2, (a["pending"], b["pending"]))
+    api._swr_drop("offload_status")
+    api._settings_sync_footer()
+    check("a user action re-reads offload status", len(seen) == 2, len(seen))
+
+
+def test_icon_urls_survive_a_long_games_list():
+    """app_icons memoises 128; a games.json with more rows than that used to
+    evict and re-read every icon on every poll."""
+    import spike.app as app_module
+    work = tempfile.mkdtemp(prefix="nebula-icons-")
+    api = _stub_api(work, os.path.join(work, "rec"))
+    games = {"g%03d.exe" % i: {"display_name": "Game %d" % i} for i in range(200)}
+    non = {"n%03d.exe" % i: True for i in range(100)}
+    api._classifier = type("C", (), {
+        "snapshot": lambda self: {"games": games, "non_games": non},
+        "_lock": __import__("threading").Lock(),
+        "_pending_manual": {},
+    })()
+    api._gamesync = None
+    fetched = []
+    real = app_module.app_icons.data_url
+    app_module.app_icons.data_url = lambda b, n: fetched.append(b) or "data:x"
+    try:
+        api._build_games()
+        api._build_games()
+    finally:
+        app_module.app_icons.data_url = real
+    check("each icon is encoded once", len(fetched) == 300, len(fetched))
+
+
+def test_slow_snapshot_names_the_section_once():
+    import spike.app as app_module
+    work = tempfile.mkdtemp(prefix="nebula-slow-")
+    api = _stub_api(work, os.path.join(work, "rec"))
+    lines = []
+    real = app_module.log_to_file
+    app_module.log_to_file = lines.append
+    for name in ("_obs", "_hero", "_tiles", "_activity", "_snapshot_ribbon",
+                 "_snapshot_clips_panel", "_snapshot_forecast",
+                 "_snapshot_games", "_settings_payload", "_macropad", "_remote"):
+        setattr(api, name, lambda: {})
+    api._update_offer = None
+    try:
+        api.snapshot()
+        check("fast snapshot logs nothing", lines == [], lines)
+
+        def slow_games():
+            time.sleep(0.8)
+            return {}
+        api._snapshot_games = slow_games
+        api.snapshot()
+    finally:
+        app_module.log_to_file = real
+    slow = [ln for ln in lines if ln.startswith("[UI] snapshot slow:")]
+    sections = [ln for ln in lines if ln.startswith("[UI] snapshot slow sections:")]
+    check("slow line kept", len(slow) == 1, lines)
+    check("one section line per slow call", len(sections) == 1, lines)
+    check("section line names the culprit first",
+          sections and sections[0].split(": ", 1)[1].startswith("games "), sections)
+
+
 if __name__ == "__main__":
     test_clips_panel_skips_nas_isdir()
     test_snapshot_isolates_section_faults()
     test_hero_survives_host_without_preview()
     test_start_menu_shortcut_is_not_dev()
     test_set_setting_never_logs_secrets()
+    test_swr_serves_last_real_value_while_refreshing()
+    test_swr_mutation_beats_stale_refresh()
+    test_settings_and_remote_use_cached_offload_status()
+    test_icon_urls_survive_a_long_games_list()
+    test_slow_snapshot_names_the_section_once()
     print("\n%d passed, %d failed" % (len(PASS), len(FAIL)))
     if FAIL:
         print("FAILED:", ", ".join(FAIL))
