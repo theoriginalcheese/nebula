@@ -398,6 +398,7 @@ class Api:
         self._clips_scanned_at = 0.0
         self._clips_backfill_busy = False
         self._clips_backfill_at = 0.0
+        self._nas_root_seen = ""
         self._clip_catalog = ClipCatalog(self.cfg, on_log=self._api_log)
         self._open_clip_busy = set()
         # Instant paint from durable index — never wait on NAS for first list.
@@ -2318,7 +2319,10 @@ class Api:
         return self._clip_catalog.nas_root()
 
     def _resolved_nas_root(self):
-        """Prefer Offloader's live root (LAN/remote auto); else any live candidate."""
+        """Prefer Offloader's live root (LAN/remote auto); else any live candidate.
+
+        Probes - workers only. The answer is kept for _bridge_nas_root().
+        """
         preferred = ""
         offloader = self._offloader()
         if offloader is not None:
@@ -2326,7 +2330,19 @@ class Api:
                 preferred = (offloader.root or "").strip()
             except Exception:
                 preferred = ""
-        return self._clip_catalog.resolve_active_root(preferred)
+        root = self._clip_catalog.resolve_active_root(preferred)
+        self._nas_root_seen = root
+        return root
+
+    def _bridge_nas_root(self):
+        """The root a worker last resolved, else _cached_nas_root(). Never probes.
+
+        For click handlers on the JS bridge. Resolving live shells out to
+        tailscale and timed-isdirs every share - seconds when the NAS is
+        down. The clip helpers fed this root still try every candidate, so
+        a stale pick only changes which mount is asked first.
+        """
+        return getattr(self, "_nas_root_seen", "") or self._cached_nas_root()
 
     def _nas_up_hint(self):
         """Offloader diagnose when available — never probes on the UI thread."""
@@ -2391,7 +2407,7 @@ class Api:
             except Exception as exc:
                 return {"ok": False, "error": str(exc)}
 
-        nas_root = self._resolved_nas_root()
+        nas_root = self._bridge_nas_root()
         nas_path = (clip or {}).get("nas_path") or ""
         if not nas_path and rel:
             nas_path = self._clip_catalog.resolve_nas_path(rel, nas_root) or ""
@@ -2475,7 +2491,7 @@ class Api:
                 local = p
         if local or cached:
             result = self._clip_catalog.ensure_local(
-                rel, nas_root=self._resolved_nas_root())
+                rel, nas_root=self._bridge_nas_root())
             if not result.get("ok"):
                 return result
             try:
@@ -2552,7 +2568,7 @@ class Api:
                 local_path = p
         cache_path = self._clip_catalog.cached_file(rel)
         nas_path = clip.get("nas_path") or self._clip_catalog.resolve_nas_path(
-            rel, self._resolved_nas_root()) or ""
+            rel, self._bridge_nas_root()) or ""
 
         pending = set()
         offloader = self._offloader()

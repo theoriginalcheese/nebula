@@ -120,6 +120,84 @@ def test_nas_backfill_resolves_root_off_the_bridge():
           not api._clips_backfill_busy and not resolved_on)
 
 
+def test_clip_clicks_never_resolve_the_nas_root():
+    """Reveal / Open / Delete run on the JS bridge. Resolving the root there
+    shelled out to tailscale and timed-isdir'd every share - a click froze
+    the window for seconds whenever the NAS or the tailnet was down."""
+    from spike import app as app_mod
+
+    work = tempfile.mkdtemp(prefix="nebula-click-")
+    rec = os.path.join(work, "rec")
+    clip_path = os.path.join(rec, "G", "b.mkv")
+    os.makedirs(os.path.dirname(clip_path))
+    with open(clip_path, "wb") as f:
+        f.write(b"x" * 64)
+    api = _stub_api(work, rec)
+    api._open_clip_busy = set()
+    api._clips_cache = [{
+        "game": "G", "name": "b.mkv", "path": os.path.normpath(clip_path),
+        "rel": "G/b.mkv", "size": 64, "mtime": 1.0, "location": "local",
+        "availability": "online", "nas_path": "",
+    }]
+
+    class Offloader:
+        enabled = True
+
+        @property
+        def root(self):
+            raise AssertionError("live NAS root resolved on the bridge")
+
+        def cached_root(self):
+            return "Z:/OBS"
+
+        def pending_paths(self):
+            return set()
+
+    api._offloader = lambda: Offloader()
+
+    def boom(*_a, **_k):
+        raise AssertionError("NAS probe on the bridge")
+
+    api._clip_catalog.resolve_active_root = boom
+    asked = []
+    api._clip_catalog.resolve_nas_path = (
+        lambda rel, root=None: asked.append(root) or None)
+    opened = []
+    real_reveal, real_open = app_mod.subprocess_reveal, app_mod.subprocess_open
+    app_mod.subprocess_reveal = opened.append
+    app_mod.subprocess_open = opened.append
+    try:
+        res = api.reveal_clip(clip_path)
+        check("reveal local: no live lookup", res.get("ok") is True
+              and res.get("where") == "local", res)
+        res = api.open_clip("G/b.mkv")
+        check("open local: no live lookup", res.get("ok") is True
+              and res.get("started") is False, res)
+        check("  ...still opens the local file",
+              opened == [os.path.normpath(clip_path)] * 2, opened)
+        res = api.delete_clip(clip_path, confirm=True)
+        check("delete: no live lookup, same refusal",
+              res.get("refused") is True
+              and "no NAS copy is recorded" in res.get("message", ""), res)
+        check("  ...NAS path asked against the cached root",
+              asked == ["Z:/OBS"], asked)
+        check("  ...local file untouched", os.path.exists(clip_path))
+
+        api._clips_cache[0].update(location="remote", path="")
+        os.remove(clip_path)
+        asked.clear()
+        api._nas_root_seen = r"\\192.168.68.59\50tb\OBS"
+        api._clip_catalog.nas_online = lambda root=None, **_k: False
+        res = api.reveal_clip("G/b.mkv")
+        check("reveal remote, NAS down: same message",
+              res.get("ok") is False and "isn't reachable" in res.get("error", ""),
+              res)
+        check("  ...uses the root a worker last resolved",
+              asked == [r"\\192.168.68.59\50tb\OBS"], asked)
+    finally:
+        app_mod.subprocess_reveal, app_mod.subprocess_open = real_reveal, real_open
+
+
 def test_snapshot_isolates_section_faults():
     work = tempfile.mkdtemp(prefix="nebula-snap-")
     api = _stub_api(work, os.path.join(work, "rec"))
@@ -417,6 +495,7 @@ def test_slow_snapshot_names_the_section_once():
 if __name__ == "__main__":
     test_clips_panel_skips_nas_isdir()
     test_nas_backfill_resolves_root_off_the_bridge()
+    test_clip_clicks_never_resolve_the_nas_root()
     test_snapshot_isolates_section_faults()
     test_hero_survives_host_without_preview()
     test_start_menu_shortcut_is_not_dev()
