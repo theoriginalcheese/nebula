@@ -3099,19 +3099,28 @@ class Api:
         self._schedule_nas_backfill(force=force)
 
     def _schedule_nas_backfill(self, force=False):
-        """Walk NAS into the index off the list path."""
+        """Walk NAS into the index off the list path.
+
+        snapshot() reaches this on the JS-bridge thread, so only config is
+        read here. Resolving the root is not cheap: offloader.root shells out
+        to tailscale and timed-isdirs up to three shares, then
+        resolve_active_root probes each candidate again - 2s apiece when the
+        NAS is down, which froze the window every five minutes.
+        """
         if self._clips_backfill_busy:
             return
         age = time.time() - self._clips_backfill_at
         if not force and age < 300:
             return
-        nas_root = self._resolved_nas_root()
-        if not nas_root:
+        if not self._clip_catalog.candidate_nas_roots():
             return
         self._clips_backfill_busy = True
 
         def worker():
             try:
+                nas_root = self._resolved_nas_root()
+                if not nas_root:
+                    return
                 result = self._clip_catalog.backfill_from_nas(nas_root)
                 if result.get("ok") and int(result.get("added") or 0) > 0:
                     # Re-merge so new index rows appear without a full local rescan.

@@ -76,6 +76,50 @@ def test_clips_panel_skips_nas_isdir():
           panel["clips"][:1] if panel.get("clips") else None)
 
 
+def test_nas_backfill_resolves_root_off_the_bridge():
+    """_ensure_clips_scan runs inside snapshot(); scheduling the NAS walk used
+    to resolve the root there - tailscale CLI plus up to seven timed isdirs."""
+    import threading
+    work = tempfile.mkdtemp(prefix="nebula-backfill-")
+    api = _stub_api(work, os.path.join(work, "rec"))
+    api._clips_backfill_at = 0.0
+    bridge = threading.current_thread()
+    resolved_on, walked = [], threading.Event()
+
+    def resolve():
+        resolved_on.append(threading.current_thread())
+        time.sleep(0.5)
+        return "Z:/OBS"
+
+    api._resolved_nas_root = resolve
+    api._clip_catalog.backfill_from_nas = (
+        lambda root: walked.set() or {"ok": True, "added": 0})
+
+    t0 = time.perf_counter()
+    api._schedule_nas_backfill(force=False)
+    dt = time.perf_counter() - t0
+    check("backfill scheduling does not wait on the NAS", dt < 0.1, "%.3fs" % dt)
+    check("backfill marked busy at once", api._clips_backfill_busy is True)
+    walked.wait(3)
+    check("backfill walk still runs", walked.is_set())
+    check("root resolved on the worker",
+          resolved_on and resolved_on[0] is not bridge, resolved_on)
+    deadline = time.time() + 2
+    while time.time() < deadline and api._clips_backfill_busy:
+        time.sleep(0.01)
+    check("backfill clears busy and stamps", not api._clips_backfill_busy
+          and api._clips_backfill_at > 0)
+
+    api._clips_backfill_at = 0.0
+    for key in ("nas_offload_root", "nas_offload_root_lan",
+                "nas_offload_root_remote"):
+        api.cfg[key] = ""
+    resolved_on.clear()
+    api._schedule_nas_backfill(force=True)
+    check("no NAS configured spawns nothing",
+          not api._clips_backfill_busy and not resolved_on)
+
+
 def test_snapshot_isolates_section_faults():
     work = tempfile.mkdtemp(prefix="nebula-snap-")
     api = _stub_api(work, os.path.join(work, "rec"))
@@ -372,6 +416,7 @@ def test_slow_snapshot_names_the_section_once():
 
 if __name__ == "__main__":
     test_clips_panel_skips_nas_isdir()
+    test_nas_backfill_resolves_root_off_the_bridge()
     test_snapshot_isolates_section_faults()
     test_hero_survives_host_without_preview()
     test_start_menu_shortcut_is_not_dev()
