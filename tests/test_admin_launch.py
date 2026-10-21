@@ -7,7 +7,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from obsauto.admin_launch import should_elevate
+from obsauto.admin_launch import handoff, should_elevate
 from obsauto.config import DEFAULTS
 from obsauto.settings_spec import BY_KEY
 
@@ -38,6 +38,19 @@ def test_should_elevate():
           should_elevate(True, False, ["spike/app.py", "--show"]) is True)
 
 
+def test_handoff():
+    check("switch off stays put",
+          handoff(False, False, ["spike/app.py"], True) is None)
+    check("already admin stays put",
+          handoff(True, True, ["spike/app.py"], True) is None)
+    check("installed task is the silent hand-off",
+          handoff(True, False, ["spike/app.py", "--show"], True) == "task")
+    check("no task still asks",
+          handoff(True, False, ["spike/app.py"], False) == "prompt")
+    check("dev never hands off",
+          handoff(True, False, ["spike/app.py", "--dev"], True) is None)
+
+
 def test_setting_is_declared():
     check("default is off", DEFAULTS.get("run_as_administrator") is False)
     field = BY_KEY.get("run_as_administrator")
@@ -47,6 +60,7 @@ def test_setting_is_declared():
 
 if __name__ == "__main__":
     test_should_elevate()
+    test_handoff()
     test_setting_is_declared()
     print("\n%d passed, %d failed" % (len(PASS), len(FAIL)))
     if FAIL:

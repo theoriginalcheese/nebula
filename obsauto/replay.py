@@ -191,6 +191,35 @@ class ReplayBuffer:
                  "the buffer actually exists.")
         return False
 
+    def release(self):
+        """Instant replay is off. Stop the live buffer and clear it in OBS.
+
+        ``disarm`` only stops a buffer this object armed. After a restart
+        the new object is unarmed while OBS is still holding the last 30s,
+        so turning the setting off has to ask OBS itself.
+        """
+        try:
+            active = bool(self.obs.connected and self.obs.get_replay_buffer_status())
+        except OBSError:
+            active = False
+        if active or self.armed:
+            try:
+                self.obs.stop_replay_buffer()
+            except OBSError as exc:
+                self.log("[Replay] Couldn't stop the buffer: %s" % exc)
+        self.armed = False
+        self.on_state(False)
+        if not self.obs.connected:
+            return False
+        try:
+            self.obs.set_profile_parameter("SimpleOutput", "RecRB", "false")
+            self.obs.set_profile_parameter("AdvOut", "RecRB", "false")
+        except OBSError as exc:
+            self.log("[Replay] Couldn't turn the buffer off in OBS: %s" % exc)
+            return False
+        self.log("[Replay] Turned off in OBS.")
+        return True
+
     def disarm(self):
         """"StopReplayBuffer: monitoring off, or non-game focus"."""
         with self._lock:

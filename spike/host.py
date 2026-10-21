@@ -26,7 +26,7 @@ from spike.dial import (
     DELETE_CONFIRM, DELETE_ROW, ROW_LABELS, DialKnob, background_for_open,
     pause_label, row_action, status_word,
 )
-from spike.windows import HWND_TOPMOST, NebulaWindows, _set_window_pos
+from spike.windows import NebulaWindows
 from obsauto import tray_app
 from obsauto.app_log import log_to_file
 from obsauto.monitor import Monitor, ensure_obs_running, is_obs_running
@@ -287,6 +287,27 @@ class HotkeyManager:
 
     def pending(self):
         return dict(self._pending)
+
+
+def _stop_taskbar_flash(user32, hwnd):
+    """Clear a taskbar-button blink if one was already queued.
+
+    ``dwFlags`` 0 is ``FLASHW_STOP``. Showing the window must not leave
+    the button orange.
+    """
+    class FLASHWINFO(ctypes.Structure):
+        _fields_ = [
+            ("cbSize", ctypes.c_uint),
+            ("hwnd", ctypes.c_void_p),
+            ("dwFlags", ctypes.c_uint),
+            ("uCount", ctypes.c_uint),
+            ("dwTimeout", ctypes.c_uint),
+        ]
+
+    info = FLASHWINFO()
+    info.cbSize = ctypes.sizeof(FLASHWINFO)
+    info.hwnd = int(hwnd)
+    user32.FlashWindowEx(ctypes.byref(info))
 
 
 class NebulaHost:
@@ -592,34 +613,72 @@ class NebulaHost:
             return
         try:
             self._visible = True
-            self.window.show()
-            self.window.restore()
-            self._raise_existing()
+            # pywebview's show()/restore() call Form.Show()+Activate(), and
+            # the old raise toggled TOPMOST around SetForegroundWindow.
+            # Both run off the foreground thread (wake listener, tray), so
+            # Windows refuses the focus and blinks the taskbar button.
+            if not self._raise_existing():
+                self.window.show()
+                self.window.restore()
             self._sleep(True)
         except Exception as exc:
             self._log("[Window] Show failed: %s" % exc)
 
     def _raise_existing(self):
-        """Bring this process's window forward. ``show()`` does nothing
-        once the window is already open."""
-        try:
-            import ctypes
-            hwnd = int(self.window.native.Handle.ToInt64())
+        """Show this window and bring it forward without a taskbar blink.
+
+        ``Form.Show`` runs on the UI thread. That thread is not the
+        foreground one (wake listener, tray), so a bare ``Activate`` makes
+        Windows blink the taskbar button instead of focusing us. Joining
+        the foreground thread first lets the focus succeed. Returns False
+        only when there is no native handle yet — a failed raise must not
+        fall through to ``window.show()``, which blinks again.
+        """
+        native = getattr(self.window, "native", None)
+        handle = getattr(native, "Handle", None) if native is not None else None
+        if handle is None:
+            return False
+
+        def go():
             user32 = ctypes.windll.user32
-            SW_RESTORE = 9
-            HWND_NOTOPMOST = -2
-            SWP_NOMOVE, SWP_NOSIZE, SWP_SHOWWINDOW = 0x0002, 0x0001, 0x0040
-            flags = SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW
-            user32.ShowWindow(hwnd, SW_RESTORE)
-            # Pointer-sized handles. A bare -1 does not actually go topmost.
-            _set_window_pos(hwnd, HWND_TOPMOST, flags)
+            kernel32 = ctypes.windll.kernel32
+            hwnd = int(native.Handle.ToInt64())
+            if not hwnd:
+                return
+            fg = user32.GetForegroundWindow()
+            our = kernel32.GetCurrentThreadId()
+            attached = False
+            fg_thread = 0
+            if fg and int(fg) != hwnd:
+                pid = ctypes.wintypes.DWORD()
+                fg_thread = user32.GetWindowThreadProcessId(
+                    fg, ctypes.byref(pid))
+                if fg_thread and int(fg_thread) != int(our):
+                    attached = bool(user32.AttachThreadInput(
+                        int(fg_thread), int(our), True))
             try:
+                if user32.IsIconic(hwnd):
+                    from System.Windows.Forms import FormWindowState
+                    native.WindowState = FormWindowState.Normal
+                if not bool(native.Visible):
+                    native.Show()
+                user32.BringWindowToTop(hwnd)
                 user32.SetForegroundWindow(hwnd)
             finally:
-                _set_window_pos(hwnd, HWND_NOTOPMOST, flags)
+                if attached:
+                    user32.AttachThreadInput(int(fg_thread), int(our), False)
+            _stop_taskbar_flash(user32, hwnd)
+
+        try:
+            if getattr(native, "InvokeRequired", False):
+                from System import Action
+                native.Invoke(Action(go))
+            else:
+                go()
         except Exception as exc:
             error = exc
             self._log("[Window] Raise failed: %s" % error)
+        return True
 
     def hide(self):
         if not self.window:
@@ -1395,8 +1454,11 @@ class NebulaHost:
 
     def _transport(self, action):
         if not self.obs:
+            self._log("[Manual] Ignored %s — OBS is not connected." % action)
             return
         if self._transport_busy:
+            self._log("[Manual] Ignored %s — another transport is still running."
+                      % action)
             return
         self._transport_busy = True
         prior = self.monitor._recording_target if self.monitor else None
@@ -1411,28 +1473,26 @@ class NebulaHost:
                 status = self.obs.get_record_status()
                 recording = bool(status.get("outputActive"))
                 paused = bool(status.get("outputPaused"))
-                if action == "stop":
-                    if recording:
-                        self.obs.stop_record()
-                        result.update(stopped=True, event="stop",
-                                      outcome="Recording stopped.")
-                        # Before the UI thread hears about it. The monitor
-                        # polls on its own clock, and a stop it has not been
-                        # told about looks like the game is still there and
-                        # the recording simply ended, so it starts another.
+                if action == "stop" or (action == "record" and recording):
+                    if not recording:
+                        result["outcome"] = "Nothing is recording."
+                    else:
+                        # Before StopRecord. The monitor polls on its own
+                        # clock, and a stop it has not been told about looks
+                        # like the game is still there and the recording
+                        # simply ended, so it starts another. The hero's
+                        # Stop button is action "record", so it has to arm
+                        # the hold-off on this path too, not only "stop".
                         if self.monitor:
                             self.monitor.note_manual_stop(
                                 hold_basename, hold_name)
                             result["hold_noted"] = True
-                    else:
-                        result["outcome"] = "Nothing is recording."
-                elif action == "record":
-                    if recording:
                         self.obs.stop_record()
                         result.update(stopped=True, event="stop",
                                       outcome="Recording stopped.")
-                    elif (self.monitor and self.monitor._hold_off
-                          and self.monitor._hold_off_pending is not None):
+                elif action == "record":
+                    if (self.monitor and self.monitor._hold_off
+                            and self.monitor._hold_off_pending is not None):
                         self.monitor.accept_record_prompt()
                         result.update(event="start",
                                       outcome="Recording started.")
@@ -1739,10 +1799,25 @@ class NebulaHost:
         game = self._current_game
         capture = self._capture_mode
         if not replay or not replay.enabled:
-            if capture in ("buffer", "both") and game:
+            if (capture in ("buffer", "both") and game
+                    and not getattr(self, "_replay_off_pushed", False)):
                 self._log("[Replay] %s is set to the buffer, but instant "
                           "replay is off in Settings." % game)
+            if replay and not getattr(self, "_replay_off_pushed", False):
+                self._replay_off_pushed = True
+
+                def push_off():
+                    try:
+                        ok = replay.release()
+                    except Exception:
+                        ok = False
+                    if not ok:
+                        self._replay_off_pushed = False
+
+                threading.Thread(
+                    target=push_off, name="ReplayOff", daemon=True).start()
             return
+        self._replay_off_pushed = False
         replay.set_game(game)
         connected = bool(self.obs and self.obs.connected)
         monitoring = bool(self._monitoring_on)
@@ -1876,6 +1951,7 @@ class NebulaHost:
             self._on_dial_event, suppress=True, on_log=self._log)
         if self._dial_hook:
             self._log("[Dial] watching numpad Ins (Num Lock off), "
+                      "numpad 8/2 to move, 6 to run, 3 to close, "
                       "VK_VOLUME_UP 0xAF, VK_VOLUME_DOWN 0xAE, "
                       "VK_VOLUME_MUTE 0xAD")
             if _running_elevated():

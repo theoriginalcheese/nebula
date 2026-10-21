@@ -331,6 +331,67 @@ def test_numpad_ins():
           allow is True and action is None and knob2.phase == "closed")
 
 
+def _open(knob):
+    knob.handle(Ev("insert", "down", 82, is_keypad=True))
+    knob.handle(Ev("insert", "up", 82, is_keypad=True))
+
+
+def test_numpad_directions():
+    knob = DialKnob(on_log=lambda _msg: None)
+    allow, action = knob.handle(Ev("8", "down", 72, is_keypad=True))
+    check("numpad 8 does nothing while the menu is closed",
+          allow is True and action is None and knob.phase == "closed")
+    knob.handle(Ev("8", "up", 72, is_keypad=True))
+    _open(knob)
+    allow, action = knob.handle(Ev("2", "down", 80, is_keypad=True))
+    check("numpad 2 walks down one row",
+          allow is False and action and action["type"] == "move"
+          and action["index"] == 1)
+    allow, action = knob.handle(Ev("2", "down", 80, is_keypad=True))
+    check("a held 2 does not walk a second row",
+          allow is False and action is None and knob.index == 1)
+    knob.handle(Ev("2", "up", 80, is_keypad=True))
+    allow, action = knob.handle(Ev("down", "down", 80, is_keypad=True))
+    check("num lock off still walks down from numpad 2",
+          allow is False and action and action["index"] == 2)
+    knob.handle(Ev("down", "up", 80, is_keypad=True))
+    allow, action = knob.handle(Ev("8", "down", 72, is_keypad=True))
+    check("numpad 8 walks back up",
+          allow is False and action and action["index"] == 1)
+    knob.handle(Ev("8", "up", 72, is_keypad=True))
+    allow, action = knob.handle(Ev("down", "down", 80, is_keypad=False))
+    check("the arrow cluster is not the numpad",
+          allow is True and action is None and knob.index == 1)
+    allow, action = knob.handle(Ev("6", "down", 77, is_keypad=False))
+    check("the digit row is not the numpad",
+          allow is True and action is None and knob.phase == "open")
+    allow, action = knob.handle(Ev("6", "down", 77, is_keypad=True))
+    check("numpad 6 runs the highlighted row",
+          allow is False and action and action["type"] == "activate"
+          and action["index"] == 1 and knob.phase == "closing")
+    knob.handle(Ev("6", "up", 77, is_keypad=True))
+
+    knob = DialKnob(on_log=lambda _msg: None)
+    _open(knob)
+    knob.handle(Ev("2", "down", 80, is_keypad=True))
+    knob.handle(Ev("2", "up", 80, is_keypad=True))
+    allow, action = knob.handle(Ev("page down", "down", 81, is_keypad=True))
+    check("numpad 3 closes without running the row",
+          allow is False and action and action["type"] == "close"
+          and knob.phase == "closing")
+    knob.handle(Ev("page down", "up", 81, is_keypad=True))
+
+    knob = DialKnob(on_log=lambda _msg: None)
+    _open(knob)
+    for _ in range(ROW_COUNT - 1):
+        knob.handle(Ev("2", "down", 80, is_keypad=True))
+        knob.handle(Ev("2", "up", 80, is_keypad=True))
+    allow, action = knob.handle(Ev("right", "down", 77, is_keypad=True))
+    check("numpad 6 on delete only arms the first press",
+          allow is False and action and action["type"] == "arm"
+          and knob.phase == "open")
+
+
 def test_hook_pairs():
     class Keys:
         def __init__(self):
@@ -611,6 +672,7 @@ def main():
     test_five_rows_and_delete()
     test_live_k762_scans()
     test_numpad_ins()
+    test_numpad_directions()
     test_hook_pairs()
     test_one_window()
     test_hidden_menu_remembers_the_gap()

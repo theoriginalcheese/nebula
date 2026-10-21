@@ -8,7 +8,10 @@ it is swallowed, and so are the notches while it is open, so Windows volume
 does not move under the highlight. Numpad 0 does the same job when Num Lock
 is off: Windows reports that face as insert with ``is_keypad`` set. The
 dedicated Insert key is left alone, and Num Lock on still types 0.
-``note_closed`` is what releases the swallowed keys.
+While the menu is open, numpad 8 and 2 move the highlight and numpad 6 and 3
+run or dismiss it. That is the keypad faces only — the arrow cluster is a
+different key and still types. ``note_closed`` is what releases the swallowed
+keys.
 """
 from __future__ import annotations
 
@@ -47,6 +50,23 @@ _BY_SCAN = {
     _LIVE_DOWN: "volume_down",
     _LIVE_MUTE: "mute",
 }
+# Physical numpad 8 / 2 / 6 / 3. Num Lock on reports the digit. Num Lock off
+# reports the nav name, still with is_keypad set. The arrow cluster shares
+# those nav names and is not a keypad key, so it is left alone.
+_KEYPAD_NAV = {
+    "8": "nav_up",
+    "up": "nav_up",
+    "2": "nav_down",
+    "down": "nav_down",
+    "6": "nav_yes",
+    "right": "nav_yes",
+    "3": "nav_no",
+    "page down": "nav_no",
+}
+_HELD = (
+    "volume_up", "volume_down", "mute", "esc",
+    "nav_up", "nav_down", "nav_yes", "nav_no",
+)
 
 # Nebula Dial Menu v4.dc.html. Opacity finishes first (180ms). The 8px
 # rise finishes at 220ms. Close is both, in 200ms. No overshoot, no row stagger.
@@ -218,7 +238,7 @@ def close_pose(ms, origin_y=0.0, origin_opacity=1.0):
 
 
 def classify(event):
-    """volume_up | volume_down | mute | esc | None.
+    """volume_up | volume_down | mute | esc | nav_* | None.
 
     Name wins. A volume scan still counts when the name is missing or is
     not one of the four, so a firmware label we did not predict is logged
@@ -231,8 +251,13 @@ def classify(event):
     # Numpad 0, Num Lock off. Same physical key types "0" when Num Lock is on,
     # and that name is not insert, so it falls through. The dedicated Insert
     # key shares the name but is not a keypad key.
-    if name == "insert" and getattr(event, "is_keypad", False):
+    keypad = getattr(event, "is_keypad", False)
+    if name == "insert" and keypad:
         return "mute"
+    if keypad:
+        nav = _KEYPAD_NAV.get(name)
+        if nav:
+            return nav
     # Empty or unexpected name, but the scan is one of the three volume keys.
     scan = getattr(event, "scan_code", None)
     return _BY_SCAN.get(scan)
@@ -304,11 +329,22 @@ class DialKnob:
     def _owns_repeat(self, kind):
         if self.phase == "closed":
             return kind == "mute"
-        return kind in ("volume_up", "volume_down", "mute", "esc")
+        return kind in _HELD
+
+    def _step(self, delta):
+        was = self._armed
+        self._armed = None
+        nxt = self.index + delta
+        if 0 <= nxt < ROW_COUNT:
+            self.index = nxt
+            return True, {"type": "move", "index": self.index}
+        if was is not None:
+            return True, {"type": "move", "index": self.index}
+        return True, None
 
     def _edge(self, kind):
         if self.phase == "closing":
-            if kind in ("volume_up", "volume_down", "mute", "esc"):
+            if kind in _HELD:
                 return True, None
             return False, None
         if self.phase == "closed":
@@ -321,32 +357,19 @@ class DialKnob:
                     "type": "open", "index": 0, "epoch": self._epoch,
                 }
             return False, None
-        if kind == "volume_up":
-            was = self._armed
-            self._armed = None
-            if self.index < ROW_COUNT - 1:
-                self.index += 1
-                return True, {"type": "move", "index": self.index}
-            if was is not None:
-                return True, {"type": "move", "index": self.index}
-            return True, None
-        if kind == "volume_down":
-            was = self._armed
-            self._armed = None
-            if self.index > 0:
-                self.index -= 1
-                return True, {"type": "move", "index": self.index}
-            if was is not None:
-                return True, {"type": "move", "index": self.index}
-            return True, None
-        if kind == "mute":
+        # Knob clockwise and numpad 2 both walk down the list.
+        if kind in ("volume_up", "nav_down"):
+            return self._step(1)
+        if kind in ("volume_down", "nav_up"):
+            return self._step(-1)
+        if kind in ("mute", "nav_yes"):
             if self.index == DELETE_ROW and self._armed != DELETE_ROW:
                 self._armed = DELETE_ROW
                 return True, {"type": "arm", "index": self.index}
             index = self.index
             token = self._begin_close()
             return True, {"type": "activate", "index": index, "token": token}
-        if kind == "esc":
+        if kind in ("esc", "nav_no"):
             token = self._begin_close()
             return True, {"type": "close", "token": token}
         return False, None

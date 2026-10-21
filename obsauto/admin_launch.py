@@ -1,9 +1,15 @@
 """Optional administrator relaunch for the dial hook.
 
 HoYoPlay and the games it starts run elevated. A low-level keyboard hook
-in a normal process is not called for keys aimed at an admin window, so
-the knob does nothing until Nebula is admin too. That is opt-in: a new
-install leaves ``run_as_administrator`` off and never shows a UAC prompt.
+in a normal process is not called for keys aimed at an admin window, and
+Windows will not draw a normal window over an admin game, so the dial
+stays underneath until Nebula is admin too. That is opt-in: a new install
+leaves ``run_as_administrator`` off and never shows a UAC prompt.
+
+When the ``NebulaRunElevated`` task exists, the hand-off is
+``schtasks /run`` and does not ask again. ``scripts/setup-nebula-admin-task.ps1``
+registers that task (one approval). Without it, the hand-off is still a
+UAC prompt.
 """
 from __future__ import annotations
 
@@ -18,6 +24,9 @@ except ImportError:
     wintypes = None
 
 _SKIP = ("--dev", "--allow-multi", "--toast-demo", "--apply-update")
+# On-demand task. Highest privileges, no logon trigger. Same shape as
+# NebulaLaunchOBS: one approval when the task is created, then silent.
+NEBULA_ADMIN_TASK = "NebulaRunElevated"
 
 
 def is_elevated():
@@ -37,6 +46,19 @@ def should_elevate(flag, elevated, argv):
     if elevated or not flag:
         return False
     return not any(item in argv for item in _SKIP)
+
+
+def handoff(flag, elevated, argv, task_ready):
+    """``None`` stay, ``task`` silent admin start, ``prompt`` UAC.
+
+    The task wins when it is installed. A missing task still asks, so a
+    machine that never ran the setup script keeps the old prompt.
+    """
+    if not should_elevate(flag, elevated, argv):
+        return None
+    if task_ready:
+        return "task"
+    return "prompt"
 
 
 def config_wants_admin():
@@ -62,10 +84,36 @@ def _command():
     return sys.executable, subprocess.list2cmdline([script, *sys.argv[1:]])
 
 
-def relaunch_elevated():
-    """Show the UAC prompt and start an admin copy. True if it started."""
-    if os.name != "nt" or is_elevated():
+def admin_task_exists():
+    """True when ``NebulaRunElevated`` is registered on this machine."""
+    if os.name != "nt":
         return False
+    try:
+        from obsauto.silent_proc import run_kwargs
+        result = subprocess.run(
+            ["schtasks", "/query", "/tn", NEBULA_ADMIN_TASK],
+            capture_output=True, text=True, timeout=8,
+            **run_kwargs(),
+        )
+        return result.returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+
+def _relaunch_via_task():
+    try:
+        from obsauto.silent_proc import run_kwargs
+        result = subprocess.run(
+            ["schtasks", "/run", "/tn", NEBULA_ADMIN_TASK],
+            capture_output=True, text=True, timeout=10,
+            **run_kwargs(),
+        )
+        return result.returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+
+def _relaunch_via_prompt():
     target, params = _command()
     try:
         rc = ctypes.windll.shell32.ShellExecuteW(
@@ -73,6 +121,22 @@ def relaunch_elevated():
     except Exception:
         return False
     return rc > 32
+
+
+def relaunch_elevated():
+    """Start an admin copy. True if it started.
+
+    Uses the scheduled task when that is installed, so a later launch
+    does not ask. Otherwise shows the UAC prompt.
+    """
+    if os.name != "nt" or is_elevated():
+        return False
+    kind = handoff(True, False, sys.argv, admin_task_exists())
+    if kind == "task" and _relaunch_via_task():
+        return True
+    if kind is None:
+        return False
+    return _relaunch_via_prompt()
 
 
 def relaunch_unelevated():

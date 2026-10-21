@@ -2122,6 +2122,10 @@ class DialController:
         if not self._window or asleep == self._renderer_asleep:
             return
         win = self._window
+        # Resume the COM renderer before any script. A suspended page
+        # does not answer evaluate_js, which is what left the menu invisible.
+        if not asleep:
+            apply_webview_power(win, False, log=self._log, prefix="[Dial]")
         script = "setAsleep(%s)" % ("true" if asleep else "false")
 
         def push_js():
@@ -2131,7 +2135,8 @@ class DialController:
                 pass
 
         _off_gui(push_js)
-        apply_webview_power(win, asleep, log=self._log, prefix="[Dial]")
+        if asleep:
+            apply_webview_power(win, True, log=self._log, prefix="[Dial]")
         self._renderer_asleep = asleep
 
     def _open_gui(self, payload):
@@ -2155,9 +2160,14 @@ class DialController:
             self._create()
             self._set_form_opacity(0.0)
             return
+        # The hidden menu is TrySuspended. evaluate_js on that renderer
+        # never returns, so the pose never starts and the open deadline
+        # throws the menu away. Wake it, then show, then paint the rows.
+        self._set_renderer_sleep(False)
         if self._ready.is_set():
             self._pending = None
-            self._push(payload, gen)
+            self._reveal(gen)
+            self._push(payload, gen, reveal=False)
         else:
             self._pending = payload
             self._set_form_opacity(0.0)
@@ -2249,7 +2259,7 @@ class DialController:
         else:
             self._reveal(self._generation)
 
-    def _push(self, payload, gen):
+    def _push(self, payload, gen, reveal=True):
         if not self._window or not self._alive:
             return
 
@@ -2266,8 +2276,8 @@ class DialController:
             except Exception as exc:
                 error = exc
                 self._log("[Dial] push failed: %s" % error)
-                return
-            _run_on_gui(self._host, lambda: self._reveal(gen), wait=False)
+            if reveal:
+                _run_on_gui(self._host, lambda: self._reveal(gen), wait=False)
 
         _off_gui(run)
 

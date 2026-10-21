@@ -152,6 +152,20 @@ states.clear()
 rb.disarm()
 check("a refused disarm stays armed", rb.armed is True and states[-1] is True,
       f"armed={rb.armed} states={states}")
+
+# Turning the setting off must stop a buffer this process did not arm,
+# and clear the switch in both OBS output modes.
+obs_off = FakeOBS()
+obs_off.buffer_active = True
+rb_off = ReplayBuffer(obs_off, cfg, on_log=lambda m: None,
+                      on_saved=lambda p, g: None, on_state=lambda _a: None)
+rb_off.release()
+check("replay off stops a buffer nebula did not arm",
+      obs_off.buffer_active is False, obs_off.calls)
+check("replay off clears simple and advanced RecRB",
+      obs_off.params.get(("SimpleOutput", "RecRB")) == "false"
+      and obs_off.params.get(("AdvOut", "RecRB")) == "false",
+      obs_off.params)
 rb.armed = False  # restore for the sections below
 
 # A refused arm must leave the state honest rather than claiming success.

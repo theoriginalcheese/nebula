@@ -1660,6 +1660,14 @@ class Api:
                 self._host.start_hotkeys()
             except Exception as exc:
                 self._api_log("[Manual] Couldn't rebind after %s: %s" % (key, exc))
+        if self._host and key in (
+                "replay_enabled", "replay_arm_with_monitoring",
+                "replay_only_for_games"):
+            self._host._replay_off_pushed = False
+            try:
+                self._host._sync_replay_arming()
+            except Exception as exc:
+                self._api_log("[Replay] Couldn't apply %s: %s" % (key, exc))
         if self._host and key in ("obs_host", "obs_port", "obs_password"):
             try:
                 self._host.apply_obs_endpoint()

@@ -99,6 +99,9 @@ def _run(host):
         idx = 0
         hovering = False
         applied_rest = False
+        was_mapped = False
+        shown_at = 0.0
+        over_since = None
         uia = _uia()
         button_rects = []
         last_rect_at = 0.0
@@ -114,17 +117,44 @@ def _run(host):
                     time.sleep(idle_ms)
                     continue
 
+                # Rest icon goes on as soon as we have a window, including
+                # while it is hidden. Applying it at the moment of show()
+                # repaints the taskbar button and reads as a flash.
+                if not hovering and not applied_rest:
+                    _apply_icon(
+                        host, user32, SetClassLong, hwnd,
+                        rest_handle or handles[0],
+                        rest_drawing or (drawing_icons[0] if drawing_icons else None),
+                        GCL_HICON, GCL_HICONSM,
+                        WM_SETICON, ICON_SMALL, ICON_BIG)
+                    applied_rest = True
+
                 mapped = bool(user32.IsWindowVisible(hwnd)) and (
                     not bool(user32.IsIconic(hwnd)))
+                now = time.monotonic()
+                if mapped and not was_mapped:
+                    shown_at = now
+                was_mapped = mapped
                 if not mapped:
                     if hovering:
                         hovering = False
                         applied_rest = False
+                    over_since = None
                     time.sleep(idle_ms)
                     continue
 
-                now = time.monotonic()
-                if now - last_rect_at >= rect_refresh_s or not button_rects:
+                # Opening the window puts the cursor on our button for a
+                # moment. Leave the icon alone through that, or the button
+                # blinks as the orbit starts and the hit-test rect moves.
+                if now - shown_at < 1.5:
+                    time.sleep(poll_ms)
+                    continue
+
+                # Don't re-query the button while the icon is changing.
+                # A fresh rect mid-orbit drops the cursor "off" the button,
+                # snaps back to rest, then hits again — a one-second flash.
+                if not hovering and (
+                        now - last_rect_at >= rect_refresh_s or not button_rects):
                     button_rects = _our_button_rects(uia)
                     last_rect_at = now
 
@@ -133,6 +163,11 @@ def _run(host):
                 over = _point_in_rects(pt.x, pt.y, button_rects)
 
                 if over:
+                    if over_since is None:
+                        over_since = now
+                    if not hovering and now - over_since < 0.45:
+                        time.sleep(poll_ms)
+                        continue
                     if not hovering:
                         hovering = True
                         idx = 0
@@ -148,6 +183,7 @@ def _run(host):
                     applied_rest = False
                     time.sleep(tick_ms)
                 else:
+                    over_since = None
                     if hovering or not applied_rest:
                         was = hovering
                         hovering = False
@@ -165,6 +201,8 @@ def _run(host):
                 hwnd = 0
                 hovering = False
                 applied_rest = False
+                was_mapped = False
+                over_since = None
                 button_rects = []
                 time.sleep(idle_ms)
 
