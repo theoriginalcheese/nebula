@@ -15,7 +15,7 @@ if (-not (Test-Path $obs)) {
 
 $action = New-ScheduledTaskAction `
     -Execute $obs `
-    -Argument "--minimize-to-tray" `
+    -Argument "--minimize-to-tray --disable-missing-files-check --disable-updater" `
     -WorkingDirectory $work
 
 $principal = New-ScheduledTaskPrincipal `

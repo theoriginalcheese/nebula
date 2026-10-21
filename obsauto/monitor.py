@@ -23,6 +23,7 @@ and no game is in focus, idle/stop behaviour resumes as usual.
 import ctypes
 import os
 import re
+import shutil
 import subprocess
 import threading
 import time
@@ -177,6 +178,15 @@ def is_obs_running():
 
 
 OBS_LAUNCH_TASK_NAME = "NebulaLaunchOBS"
+# Flags OBS still documents. --disable-shutdown-check was removed in OBS 32,
+# so the safe-mode prompt is cleared by deleting its sentinel instead.
+OBS_LAUNCH_ARGS = (
+    "--minimize-to-tray",
+    "--disable-missing-files-check",
+    "--disable-updater",
+)
+# OBS 32 leaves a directory. Older builds left a file named safe_mode.
+_UNCLEAN_SENTINELS = (".sentinel", "safe_mode")
 
 
 def obs_launch_task_exists():
@@ -289,6 +299,58 @@ def recover_stuck_obs(obs, config, log, on_connection_change=None):
     return True
 
 
+def obs_config_dirs(obs_path=None):
+    """Config folders OBS might have used for this install."""
+    found = []
+    appdata = os.environ.get("APPDATA")
+    if appdata:
+        found.append(os.path.join(appdata, "obs-studio"))
+    if obs_path:
+        # <root>/bin/64bit/obs64.exe → portable config at <root>/config/obs-studio
+        root = os.path.dirname(os.path.dirname(os.path.dirname(
+            os.path.abspath(obs_path))))
+        found.append(os.path.join(root, "config", "obs-studio"))
+    return found
+
+
+def clear_unclean_shutdown_prompt(obs_path=None, log=lambda msg: None,
+                                  config_dirs=None):
+    """Drop the marker that makes OBS ask Safe Mode vs Start Normally.
+
+    OBS writes it at launch and deletes it on a clean exit. A kill, a crash,
+    or a forced shutdown leaves it behind, and the next start waits on that
+    dialog — including for the websocket, so Nebula cannot drive OBS until
+    someone clicks. Safe mode would also turn the websocket off, so the
+    marker is removed and OBS starts normally. Never touched while OBS is
+    already running: that file is how the live process records a clean exit.
+    """
+    if is_obs_running():
+        return False
+    dirs = (list(config_dirs) if config_dirs is not None
+            else obs_config_dirs(obs_path))
+    removed = False
+    for cfg in dirs:
+        if not cfg or not os.path.isdir(cfg):
+            continue
+        cfg_abs = os.path.abspath(cfg)
+        for name in _UNCLEAN_SENTINELS:
+            path = os.path.join(cfg_abs, name)
+            if os.path.commonpath((cfg_abs, path)) != cfg_abs:
+                continue
+            try:
+                if os.path.isdir(path) and not os.path.islink(path):
+                    shutil.rmtree(path)
+                    removed = True
+                elif os.path.lexists(path) and not os.path.isdir(path):
+                    os.remove(path)
+                    removed = True
+            except OSError as exc:
+                log("[OBS] Could not clear startup prompt %s: %s" % (path, exc))
+    if removed:
+        log("[OBS] Unclean-shutdown prompt cleared — OBS will start normally.")
+    return removed
+
+
 def ensure_obs_running(obs_path, log=lambda msg: None, wait=20.0):
     """Launch OBS if it isn't already running. Used both for the initial
     connection (in case OBS isn't set to autostart with Windows) and for
@@ -300,6 +362,10 @@ def ensure_obs_running(obs_path, log=lambda msg: None, wait=20.0):
     """
     if is_obs_running():
         return True
+    # Before either launch path. The scheduled task's arguments are fixed
+    # at registration time, so the flag-based workaround cannot be passed
+    # through schtasks /run. Removing the sentinel covers both paths.
+    clear_unclean_shutdown_prompt(obs_path, log=log)
     launched = False
     if _launch_via_scheduled_task(log):
         log("[OBS] Asked scheduled task %s to start OBS (elevated, no UAC)."
@@ -318,7 +384,7 @@ def ensure_obs_running(obs_path, log=lambda msg: None, wait=20.0):
             # reliable than fighting window state externally via CreateProcess
             # show flags, which OBS's own startup routine can just override.
             subprocess.Popen(
-                [obs_path, "--minimize-to-tray"],
+                [obs_path, *OBS_LAUNCH_ARGS],
                 cwd=os.path.dirname(obs_path),
             )
             log("[OBS] Launched OBS (minimized, not elevated) from %s" % obs_path)
