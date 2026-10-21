@@ -2411,7 +2411,7 @@ class Api:
         nas_path = (clip or {}).get("nas_path") or ""
         if not nas_path and rel:
             nas_path = self._clip_catalog.resolve_nas_path(rel, nas_root) or ""
-        if nas_path and os.path.isfile(nas_path):
+        if nas_path and fsprobe.isfile_within(nas_path):
             try:
                 subprocess_reveal(nas_path)
                 return {"ok": True, "where": "nas"}
@@ -2490,10 +2490,15 @@ class Api:
             if p and os.path.isfile(p):
                 local = p
         if local or cached:
+            # fetch=False: a corrupt cache (or one evicted since the check
+            # above) would otherwise re-download right here on the bridge.
             result = self._clip_catalog.ensure_local(
-                rel, nas_root=self._bridge_nas_root())
-            if not result.get("ok"):
+                rel, nas_root=self._bridge_nas_root(), fetch=False)
+            if result.get("needs_fetch"):
+                local = cached = None
+            elif not result.get("ok"):
                 return result
+        if local or cached:
             try:
                 subprocess_open(result["path"])
             except OSError as exc:

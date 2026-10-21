@@ -94,6 +94,74 @@ fsprobe.forget("")                                # empty/no-op safe
 fsprobe.forget(None)                              # None-ish safe
 check("forget tolerates empty/None paths", True)
 
+# isfile_within: same answer as os.path.isfile on a live path, None on a
+# hang, and only the hang is memoised (a file may land a moment later).
+afile = os.path.join(work, "clip.mkv")
+check("isfile: missing file is False", fsprobe.isfile_within(afile) is False)
+with open(afile, "wb") as fh:
+    fh.write(b"x")
+check("isfile: a real False is not memoised",
+      fsprobe.isfile_within(afile) is True)
+check("isfile: a directory is False", fsprobe.isfile_within(real) is False)
+check("isfile: empty path is False", fsprobe.isfile_within("") is False)
+
+_real_isfile = os.path.isfile
+fsprobe.os.path.isfile = hanging
+try:
+    t0 = time.monotonic()
+    r = fsprobe.isfile_within(os.path.join(work, "dead.mkv"), timeout=0.3)
+    dt = time.monotonic() - t0
+finally:
+    fsprobe.os.path.isfile = _real_isfile
+check("isfile: timeout returns None fast", r is None and dt < 2.0,
+      "%r %.2fs" % (r, dt))
+check("isfile: timeout memoised",
+      fsprobe.isfile_within(os.path.join(work, "dead.mkv")) is None)
+check("isfile: fresh ignores the timeout memo",
+      fsprobe.isfile_within(os.path.join(work, "dead.mkv"), fresh=True) is False)
+fsprobe.forget(os.path.join(work, "dead.mkv"))
+check("isfile: forget clears the timeout memo",
+      fsprobe.isfile_within(os.path.join(work, "dead.mkv")) is False)
+
+# resolve_nas_path: a share that hangs is asked once per walk, not per root.
+from obsauto import clip_catalog  # noqa: E402
+
+cat = clip_catalog.ClipCatalog(
+    {"recording_root": os.path.join(work, "rec")}, app_dir=work)
+cat.get("Game/x.mkv")  # load the index before isfile is swapped out
+dead_root = "\\\\deadnas\\share"
+cat.candidate_nas_roots = lambda: [dead_root + "\\a", dead_root + "\\b"]
+probed = []
+
+
+def hang_and_count(p):
+    probed.append(p)
+    time.sleep(30)
+
+
+fsprobe.os.path.isfile = hang_and_count
+try:
+    t0 = time.monotonic()
+    found = cat.resolve_nas_path("Game/x.mkv", dead_root)
+    dt = time.monotonic() - t0
+finally:
+    fsprobe.os.path.isfile = _real_isfile
+check("resolve: dead share gives None", found is None, found)
+check("resolve: dead share probed once per walk", len(probed) == 1, probed)
+check("resolve: dead share bounded", dt < 3.0, "%.2fs" % dt)
+
+# ensure_local(fetch=False): a corrupt cache is reported, not refetched.
+os.makedirs(os.path.join(work, "clip_cache", "G"), exist_ok=True)
+bad = os.path.join(work, "clip_cache", "G", "bad.mkv")
+with open(bad, "wb") as fh:
+    fh.write(b"short")
+cat._cache_ok = lambda path, entry: False
+res = cat.ensure_local("G/bad.mkv", fetch=False)
+check("ensure_local(fetch=False): corrupt cache -> needs_fetch",
+      res.get("needs_fetch") is True and not res.get("ok"), res)
+check("ensure_local(fetch=False): corrupt cache left for the worker",
+      os.path.isfile(bad))
+
 failed = [r for r in results if not r[1]]
 for name, ok, detail in results:
     print("%-4s %-38s %s" % ("PASS" if ok else "FAIL", name, detail))

@@ -41,7 +41,7 @@ import time
 
 from . import paths as paths_mod
 from .atomic_json import read_json
-from .fsprobe import isdir_within
+from .fsprobe import isdir_within, isfile_within
 
 _CHUNK = 4 * 1024 * 1024
 _VIDEO_EXTS = (".mkv", ".mp4", ".mov", ".flv", ".ts", ".m4v")
@@ -796,9 +796,24 @@ class ClipCatalog:
                 self._fetch_locks[rel] = lock
             return lock
 
-    def resolve_nas_path(self, rel: str, nas_root: str | None = None) -> str | None:
+    def resolve_nas_path(self, rel: str, nas_root: str | None = None,
+                         timeout: float = 2.0, fresh: bool = False) -> str | None:
+        # Bounded probes: reveal/delete ask from the JS-bridge thread, where a
+        # bare isfile on a dead share blocks 20-60s. A share that times out
+        # once is skipped for the rest of this walk rather than re-asked.
+        dead = set()
+
+        def present(path):
+            share = os.path.normcase(os.path.splitdrive(path)[0])
+            if share and share in dead:
+                return False
+            found = isfile_within(path, timeout, fresh=fresh)
+            if found is None and share:
+                dead.add(share)
+            return bool(found)
+
         entry = self.get(rel)
-        if entry and entry.get("nas_path") and os.path.isfile(entry["nas_path"]):
+        if entry and entry.get("nas_path") and present(entry["nas_path"]):
             return entry["nas_path"]
         roots = []
         preferred = self._normalize_root(nas_root) if nas_root is not None else ""
@@ -809,17 +824,22 @@ class ClipCatalog:
                 roots.append(root)
         for root in roots:
             inferred = os.path.normpath(os.path.join(root, *rel.split("/")))
-            if os.path.isfile(inferred):
+            if present(inferred):
                 return inferred
         return None
 
     def ensure_local(self, rel_or_path: str, nas_root: str | None = None,
-                     progress=None) -> dict:
+                     progress=None, fetch=True) -> dict:
         """Return a local filesystem path ready to open, fetching if needed.
 
         Never deletes NAS. Never enqueues offload. On failure returns
         ``{ok: False, error: ...}`` without hanging forever when the share is
         down (isdir probe first).
+
+        ``fetch=False`` answers only from the local/cache copy: anything that
+        would need the NAS (no copy, or a corrupt cache) returns
+        ``{ok: False, needs_fetch: True}`` untouched, for the caller to hand
+        to a background worker instead of downloading on its own thread.
         """
         rel = _safe_rel(rel_or_path)
         if not rel:
@@ -852,8 +872,12 @@ class ClipCatalog:
                 self._set_fetch(rel, state="ready", path=cached, error="")
                 return {"ok": True, "path": cached, "location": "cached",
                         "rel": rel}
+            if not fetch:
+                return {"ok": False, "needs_fetch": True, "rel": rel}
             # Corrupt/partial cache — drop and refetch.
             self.evict(rel)
+        elif not fetch:
+            return {"ok": False, "needs_fetch": True, "rel": rel}
 
         root = nas_root if nas_root is not None else self.resolve_active_root()
         if not self.nas_online(root):
@@ -861,11 +885,13 @@ class ClipCatalog:
             self._set_fetch(rel, state="error", error=msg, path="")
             return {"ok": False, "error": msg, "rel": rel, "availability": "offline"}
 
-        src = self.resolve_nas_path(rel, root)
+        # Download worker: a slow tailnet share gets the fetch budget, not the
+        # bridge thread's 2s.
+        src = self.resolve_nas_path(rel, root, _FETCH_PROBE_TIMEOUT_S, fresh=True)
         if not src:
             # Last chance: resolve against every candidate even if the
             # preferred root probe flaked.
-            src = self.resolve_nas_path(rel, None)
+            src = self.resolve_nas_path(rel, None, _FETCH_PROBE_TIMEOUT_S, fresh=True)
         if not src:
             msg = "Clip not found on the NAS (index may be stale)."
             self._set_fetch(rel, state="error", error=msg, path="")

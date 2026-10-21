@@ -24,6 +24,7 @@ _NEG_TTL_S = 10.0
 # poison the next isdir, and the other way round.
 _neg_until: dict[str, float] = {}
 _neg_size_until: dict[str, float] = {}
+_neg_isfile_until: dict[str, float] = {}
 _neg_lock = threading.Lock()
 
 
@@ -124,6 +125,53 @@ def filesize_within(path, timeout=2.0):
     return result
 
 
+def isfile_within(path, timeout=2.0, fresh=False):
+    """``os.path.isfile`` but ``None`` if it has not answered within
+    ``timeout``.
+
+    Only a *timeout* is memoised. A share that answers "no such file" is up,
+    and the file may land a second later (an offload finishing), so a real
+    False is never remembered - a live share gets exactly the answer a bare
+    ``os.path.isfile`` would. ``None`` is falsy, so callers that only want
+    yes/no can treat it as no; callers walking several paths can tell "dead"
+    from "absent" and stop asking the same share.
+    """
+    path = (path or "").strip()
+    if not path:
+        return False
+    try:
+        timeout = float(timeout)
+    except (TypeError, ValueError):
+        timeout = 2.0
+    if timeout <= 0:
+        timeout = 2.0
+
+    key = _key(path)
+    now = time.monotonic()
+    if not fresh:
+        with _neg_lock:
+            until = _neg_isfile_until.get(key)
+            if until is not None and now < until:
+                return None
+
+    box = []
+
+    def check():
+        try:
+            box.append(bool(os.path.isfile(path)))
+        except OSError:
+            box.append(False)
+
+    worker = threading.Thread(target=check, daemon=True)
+    worker.start()
+    worker.join(timeout)
+    if worker.is_alive() or not box:
+        with _neg_lock:
+            _neg_isfile_until[key] = time.monotonic() + _NEG_TTL_S
+        return None
+    return box[0]
+
+
 def forget(path):
     """Drop any memoised negative verdict for *path*.
 
@@ -141,3 +189,4 @@ def forget(path):
     with _neg_lock:
         _neg_until.pop(key, None)
         _neg_size_until.pop(key, None)
+        _neg_isfile_until.pop(key, None)
