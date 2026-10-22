@@ -381,7 +381,7 @@ class NebulaHost:
         self._preview_last_fetch = 0.0
 
         self.hotkeys = HotkeyManager(on_log=self._log)
-        self._dial = DialKnob(on_log=self._log)
+        self._dial = DialKnob(on_log=self._log, visible=self._dial_menu_visible)
         self._dial_hook = None
         self._windows = NebulaWindows(self, config)
 
@@ -1028,23 +1028,13 @@ class NebulaHost:
             self._log("[Window] DPI rescale failed: %s" % exc)
 
     def _overlay_follow(self, on_screen):
-        """2k: the overlay stands in for the main window while it is away.
+        """The mini overlay is retired. Hide one left over from an older run.
 
-        The overlay's own collapse button calls ``hide(restore=True)``, which
-        brings the *main window* back - so it was always designed as the
-        window's stand-in, not a free-floating widget. Nothing in v4 ever
-        called show_mini() though, which left the whole 2k layer unreachable
-        in the shipped app even though windows.py implements it completely.
-
-        Gate on the state here rather than letting overlay_show() refuse: it
-        refuses by writing "only appears while recording" to the activity log,
-        which would then land every time the window is minimised while idle.
+        It used to stand in for the main window while a recording was going
+        and this window was off screen. That bar is not wanted.
         """
         try:
-            if on_screen:
-                self.hide_mini()
-            elif self.hero_state() in ("recording", "paused"):
-                self.show_mini()
+            self.hide_mini()
         except Exception as exc:
             self._log("[Overlay] %s" % exc)
 
@@ -1667,12 +1657,8 @@ class NebulaHost:
         self.call_soon(run)
 
     def show_mini(self):
-        """Show the mini overlay. Refused while idle - 2k is explicit that it
-        never appears without a recording to describe."""
-        try:
-            self._windows.overlay_show()
-        except Exception as exc:
-            self._log("[Overlay] Could not show: %s" % exc)
+        """The mini overlay stays hidden. Kept so older callers still resolve."""
+        self.hide_mini()
 
     def hide_mini(self, restore=False):
         try:
@@ -1933,6 +1919,23 @@ class NebulaHost:
             self._udp_trigger.start(cfg.get("replay_udp_port"))
         self._bind_dial()
         return self.hotkeys
+
+    def _dial_menu_visible(self):
+        """True once the dial is on screen and the rows have been pushed.
+
+        The knob opens on the first 0 even when the window is still
+        transparent. A second 0 would otherwise run row 0.
+        """
+        windows = getattr(self, "_windows", None)
+        dial = getattr(windows, "dial", None) if windows is not None else None
+        if dial is None:
+            return True
+        try:
+            ready = dial._ready.is_set()
+            return (bool(dial._showing) and not bool(dial._closing)
+                    and ready and float(dial._opacity) > 0.5)
+        except (TypeError, ValueError, AttributeError):
+            return True
 
     def dial_status(self):
         """Header word and the pause-row label from the last OBS poll."""

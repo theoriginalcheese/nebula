@@ -2181,15 +2181,6 @@ class Api:
                                 else "Arm the buffer",
                                 ("replay", "arm")))
 
-        # 2k. The overlay refuses to open while idle ("never while idle"), so
-        # only offer it when it would actually appear - a palette row that
-        # answers with a log line and nothing on screen reads as broken.
-        # v3 had this row; v4 built the whole overlay layer and then wired
-        # nothing to show_mini(), which left 2k unreachable in the shipped app.
-        if state in ("recording", "paused"):
-            add(palette_mod.Row("Actions", "Show the mini overlay",
-                                ("overlay", "show"), hint="overlay"))
-
         add(palette_mod.Row("Actions", "Open recording folder", ("open", "recordings")))
         add(palette_mod.Row("Settings", "Open config.json", ("open", "config")))
 
@@ -2244,9 +2235,6 @@ class Api:
             return {"ok": True}
         if kind == "open":
             (self.open_recording_root if arg == "recordings" else self.reveal_config)()
-            return {"ok": True}
-        if kind == "overlay" and host:
-            (host.show_mini if arg == "show" else host.hide_mini)()
             return {"ok": True}
         if kind == "game":
             self._goto_pane = "games"

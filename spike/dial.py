@@ -267,8 +267,12 @@ class DialKnob:
     """Key-down edge only. Auto-repeat is swallowed while we own the key
     and never moves the highlight a second time."""
 
-    def __init__(self, on_log=lambda msg: None):
+    def __init__(self, on_log=lambda msg: None, visible=None):
         self._log = on_log
+        # Host passes this. Until the window is actually on screen, a second
+        # 0 must not run the highlighted row — that row is "Start Nebula"
+        # and the menu looks like it never opened.
+        self._visible = visible if visible is not None else (lambda: True)
         self._lock = threading.Lock()
         self.phase = "closed"  # closed | open | closing
         self.index = 0
@@ -363,6 +367,9 @@ class DialKnob:
         if kind in ("volume_down", "nav_up"):
             return self._step(-1)
         if kind in ("mute", "nav_yes"):
+            if not self._visible():
+                self._log("[Dial] menu not on screen yet")
+                return True, None
             if self.index == DELETE_ROW and self._armed != DELETE_ROW:
                 self._armed = DELETE_ROW
                 return True, {"type": "arm", "index": self.index}

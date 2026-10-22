@@ -621,6 +621,126 @@ def test_activate_still_closes():
     check("and the menu still closes", closed == [4], closed)
 
 
+def test_zero_does_not_run_until_the_menu_is_visible():
+    seen = {"on": False}
+    knob = DialKnob(on_log=lambda _msg: None, visible=lambda: seen["on"])
+    knob.handle(Ev("insert", "down", 82, is_keypad=True))
+    knob.handle(Ev("insert", "up", 82, is_keypad=True))
+    allow, action = knob.handle(Ev("insert", "down", 82, is_keypad=True))
+    check("second 0 does not run the row while the menu is invisible",
+          allow is False and action is None and knob.phase == "open")
+    knob.handle(Ev("insert", "up", 82, is_keypad=True))
+    seen["on"] = True
+    allow, action = knob.handle(Ev("insert", "down", 82, is_keypad=True))
+    check("once the menu is visible, 0 runs the row",
+          allow is False and action and action["type"] == "activate"
+          and knob.phase == "closing")
+
+
+def test_stalled_open_shows_the_menu():
+    created = []
+
+    def fake_create(title, url, **kw):
+        win = FakeWindow(title)
+        created.append(win)
+        return win
+
+    old = nw.webview.create_window
+    nw.webview.create_window = fake_create
+    try:
+        host = StubHost()
+        host._dial.phase = "open"
+        ctl = nw.DialController(host)
+        ctl.OPEN_STALL_S = 0.05
+        ctl._start_pose = lambda *_a, **_k: None
+        ctl.open({
+            "status": "Idle",
+            "pauseLabel": "Pause recording",
+            "index": 0,
+            "seed": 1,
+        })
+        time.sleep(0.3)
+        check("a stalled open still shows the window",
+              created and created[0].shown and ctl._opacity == 1.0,
+              (getattr(created[0], "shown", None) if created else None,
+               ctl._opacity))
+        check("a stalled open does not release the knob",
+              host._dial.phase == "open")
+        check("a stalled open does not suspend the page",
+              ctl._renderer_asleep is False)
+    finally:
+        nw.webview.create_window = old
+
+
+def test_stalled_close_hides_the_menu():
+    created = []
+
+    def fake_create(title, url, **kw):
+        win = FakeWindow(title)
+        created.append(win)
+        return win
+
+    old = nw.webview.create_window
+    nw.webview.create_window = fake_create
+    try:
+        host = StubHost()
+        ctl = nw.DialController(host)
+        ctl.OPEN_STALL_S = 30
+        ctl.CLOSE_STALL_S = 0.05
+        ctl.open({
+            "status": "Idle",
+            "pauseLabel": "Pause recording",
+            "index": 0,
+            "seed": 1,
+        })
+        host._dial.phase = "closing"
+        host._dial._close_token = 3
+
+        def hang(direction, gen, token):
+            ctl._pose_dir = -1
+            ctl._close_token = token
+
+        ctl._start_pose = hang
+        ctl._close_gui(3)
+        time.sleep(0.25)
+        check("a stalled close still hides the window", created[0].hidden)
+        check("a stalled close releases the knob", host._dial.phase == "closed")
+    finally:
+        nw.webview.create_window = old
+
+
+def test_close_before_ready_does_not_sleep():
+    created = []
+
+    def fake_create(title, url, **kw):
+        win = FakeWindow(title)
+        created.append(win)
+        return win
+
+    old = nw.webview.create_window
+    nw.webview.create_window = fake_create
+    try:
+        host = StubHost()
+        ctl = nw.DialController(host)
+        ctl.OPEN_STALL_S = 30
+        ctl.open({
+            "status": "Idle",
+            "pauseLabel": "Pause recording",
+            "index": 0,
+            "seed": 1,
+        })
+        ctl._close_gui(1)
+        check("close hides the window", created[0].hidden)
+        check("closing before ready does not suspend the page",
+              ctl._renderer_asleep is False)
+        ctl._on_ready()
+        ctl._showing = False
+        ctl._suspend_if_hidden_gui()
+        check("a loaded hidden dial may sleep", ctl._renderer_asleep is True)
+    finally:
+        nw.webview.create_window = old
+
+
 def test_abandon_ignores_a_newer_open():
     knob = DialKnob()
     knob.handle(down("volume mute", 57376))
@@ -679,6 +799,10 @@ def main():
     test_dead_toast_releases_the_corner()
     test_close_beats_a_late_reveal()
     test_activate_still_closes()
+    test_zero_does_not_run_until_the_menu_is_visible()
+    test_stalled_open_shows_the_menu()
+    test_stalled_close_hides_the_menu()
+    test_close_before_ready_does_not_sleep()
     test_abandon_ignores_a_newer_open()
     test_painter_holds_up()
     test_shell_on_disk()

@@ -1767,12 +1767,8 @@ class OverlayController:
         }
 
     def show(self):
-        if not self._state_allows():
-            self._log("[Manual] Mini overlay only appears while recording.")
-            return
-        # Posted, not blocking: _show_gui builds a WebView2 window, and that
-        # must not run inside a synchronous Invoke. See _run_on_gui.
-        _run_on_gui(self._host, self._show_gui, wait=False)
+        # Retired. The bar read as a second toast and is not wanted.
+        return
 
     def _show_gui(self):
         if self._window is None:
@@ -2083,6 +2079,14 @@ class DialController:
         self._open_epoch = None
         self._top_timer = None
         self._renderer_asleep = False
+        self._pose_tick = None
+
+    # If the fade never moves, show the plate anyway. Longer than the 220ms
+    # rise, short enough that a dead timer does not feel like a missed key.
+    OPEN_STALL_S = 0.6
+    # Close is 200ms. If the timer never ticks, hide anyway so the knob
+    # is not left in "closing" with every key swallowed.
+    CLOSE_STALL_S = 0.45
 
     def open(self, payload):
         _run_on_gui(self._host, lambda: self._open_gui(payload), wait=False)
@@ -2115,7 +2119,9 @@ class DialController:
         _run_on_gui(self._host, self._suspend_if_hidden_gui, wait=False)
 
     def _suspend_if_hidden_gui(self):
-        if not self._showing:
+        # Suspending before the page has called ready() stops it loading.
+        # The next 0 then opens a menu that can never paint.
+        if not self._showing and self._ready.is_set():
             self._set_renderer_sleep(True)
 
     def _set_renderer_sleep(self, asleep):
@@ -2143,6 +2149,9 @@ class DialController:
         self._closing = False
         self._generation += 1
         gen = self._generation
+        # A previous open can leave this at 1 while the form is hidden.
+        # The knob treats that as "on screen" and the next 0 runs a row.
+        self._opacity = 0.0
         self._open_epoch = payload.get("epoch") if isinstance(payload, dict) else None
         self._stop_pose()
         self._showing = True
@@ -2159,7 +2168,8 @@ class DialController:
             self._pending = payload
             self._create()
             self._set_form_opacity(0.0)
-            return
+            if self._window is None:
+                return
         # The hidden menu is TrySuspended. evaluate_js on that renderer
         # never returns, so the pose never starts and the open deadline
         # throws the menu away. Wake it, then show, then paint the rows.
@@ -2169,30 +2179,65 @@ class DialController:
             self._reveal(gen)
             self._push(payload, gen, reveal=False)
         else:
+            # Fade the HWND now. Rows arrive when the page calls ready().
+            # Leaving opacity at 0 until then is what made 0 look dead.
             self._pending = payload
-            self._set_form_opacity(0.0)
+            self._reveal(gen)
         self._arm_topmost()
 
     def _arm_open_deadline(self, gen, epoch):
-        """If the page never paints, do not leave volume keys swallowed."""
+        """If the fade never runs, show the menu anyway.
+
+        The old deadline hid the window and TrySuspended it. That ran
+        before the page had called ready(), so the load stopped and every
+        later 0 press opened an invisible menu.
+        """
         def fire():
-            time.sleep(3.0)
+            time.sleep(self.OPEN_STALL_S)
 
             def decide():
                 if gen != self._generation or not self._showing or self._closing:
                     return
-                if self._ready.is_set() and self._opacity > 0.5:
+                if self._opacity > 0.5:
                     return
-                self._log("[Dial] open did not paint — releasing volume keys")
-                knob = getattr(self._host, "_dial", None)
-                if knob is not None:
-                    knob.abandon(epoch)
-                self._finish_close(gen, None)
+                if not self._window:
+                    self._log("[Dial] open had no window — releasing keys")
+                    knob = getattr(self._host, "_dial", None)
+                    if knob is not None:
+                        knob.abandon(epoch)
+                    return
+                self._log("[Dial] open pose stalled — showing the menu")
+                self._set_renderer_sleep(False)
+                _show_noactivate(self._window, self._log)
+                self._stop_pose()
+                self._apply_pose(1.0, 0.0)
 
             _run_on_gui(self._host, decide, wait=False)
 
         threading.Thread(
             target=fire, name="DialOpenDeadline", daemon=True).start()
+
+    def _arm_close_deadline(self, gen, token):
+        """Hide the menu if the leave animation never finishes.
+
+        A pose timer that does not tick leaves the knob in ``closing``.
+        Every later key is swallowed and the plate stays on screen.
+        """
+        def fire():
+            time.sleep(self.CLOSE_STALL_S)
+
+            def decide():
+                if gen != self._generation or self._pose_dir != -1:
+                    return
+                if not self._showing:
+                    return
+                self._log("[Dial] close pose stalled — hiding the menu")
+                self._finish_close(gen, token)
+
+            _run_on_gui(self._host, decide, wait=False)
+
+        threading.Thread(
+            target=fire, name="DialCloseDeadline", daemon=True).start()
 
     def _close_gui(self, token):
         if not self._showing:
@@ -2207,7 +2252,9 @@ class DialController:
         self._generation += 1
         self._pending = None
         self._close_token = token
-        self._start_pose("close", self._generation, token)
+        gen = self._generation
+        self._start_pose("close", gen, token)
+        self._arm_close_deadline(gen, token)
 
     def _create(self):
         x, y = _dial_place()
@@ -2255,7 +2302,10 @@ class DialController:
         if self._pending:
             payload = self._pending
             self._pending = None
-            self._push(payload, self._generation)
+            # Reveal already started the fade. Pushing must not restart it
+            # from opacity 0 once the plate is up.
+            already = self._opacity > 0.5 or self._pose_dir != 0
+            self._push(payload, self._generation, reveal=not already)
         else:
             self._reveal(self._generation)
 
@@ -2432,9 +2482,16 @@ class DialController:
         self._pose_timer = timer
         pose_dir = self._pose_dir
 
-        def on_tick(_sender, _args):
+        def on_tick(sender, _args):
+            # A tick already queued for the previous timer must not stop
+            # the one that replaced it. pythonnet wraps the sender in a
+            # new object on every tick, so identity against ``timer`` is
+            # always false and would drop the fade and the close.
+            if sender is not None and self._pose_timer is not timer:
+                return
             if gen != self._generation or self._pose_dir != pose_dir:
-                self._stop_pose(dispose=False)
+                if self._pose_timer is timer:
+                    self._stop_pose(dispose=False)
                 return
             elapsed = (time.perf_counter() - started) * 1000.0
             if pose_dir == 1:
@@ -2453,13 +2510,19 @@ class DialController:
             else:
                 self._finish_close(gen, token)
 
+        self._pose_tick = on_tick
         timer.Tick += on_tick
         on_tick(None, None)
         if self._pose_timer is timer:
             try:
                 timer.Start()
-            except Exception:
-                pass
+            except Exception as exc:
+                self._log("[Dial] pose timer failed: %s" % exc)
+                if direction == "open":
+                    self._apply_pose(1.0, 0.0)
+                    self._pose_dir = 0
+                else:
+                    self._finish_close(gen, token)
 
     def _stop_pose(self, dispose=True):
         timer = self._pose_timer
@@ -2591,13 +2654,15 @@ class DialController:
         self._stop_dodge()
         self._lift = self._lift_target
         self._stop_topmost()
+        self._opacity = 0.0
         self._set_form_opacity(0.0)
         if self._window:
             try:
                 self._window.hide()
             except Exception:
                 pass
-            self._set_renderer_sleep(True)
+            if self._ready.is_set():
+                self._set_renderer_sleep(True)
         self._tell_closed(token)
 
     def _tell_closed(self, token):
