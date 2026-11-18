@@ -1,0 +1,354 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<meta name="design_doc_mode" content="canvas">
+<link rel="stylesheet" href="_ds/nocturne-ca27441c-01cc-44a6-99a7-7317fdeecd65/styles.css">
+<script src="_ds/nocturne-ca27441c-01cc-44a6-99a7-7317fdeecd65/_ds_bundle.js"></script>
+<style>
+body { margin:0; background:#07060E; }
+a { color:#F5F3FF; text-decoration:none; }
+a:hover { color:#9A93C4; }
+@keyframes nm2Drift { from { transform:translate(0,0) scale(1.2); } to { transform:translate(24px,16px) scale(1.2); } }
+</style>
+</helmet>
+
+<div style="min-height:100vh;background:#07060E;color:#F5F3FF;font-family:-apple-system,BlinkMacSystemFont,'SF Pro Text',system-ui,sans-serif;-webkit-font-smoothing:antialiased;padding:80px 80px 120px;box-sizing:border-box;width:max-content">
+
+<header style="display:flex;flex-direction:column;gap:10px;max-width:720px;margin-bottom:48px">
+  <span style="font-size:11px;font-weight:600;letter-spacing:.16em;text-transform:uppercase;color:#9A93C4">Nebula Mobile · iPhone · toast material</span>
+  <h1 style="margin:0;font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display',system-ui,sans-serif;font-size:36px;line-height:42px;font-weight:700;letter-spacing:-.02em">The nebula behind the glass</h1>
+  <p style="margin:0;font-size:15px;line-height:22px;color:#9A93C4;text-wrap:pretty">An ambient mesh — four soft light leaks in violet, indigo, teal and orchid on a near-black ground, with film grain — drifting 24 × 16 pt over 40 s and back. Glass is the hero card and the tab bar only.</p>
+</header>
+
+<div style="display:flex;gap:56px;align-items:flex-start">
+
+  <div style="display:flex;flex-direction:column;gap:16px;flex:none">
+    <div style="display:flex;align-items:center;gap:10px;height:32px"><span style="font-size:11px;font-weight:600;letter-spacing:.16em;color:#9A93C4;font-variant-numeric:tabular-nums">01</span><span style="flex:1;font-size:15px;font-weight:500">Now · recording</span><span onClick="{{ replay }}" style="height:32px;padding:0 14px;border-radius:16px;display:flex;align-items:center;gap:6px;font-size:13px;font-weight:500;color:#F5F3FF;box-shadow:inset 0 0 0 1px rgba(245,243,255,.14);cursor:pointer" style-hover="background:rgba(245,243,255,.06)" style-active="background:rgba(245,243,255,.12)"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#F5F3FF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 12a7.5 7.5 0 1 0 2.2-5.3"></path><path d="M4.4 4.2v3.6H8"></path></svg>Replay burst</span></div>
+    <div style="padding:10px;border-radius:66px;background:#0D0B17;box-shadow:inset 0 0 0 1.5px #221D36">
+      <div data-screen-label="01 Now recording" style="position:relative;width:402px;height:874px;overflow:hidden;border-radius:56px;background:#07060E">
+        <div aria-hidden="true" style="position:absolute;inset:-48px;overflow:hidden"><div style="width:100%;height:100%;display:block;transform:scale(1.2);animation:nm2Drift 40s ease-in-out infinite alternate;animation-play-state:{{ drift }};background:radial-gradient(60% 45% at 8% 4%, rgba(139,124,246,.55) 0%, rgba(139,124,246,0) 70%),radial-gradient(55% 40% at 100% 38%, rgba(74,58,170,.5) 0%, rgba(74,58,170,0) 70%),radial-gradient(70% 45% at 0% 100%, rgba(43,179,163,.22) 0%, rgba(43,179,163,0) 70%),radial-gradient(50% 35% at 85% 96%, rgba(201,120,220,.18) 0%, rgba(201,120,220,0) 70%),#0B0916"></div><div style="position:absolute;inset:0;opacity:.07;mix-blend-mode:overlay;background-image:url(&quot;data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E&quot;)"></div></div>
+        <div aria-hidden="true" style="position:absolute;inset:0;background:rgba(7,6,14,.18)"></div>
+        <span style="position:absolute;top:100px;left:20px;font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display',system-ui,sans-serif;font-size:34px;line-height:41px;font-weight:700;letter-spacing:-.01em">Now</span>
+        <div style="position:absolute;top:160px;left:16px;right:16px;display:flex;flex-direction:column;gap:24px">
+          <div style="position:relative;border-radius:28px;padding:3px;background:rgba(16,13,28,.72);backdrop-filter:blur(6px) saturate(140%);-webkit-backdrop-filter:blur(6px) saturate(140%);box-shadow:inset 0 0 0 1px rgba(245,243,255,.14)">
+            <canvas ref="{{ cRec }}" aria-hidden="true" style="position:absolute;left:-24px;top:-24px;width:calc(100% + 48px);height:calc(100% + 48px);pointer-events:none"></canvas>
+            <div style="position:relative;border-radius:25px;box-shadow:inset 0 0 0 1px rgba(245,243,255,.06);padding:17px;display:flex;flex-direction:column;gap:14px">
+              <div style="display:flex;align-items:center;gap:10px">
+                <svg width="28" height="28" viewBox="-8 -8 80 80"><ellipse cx="32" cy="32" rx="29.44" ry="17.66" fill="none" stroke="#8B7CF6" stroke-width="5" transform="rotate(-22 32 32)"></ellipse><path d="M53.76 32 37.23 37.23 32 53.76 26.77 37.23 10.24 32 26.77 26.77 32 10.24 37.23 26.77Z" fill="#F5F3FF"></path></svg>
+                <span style="flex:1;font-size:13px;font-weight:600;color:#9A93C4">Nebula is recording</span>
+                <span style="display:inline-flex;align-items:center;gap:7px;height:26px;padding:0 11px;border-radius:13px;box-shadow:inset 0 0 0 1px rgba(245,243,255,.14)"><i style="width:7px;height:7px;border-radius:50%;background:#F0C36A"></i><span style="font-size:11px;font-weight:600;letter-spacing:.16em;color:#F0C36A">REC</span></span>
+              </div>
+              <div style="display:flex;flex-direction:column;gap:2px">
+                <span style="font-size:22px;font-weight:600;letter-spacing:-.015em">Sifu</span>
+                <span style="font-size:15px;color:#9A93C4;font-variant-numeric:tabular-nums">Gameplay · 1080p60</span>
+              </div>
+              <span style="font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display',system-ui,sans-serif;font-size:56px;line-height:60px;font-weight:500;letter-spacing:-.02em;font-variant-numeric:tabular-nums lining-nums;color:#F0C36A">{{ recClock }}</span>
+            </div>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:8px">
+            <span style="padding:0 16px;font-size:11px;font-weight:600;letter-spacing:.16em;text-transform:uppercase;color:#9A93C4">Activity</span>
+            <div style="background:#1C1730;border-radius:22px;padding:0 16px">
+              <div style="height:47px;display:flex;align-items:center;justify-content:space-between;gap:12px"><span style="font-size:15px">Recording started · Sifu</span><span style="font-size:13px;color:#9A93C4;font-variant-numeric:tabular-nums">8:29</span></div>
+              <div style="height:47px;display:flex;align-items:center;justify-content:space-between;gap:12px;border-top:.5px solid rgba(245,243,255,.09)"><span style="font-size:15px">Scene set to Gameplay</span><span style="font-size:13px;color:#9A93C4;font-variant-numeric:tabular-nums">8:29</span></div>
+              <div style="height:47px;display:flex;align-items:center;justify-content:space-between;gap:12px;border-top:.5px solid rgba(245,243,255,.09)"><span style="font-size:15px">Linked to Studio PC</span><span style="font-size:13px;color:#9A93C4">—</span></div>
+            </div>
+          </div>
+        </div>
+        <div style="position:absolute;left:0;right:0;bottom:118px;display:flex;justify-content:center;align-items:flex-end;gap:44px">
+          <div style="display:flex;flex-direction:column;align-items:center;gap:8px">
+            <div style="width:56px;height:56px;border-radius:28px;display:grid;place-items:center;background:#1C1730;cursor:pointer" style-active="background:#2A2442"><svg width="18" height="20" viewBox="0 0 18 20"><rect x="2" y="1" width="4.6" height="18" rx="1.6" fill="#F5F3FF"></rect><rect x="11.4" y="1" width="4.6" height="18" rx="1.6" fill="#F5F3FF"></rect></svg></div>
+            <span style="font-size:12px;font-weight:500;color:#9A93C4">Pause</span>
+          </div>
+          <div style="display:flex;flex-direction:column;align-items:center;gap:8px">
+            <div style="width:64px;height:64px;border-radius:32px;display:grid;place-items:center;background:#FF5C7A;cursor:pointer"><span style="width:20px;height:20px;border-radius:5px;background:#07060E"></span></div>
+            <span style="font-size:12px;font-weight:500;color:#9A93C4">Stop</span>
+          </div>
+        </div>
+        <dc-import name="NM2Chrome" tab="now" style="position:absolute;inset:0" hint-size="402px,874px"></dc-import>
+      </div>
+    </div>
+  </div>
+
+  <div style="display:flex;flex-direction:column;gap:16px;flex:none">
+    <div style="display:flex;align-items:center;gap:10px;height:32px"><span style="font-size:11px;font-weight:600;letter-spacing:.16em;color:#9A93C4;font-variant-numeric:tabular-nums">02</span><span style="font-size:15px;font-weight:500">Now · paused</span></div>
+    <div style="padding:10px;border-radius:66px;background:#0D0B17;box-shadow:inset 0 0 0 1.5px #221D36">
+      <div data-screen-label="02 Now paused" style="position:relative;width:402px;height:874px;overflow:hidden;border-radius:56px;background:#07060E">
+        <div aria-hidden="true" style="position:absolute;inset:-48px;overflow:hidden"><div style="width:100%;height:100%;display:block;transform:scale(1.2);animation:nm2Drift 40s ease-in-out infinite alternate;animation-play-state:{{ drift }};background:radial-gradient(60% 45% at 8% 4%, rgba(139,124,246,.55) 0%, rgba(139,124,246,0) 70%),radial-gradient(55% 40% at 100% 38%, rgba(74,58,170,.5) 0%, rgba(74,58,170,0) 70%),radial-gradient(70% 45% at 0% 100%, rgba(43,179,163,.22) 0%, rgba(43,179,163,0) 70%),radial-gradient(50% 35% at 85% 96%, rgba(201,120,220,.18) 0%, rgba(201,120,220,0) 70%),#0B0916"></div><div style="position:absolute;inset:0;opacity:.07;mix-blend-mode:overlay;background-image:url(&quot;data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E&quot;)"></div></div>
+        <div aria-hidden="true" style="position:absolute;inset:0;background:rgba(7,6,14,.18)"></div>
+        <span style="position:absolute;top:100px;left:20px;font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display',system-ui,sans-serif;font-size:34px;line-height:41px;font-weight:700;letter-spacing:-.01em">Now</span>
+        <div style="position:absolute;top:160px;left:16px;right:16px;display:flex;flex-direction:column;gap:24px">
+          <div style="position:relative;border-radius:28px;padding:3px;background:rgba(16,13,28,.72);backdrop-filter:blur(6px) saturate(140%);-webkit-backdrop-filter:blur(6px) saturate(140%);box-shadow:inset 0 0 0 1px rgba(245,243,255,.14)">
+            <canvas ref="{{ cPau }}" aria-hidden="true" style="position:absolute;left:-24px;top:-24px;width:calc(100% + 48px);height:calc(100% + 48px);pointer-events:none"></canvas>
+            <div style="position:relative;border-radius:25px;box-shadow:inset 0 0 0 1px rgba(245,243,255,.06);padding:17px;display:flex;flex-direction:column;gap:14px">
+              <div style="display:flex;align-items:center;gap:10px">
+                <svg width="28" height="28" viewBox="-8 -8 80 80"><ellipse cx="32" cy="32" rx="29.44" ry="17.66" fill="none" stroke="#8B7CF6" stroke-width="5" transform="rotate(-22 32 32)"></ellipse><path d="M53.76 32 37.23 37.23 32 53.76 26.77 37.23 10.24 32 26.77 26.77 32 10.24 37.23 26.77Z" fill="#F5F3FF"></path></svg>
+                <span style="flex:1;font-size:13px;font-weight:600;color:#9A93C4">Nebula is paused</span>
+                <span style="display:inline-flex;align-items:center;gap:7px;height:26px;padding:0 11px;border-radius:13px;box-shadow:inset 0 0 0 1px rgba(245,243,255,.14)"><svg width="9" height="10" viewBox="0 0 9 10"><rect x="0" y="0" width="3" height="10" rx="1" fill="#9A93C4"></rect><rect x="6" y="0" width="3" height="10" rx="1" fill="#9A93C4"></rect></svg><span style="font-size:11px;font-weight:600;letter-spacing:.16em;color:#9A93C4">PAUSED</span></span>
+              </div>
+              <div style="display:flex;flex-direction:column;gap:2px">
+                <span style="font-size:22px;font-weight:600;letter-spacing:-.015em">Sifu</span>
+                <span style="font-size:15px;color:#9A93C4;font-variant-numeric:tabular-nums">Gameplay · 1080p60</span>
+              </div>
+              <span style="font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display',system-ui,sans-serif;font-size:56px;line-height:60px;font-weight:500;letter-spacing:-.02em;font-variant-numeric:tabular-nums lining-nums;color:#C9C4DC">01:12:04</span>
+            </div>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:8px">
+            <span style="padding:0 16px;font-size:11px;font-weight:600;letter-spacing:.16em;text-transform:uppercase;color:#9A93C4">Activity</span>
+            <div style="background:#1C1730;border-radius:22px;padding:0 16px">
+              <div style="height:47px;display:flex;align-items:center;justify-content:space-between;gap:12px"><span style="font-size:15px">Paused · Sifu</span><span style="font-size:13px;color:#9A93C4;font-variant-numeric:tabular-nums">9:41</span></div>
+              <div style="height:47px;display:flex;align-items:center;justify-content:space-between;gap:12px;border-top:.5px solid rgba(245,243,255,.09)"><span style="font-size:15px">Recording started · Sifu</span><span style="font-size:13px;color:#9A93C4;font-variant-numeric:tabular-nums">8:29</span></div>
+              <div style="height:47px;display:flex;align-items:center;justify-content:space-between;gap:12px;border-top:.5px solid rgba(245,243,255,.09)"><span style="font-size:15px">Scene set to Gameplay</span><span style="font-size:13px;color:#9A93C4;font-variant-numeric:tabular-nums">8:29</span></div>
+            </div>
+          </div>
+        </div>
+        <div style="position:absolute;left:0;right:0;bottom:118px;display:flex;justify-content:center;align-items:flex-end;gap:44px">
+          <div style="display:flex;flex-direction:column;align-items:center;gap:8px">
+            <div style="width:56px;height:56px;border-radius:28px;display:grid;place-items:center;background:#1C1730;cursor:pointer" style-active="background:#2A2442"><svg width="20" height="22" viewBox="0 0 20 22"><path d="M4 2.6v16.8a1.2 1.2 0 0 0 1.8 1l13-8.4a1.2 1.2 0 0 0 0-2L5.8 1.6A1.2 1.2 0 0 0 4 2.6z" fill="#F5F3FF"></path></svg></div>
+            <span style="font-size:12px;font-weight:500;color:#9A93C4">Resume</span>
+          </div>
+          <div style="display:flex;flex-direction:column;align-items:center;gap:8px">
+            <div style="width:64px;height:64px;border-radius:32px;display:grid;place-items:center;background:#FF5C7A;cursor:pointer"><span style="width:20px;height:20px;border-radius:5px;background:#07060E"></span></div>
+            <span style="font-size:12px;font-weight:500;color:#9A93C4">Stop</span>
+          </div>
+        </div>
+        <dc-import name="NM2Chrome" tab="now" style="position:absolute;inset:0" hint-size="402px,874px"></dc-import>
+      </div>
+    </div>
+  </div>
+
+  <div style="display:flex;flex-direction:column;gap:16px;flex:none">
+    <div style="display:flex;align-items:center;gap:10px;height:32px"><span style="font-size:11px;font-weight:600;letter-spacing:.16em;color:#9A93C4;font-variant-numeric:tabular-nums">03</span><span style="font-size:15px;font-weight:500">Clips</span></div>
+    <div style="padding:10px;border-radius:66px;background:#0D0B17;box-shadow:inset 0 0 0 1.5px #221D36">
+      <div data-screen-label="03 Clips" style="position:relative;width:402px;height:874px;overflow:hidden;border-radius:56px;background:#07060E">
+        <div aria-hidden="true" style="position:absolute;inset:-48px;overflow:hidden"><div style="width:100%;height:100%;display:block;transform:scale(1.2);animation:nm2Drift 40s ease-in-out infinite alternate;animation-play-state:{{ drift }};background:radial-gradient(60% 45% at 8% 4%, rgba(139,124,246,.55) 0%, rgba(139,124,246,0) 70%),radial-gradient(55% 40% at 100% 38%, rgba(74,58,170,.5) 0%, rgba(74,58,170,0) 70%),radial-gradient(70% 45% at 0% 100%, rgba(43,179,163,.22) 0%, rgba(43,179,163,0) 70%),radial-gradient(50% 35% at 85% 96%, rgba(201,120,220,.18) 0%, rgba(201,120,220,0) 70%),#0B0916"></div><div style="position:absolute;inset:0;opacity:.07;mix-blend-mode:overlay;background-image:url(&quot;data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E&quot;)"></div></div>
+        <div aria-hidden="true" style="position:absolute;inset:0;background:rgba(7,6,14,.18)"></div>
+        <div style="position:absolute;top:100px;left:16px;right:16px;display:flex;flex-direction:column;gap:16px">
+          <span style="padding:0 4px;font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display',system-ui,sans-serif;font-size:34px;line-height:41px;font-weight:700;letter-spacing:-.01em">Clips</span>
+          <div style="height:44px;border-radius:22px;display:flex;align-items:center;gap:8px;padding:0 14px;background:#1C1730">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#9A93C4" stroke-width="1.7" stroke-linecap="round"><circle cx="10.5" cy="10.5" r="6.5"></circle><path d="M15.4 15.4 20 20"></path></svg>
+            <span style="font-size:17px;color:#9A93C4">Search clips</span>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:8px">
+            <span style="padding:0 16px;font-size:11px;font-weight:600;letter-spacing:.16em;text-transform:uppercase;color:#9A93C4">Today</span>
+            <div style="background:#1C1730;border-radius:22px;padding:0 14px">
+              <div style="height:68px;display:flex;align-items:center;gap:12px">
+                <img src="https://upload.wikimedia.org/wikipedia/commons/9/92/Kabukicho_red_gate_and_colorful_neon_street_signs_at_night%2C_Shinjuku%2C_Tokyo%2C_Japan.jpg" alt="" style="flex:none;width:64px;height:36px;border-radius:8px;object-fit:cover;display:block">
+                <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:2px"><span style="font-size:17px">Sifu</span><span style="display:flex;align-items:center;gap:6px;font-size:13px;color:#9A93C4"><i style="width:6px;height:6px;border-radius:50%;background:#F0C36A"></i>Recording</span></div>
+                <span style="font-size:15px;font-weight:500;color:#F0C36A;font-variant-numeric:tabular-nums lining-nums">{{ recClock }}</span>
+              </div>
+              <div style="height:68px;display:flex;align-items:center;gap:12px;border-top:.5px solid rgba(245,243,255,.09)">
+                <img src="https://upload.wikimedia.org/wikipedia/commons/9/9e/Neon-street-in-Tokyo-Japan.jpg" alt="" style="flex:none;width:64px;height:36px;border-radius:8px;object-fit:cover;display:block">
+                <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:2px"><span style="font-size:17px">Sifu</span><span style="display:flex;align-items:center;gap:6px;font-size:13px;color:#9A93C4"><i style="width:6px;height:6px;border-radius:50%;background:#E0A85C"></i>Offloading</span></div>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#E0A85C" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M6.5 10.5 12 5l5.5 5.5"></path></svg>
+              </div>
+              <div style="height:68px;display:flex;align-items:center;gap:12px;border-top:.5px solid rgba(245,243,255,.09)">
+                <img src="https://upload.wikimedia.org/wikipedia/commons/8/89/Tropical_City_Streets_at_Night.jpg" alt="" style="flex:none;width:64px;height:36px;border-radius:8px;object-fit:cover;display:block">
+                <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:2px"><span style="font-size:17px">Sifu</span><span style="display:flex;align-items:center;gap:6px;font-size:13px;color:#9A93C4"><i style="width:6px;height:6px;border-radius:50%;background:#3EBEB0"></i>On the NAS</span></div>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#3EBEB0" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5 9.8 17 19 7"></path></svg>
+              </div>
+            </div>
+          </div>
+        </div>
+        <dc-import name="NM2Chrome" tab="clips" style="position:absolute;inset:0" hint-size="402px,874px"></dc-import>
+      </div>
+    </div>
+  </div>
+
+  <div style="display:flex;flex-direction:column;gap:16px;flex:none">
+    <div style="display:flex;align-items:center;gap:10px;height:32px"><span style="font-size:11px;font-weight:600;letter-spacing:.16em;color:#9A93C4;font-variant-numeric:tabular-nums">04</span><span style="font-size:15px;font-weight:500">Remote</span></div>
+    <div style="padding:10px;border-radius:66px;background:#0D0B17;box-shadow:inset 0 0 0 1.5px #221D36">
+      <div data-screen-label="04 Remote" style="position:relative;width:402px;height:874px;overflow:hidden;border-radius:56px;background:#07060E">
+        <div aria-hidden="true" style="position:absolute;inset:-48px;overflow:hidden"><div style="width:100%;height:100%;display:block;transform:scale(1.2);animation:nm2Drift 40s ease-in-out infinite alternate;animation-play-state:{{ drift }};background:radial-gradient(60% 45% at 8% 4%, rgba(139,124,246,.55) 0%, rgba(139,124,246,0) 70%),radial-gradient(55% 40% at 100% 38%, rgba(74,58,170,.5) 0%, rgba(74,58,170,0) 70%),radial-gradient(70% 45% at 0% 100%, rgba(43,179,163,.22) 0%, rgba(43,179,163,0) 70%),radial-gradient(50% 35% at 85% 96%, rgba(201,120,220,.18) 0%, rgba(201,120,220,0) 70%),#0B0916"></div><div style="position:absolute;inset:0;opacity:.07;mix-blend-mode:overlay;background-image:url(&quot;data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E&quot;)"></div></div>
+        <div aria-hidden="true" style="position:absolute;inset:0;background:rgba(7,6,14,.18)"></div>
+        <div style="position:absolute;top:100px;left:16px;right:16px;display:flex;flex-direction:column;gap:22px">
+          <span style="padding:0 4px;font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display',system-ui,sans-serif;font-size:34px;line-height:41px;font-weight:700;letter-spacing:-.01em">Remote</span>
+          <div style="display:flex;flex-direction:column;align-items:center;gap:16px">
+            <div style="position:relative;width:184px;height:184px;border-radius:50%;overflow:hidden;box-shadow:inset 0 0 0 1px rgba(245,243,255,.14)">
+              <img src="https://upload.wikimedia.org/wikipedia/commons/9/9e/Chicago%2C_Illinois_-_city_at_night_in_the_rain-.jpg" alt="Chicago at night in the rain" style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:block">
+              <div style="position:absolute;inset:0;background:rgba(7,6,14,.62);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;text-align:center">
+                <span style="font-size:20px;font-weight:600">Studio PC</span>
+                <span style="font-size:15px;color:#C9C4DC">is awake</span>
+              </div>
+              <div style="position:absolute;inset:0;border-radius:50%;box-shadow:inset 0 0 0 1px rgba(245,243,255,.14)"></div>
+            </div>
+            <span style="font-size:15px;line-height:20px;color:#9A93C4;font-variant-numeric:tabular-nums;text-align:center">Moonlight opens at 1080p60 over Tailscale.</span>
+            <div style="align-self:stretch;height:50px;border-radius:25px;display:flex;align-items:center;justify-content:center;gap:8px;background:#1C1730;box-shadow:inset 0 0 0 1px rgba(245,243,255,.14);font-size:17px;font-weight:600;cursor:pointer" style-active="background:#2A2442">
+              <svg width="15" height="17" viewBox="0 0 20 22"><path d="M4 2.6v16.8a1.2 1.2 0 0 0 1.8 1l13-8.4a1.2 1.2 0 0 0 0-2L5.8 1.6A1.2 1.2 0 0 0 4 2.6z" fill="#F5F3FF"></path></svg>Open Moonlight
+            </div>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:8px">
+            <span style="padding:0 16px;font-size:11px;font-weight:600;letter-spacing:.16em;text-transform:uppercase;color:#9A93C4">Tailscale peers</span>
+            <div style="background:#1C1730;border-radius:22px;padding:0 16px">
+              <div style="height:46px;display:flex;align-items:center;gap:10px"><i style="width:7px;height:7px;border-radius:50%;background:#9A93C4"></i><span style="flex:1;font-size:15px">studio-pc</span><span style="font-size:13px;color:#9A93C4">—</span></div>
+              <div style="height:46px;display:flex;align-items:center;gap:10px;border-top:.5px solid rgba(245,243,255,.09)"><i style="width:7px;height:7px;border-radius:50%;background:#3EBEB0"></i><span style="flex:1;font-size:15px">nas-vault</span><span style="font-size:13px;color:#9A93C4;font-variant-numeric:tabular-nums">7 ms</span></div>
+            </div>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:8px">
+            <span style="padding:0 16px;font-size:11px;font-weight:600;letter-spacing:.16em;text-transform:uppercase;color:#9A93C4">NAS offload</span>
+            <div style="background:#1C1730;border-radius:22px;padding:16px;display:flex;flex-direction:column;gap:12px">
+              <span style="display:flex;align-items:center;gap:8px;font-size:15px;line-height:20px"><i style="width:7px;height:7px;border-radius:50%;background:#E0A85C"></i>Offloading one Sifu clip to nas-vault</span>
+              <div style="position:relative;height:2px;background:linear-gradient(90deg, transparent, rgba(245,243,255,.14) 14%, rgba(245,243,255,.14) 86%, transparent)"><span style="position:absolute;left:0;top:0;bottom:0;width:46%;background:linear-gradient(90deg, transparent, #E0A85C 30%)"></span></div>
+            </div>
+          </div>
+        </div>
+        <dc-import name="NM2Chrome" tab="remote" style="position:absolute;inset:0" hint-size="402px,874px"></dc-import>
+      </div>
+    </div>
+  </div>
+
+  <div style="display:flex;flex-direction:column;gap:16px;flex:none">
+    <div style="display:flex;align-items:center;gap:10px;height:32px"><span style="font-size:11px;font-weight:600;letter-spacing:.16em;color:#9A93C4;font-variant-numeric:tabular-nums">05</span><span style="font-size:15px;font-weight:500">Lock Screen · Live Activity</span></div>
+    <div style="padding:10px;border-radius:66px;background:#0D0B17;box-shadow:inset 0 0 0 1.5px #221D36">
+      <div data-screen-label="05 Lock Screen" style="position:relative;width:402px;height:874px;overflow:hidden;border-radius:56px;background:#07060E">
+        <img src="https://upload.wikimedia.org/wikipedia/commons/9/9e/Chicago%2C_Illinois_-_city_at_night_in_the_rain-.jpg" alt="" aria-hidden="true" style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:block">
+        <div aria-hidden="true" style="position:absolute;inset:0;background:rgba(7,6,14,.3)"></div>
+        <div style="position:absolute;top:84px;left:0;right:0;display:flex;flex-direction:column;align-items:center">
+          <span style="font-size:20px;font-weight:600;color:#F5F3FF">Sunday 15 November</span>
+          <span style="font-family:-apple-system,BlinkMacSystemFont,'SF Pro Rounded','SF Pro Display',system-ui,sans-serif;font-size:104px;line-height:110px;font-weight:600;letter-spacing:-.02em;font-variant-numeric:tabular-nums;color:#F5F3FF">9:41</span>
+        </div>
+        <div style="position:absolute;left:12px;right:12px;bottom:110px;border-radius:26px;padding:16px;display:flex;flex-direction:column;gap:12px;background:#2A2442">
+          <div style="display:flex;align-items:center;gap:8px">
+            <svg width="20" height="20" viewBox="-8 -8 80 80"><ellipse cx="32" cy="32" rx="29.44" ry="17.66" fill="none" stroke="#8B7CF6" stroke-width="5" transform="rotate(-22 32 32)"></ellipse><path d="M53.76 32 37.23 37.23 32 53.76 26.77 37.23 10.24 32 26.77 26.77 32 10.24 37.23 26.77Z" fill="#F5F3FF"></path></svg>
+            <span style="flex:1;font-size:13px;font-weight:600;color:#9A93C4">Nebula is recording</span>
+            <span style="display:inline-flex;align-items:center;gap:5px;height:20px;padding:0 8px;border-radius:10px;box-shadow:inset 0 0 0 1px rgba(245,243,255,.14)"><i style="width:5px;height:5px;border-radius:50%;background:#F0C36A"></i><span style="font-size:10px;font-weight:600;letter-spacing:.16em;color:#F0C36A">REC</span></span>
+          </div>
+          <div style="display:flex;align-items:flex-end;justify-content:space-between;gap:12px">
+            <div style="display:flex;flex-direction:column;gap:2px">
+              <span style="font-size:20px;font-weight:600">Sifu</span>
+              <span style="font-size:13px;color:#9A93C4;font-variant-numeric:tabular-nums">Gameplay · 1080p60</span>
+            </div>
+            <span style="font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display',system-ui,sans-serif;font-size:34px;line-height:38px;font-weight:500;color:#F0C36A;font-variant-numeric:tabular-nums lining-nums">{{ recClock }}</span>
+          </div>
+          <div style="height:44px;border-radius:22px;display:flex;align-items:center;justify-content:center;gap:8px;background:#FF5C7A;color:#07060E;font-size:15px;font-weight:600"><i style="width:11px;height:11px;border-radius:3px;background:#07060E"></i>Stop</div>
+        </div>
+        <dc-import name="NM2Chrome" tab="none" style="position:absolute;inset:0" hint-size="402px,874px"></dc-import>
+      </div>
+    </div>
+  </div>
+
+  <div style="display:flex;flex-direction:column;gap:16px;flex:none;padding-left:40px;box-shadow:inset 1px 0 0 rgba(245,243,255,.09)">
+    <div style="display:flex;align-items:center;gap:10px;height:32px"><span style="font-size:11px;font-weight:600;letter-spacing:.16em;color:#9A93C4;font-variant-numeric:tabular-nums">06</span><span style="font-size:15px;font-weight:500">Reduce Motion · Now recording</span></div>
+    <div style="padding:10px;border-radius:66px;background:#0D0B17;box-shadow:inset 0 0 0 1.5px #221D36">
+      <div data-screen-label="06 Reduce Motion" style="position:relative;width:402px;height:874px;overflow:hidden;border-radius:56px;background:#07060E">
+        <div aria-hidden="true" style="position:absolute;inset:-48px;overflow:hidden"><div style="width:100%;height:100%;display:block;transform:scale(1.2);background:radial-gradient(60% 45% at 8% 4%, rgba(139,124,246,.55) 0%, rgba(139,124,246,0) 70%),radial-gradient(55% 40% at 100% 38%, rgba(74,58,170,.5) 0%, rgba(74,58,170,0) 70%),radial-gradient(70% 45% at 0% 100%, rgba(43,179,163,.22) 0%, rgba(43,179,163,0) 70%),radial-gradient(50% 35% at 85% 96%, rgba(201,120,220,.18) 0%, rgba(201,120,220,0) 70%),#0B0916"></div><div style="position:absolute;inset:0;opacity:.07;mix-blend-mode:overlay;background-image:url(&quot;data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E&quot;)"></div></div>
+        <div aria-hidden="true" style="position:absolute;inset:0;background:rgba(7,6,14,.18)"></div>
+        <span style="position:absolute;top:100px;left:20px;font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display',system-ui,sans-serif;font-size:34px;line-height:41px;font-weight:700;letter-spacing:-.01em">Now</span>
+        <div style="position:absolute;top:160px;left:16px;right:16px;display:flex;flex-direction:column;gap:24px">
+          <div style="position:relative;border-radius:28px;padding:3px;background:rgba(16,13,28,.72);backdrop-filter:blur(6px) saturate(140%);-webkit-backdrop-filter:blur(6px) saturate(140%);box-shadow:inset 0 0 0 1px rgba(245,243,255,.14)">
+            <canvas ref="{{ cRM }}" aria-hidden="true" style="position:absolute;left:-24px;top:-24px;width:calc(100% + 48px);height:calc(100% + 48px);pointer-events:none"></canvas>
+            <div style="position:relative;border-radius:25px;box-shadow:inset 0 0 0 1px rgba(245,243,255,.06);padding:17px;display:flex;flex-direction:column;gap:14px">
+              <div style="display:flex;align-items:center;gap:10px">
+                <svg width="28" height="28" viewBox="-8 -8 80 80"><ellipse cx="32" cy="32" rx="29.44" ry="17.66" fill="none" stroke="#8B7CF6" stroke-width="5" transform="rotate(-22 32 32)"></ellipse><path d="M53.76 32 37.23 37.23 32 53.76 26.77 37.23 10.24 32 26.77 26.77 32 10.24 37.23 26.77Z" fill="#F5F3FF"></path></svg>
+                <span style="flex:1;font-size:13px;font-weight:600;color:#9A93C4">Nebula is recording</span>
+                <span style="display:inline-flex;align-items:center;gap:7px;height:26px;padding:0 11px;border-radius:13px;box-shadow:inset 0 0 0 1px rgba(245,243,255,.14)"><i style="width:7px;height:7px;border-radius:50%;background:#F0C36A"></i><span style="font-size:11px;font-weight:600;letter-spacing:.16em;color:#F0C36A">REC</span></span>
+              </div>
+              <div style="display:flex;flex-direction:column;gap:2px">
+                <span style="font-size:22px;font-weight:600;letter-spacing:-.015em">Sifu</span>
+                <span style="font-size:15px;color:#9A93C4;font-variant-numeric:tabular-nums">Gameplay · 1080p60</span>
+              </div>
+              <span style="font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display',system-ui,sans-serif;font-size:56px;line-height:60px;font-weight:500;letter-spacing:-.02em;font-variant-numeric:tabular-nums lining-nums;color:#F0C36A">{{ recClock }}</span>
+            </div>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:8px">
+            <span style="padding:0 16px;font-size:11px;font-weight:600;letter-spacing:.16em;text-transform:uppercase;color:#9A93C4">Activity</span>
+            <div style="background:#1C1730;border-radius:22px;padding:0 16px">
+              <div style="height:47px;display:flex;align-items:center;justify-content:space-between;gap:12px"><span style="font-size:15px">Recording started · Sifu</span><span style="font-size:13px;color:#9A93C4;font-variant-numeric:tabular-nums">8:29</span></div>
+              <div style="height:47px;display:flex;align-items:center;justify-content:space-between;gap:12px;border-top:.5px solid rgba(245,243,255,.09)"><span style="font-size:15px">Scene set to Gameplay</span><span style="font-size:13px;color:#9A93C4;font-variant-numeric:tabular-nums">8:29</span></div>
+              <div style="height:47px;display:flex;align-items:center;justify-content:space-between;gap:12px;border-top:.5px solid rgba(245,243,255,.09)"><span style="font-size:15px">Linked to Studio PC</span><span style="font-size:13px;color:#9A93C4">—</span></div>
+            </div>
+          </div>
+        </div>
+        <div style="position:absolute;left:0;right:0;bottom:118px;display:flex;justify-content:center;align-items:flex-end;gap:44px">
+          <div style="display:flex;flex-direction:column;align-items:center;gap:8px">
+            <div style="width:56px;height:56px;border-radius:28px;display:grid;place-items:center;background:#1C1730"><svg width="18" height="20" viewBox="0 0 18 20"><rect x="2" y="1" width="4.6" height="18" rx="1.6" fill="#F5F3FF"></rect><rect x="11.4" y="1" width="4.6" height="18" rx="1.6" fill="#F5F3FF"></rect></svg></div>
+            <span style="font-size:12px;font-weight:500;color:#9A93C4">Pause</span>
+          </div>
+          <div style="display:flex;flex-direction:column;align-items:center;gap:8px">
+            <div style="width:64px;height:64px;border-radius:32px;display:grid;place-items:center;background:#FF5C7A"><span style="width:20px;height:20px;border-radius:5px;background:#07060E"></span></div>
+            <span style="font-size:12px;font-weight:500;color:#9A93C4">Stop</span>
+          </div>
+        </div>
+        <dc-import name="NM2Chrome" tab="now" style="position:absolute;inset:0" hint-size="402px,874px"></dc-import>
+      </div>
+    </div>
+    <span style="max-width:402px;font-size:13px;line-height:19px;color:#9A93C4;text-wrap:pretty">Photograph pinned. Specks frozen where they sit. The clock still reads.</span>
+  </div>
+
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;motion&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:true,&quot;tsType&quot;:&quot;boolean&quot;}}">
+class Component extends DCLogic {
+  state = { s: 0 };
+  cRec = React.createRef(); cPau = React.createRef(); cRM = React.createRef();
+  componentDidMount() {
+    this.t0 = performance.now();
+    this.burstAt = this.t0 + 700;
+    this.iv = setInterval(() => { const s = Math.floor((performance.now() - this.t0) / 1000); if (s !== this.state.s) this.setState({ s }); }, 250);
+    const loop = now => { this.draw(now); this.raf = requestAnimationFrame(loop); };
+    this.raf = requestAnimationFrame(loop);
+  }
+  componentWillUnmount() { clearInterval(this.iv); cancelAnimationFrame(this.raf); }
+  rnd(i, k) { const x = Math.sin(i * 127.1 + k * 311.7) * 43758.5453; return x - Math.floor(x); }
+  ctx(c) {
+    if (!c) return null;
+    const w = c.clientWidth, h = c.clientHeight, d = window.devicePixelRatio || 1;
+    if (!w || !h) return null;
+    if (c.width !== Math.round(w * d)) { c.width = Math.round(w * d); c.height = Math.round(h * d); }
+    const x = c.getContext('2d'); x.setTransform(d, 0, 0, d, 0, 0); x.clearRect(0, 0, w, h);
+    return [x, w, h];
+  }
+  drift(i, t, w, h, speed) {
+    const v = (9 + this.rnd(i, 1) * 9) * speed, u = ((this.rnd(i, 2) * w + v * t) % w + w) % w;
+    const y = 30 + this.rnd(i, 3) * (h - 60) + Math.sin(t * .5 * speed + i * 1.7) * 3;
+    return [u, y, Math.min(1, Math.min(u, w - u) / 28)];
+  }
+  dot(x, px, py, r, a) {
+    if (!(a > 0)) return;
+    x.fillStyle = '#E4DEFF';
+    x.globalAlpha = a * .18; x.beginPath(); x.arc(px, py, r * 2.6, 0, 6.2832); x.fill();
+    x.globalAlpha = a * .85; x.beginPath(); x.arc(px, py, r, 0, 6.2832); x.fill();
+    x.globalAlpha = 1;
+  }
+  paint(c, t, speed, burst) {
+    const k = this.ctx(c); if (!k) return;
+    const [x, w, h] = k, E = p => 1 - Math.pow(1 - Math.max(0, Math.min(1, p)), 4), mx = 58, my = 58;
+    for (let i = 0; i < 7; i++) {
+      const r = 1.2 + this.rnd(i, 5) * .9, a0 = .55 + this.rnd(i, 4) * .35;
+      let [px, py, f] = this.drift(i, t, w, h, speed);
+      if (burst != null && burst >= 0 && burst < 2.6) {
+        const ang = i * 6.2832 / 7 + .35, R = 110 + this.rnd(i, 6) * 80;
+        const bx = mx + Math.cos(ang) * R, by = my + Math.sin(ang) * R * .62;
+        if (burst < 1.1) { const e = E(burst / 1.1); px = mx + (bx - mx) * e; py = my + (by - my) * e; f = 1; }
+        else { const q = E((burst - 1.1) / 1.5); px = bx + (px - bx) * q; py = by + (py - by) * q; f = 1 + (f - 1) * q; }
+      }
+      this.dot(x, px, py, r, a0 * f);
+    }
+  }
+  draw(now) {
+    const moving = this.props.motion ?? true, t = moving ? (now - this.t0) / 1000 : 14;
+    const b = moving ? (now - this.burstAt) / 1000 : null;
+    this.paint(this.cRec.current, t, 1, b);
+    this.paint(this.cPau.current, moving ? t : 14, .4, null);
+    this.paint(this.cRM.current, 14, 1, null);
+  }
+  renderVals() {
+    const p = n => String(n).padStart(2, '0'), s = 4324 + this.state.s;
+    return {
+      cRec: this.cRec, cPau: this.cPau, cRM: this.cRM,
+      drift: (this.props.motion ?? true) ? 'running' : 'paused',
+      recClock: `${p(Math.floor(s / 3600))}:${p(Math.floor(s / 60) % 60)}:${p(s % 60)}`,
+      replay: () => { this.burstAt = performance.now(); }
+    };
+  }
+}
+</script>
+</body>
+</html>

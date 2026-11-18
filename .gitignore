@@ -55,6 +55,11 @@ tools/_toast_demo/
 tools/_toast_demo_local_cmp/
 tools/_toast_demo_spike_capsule/
 
+# Generated Xcode project (ios/project.yml is the source) and device build output.
+ios/Nebula.xcodeproj/
+ios/**/*.xcarchive
+ios/DerivedData/
+
 # Expo / React Native mobile companion (mobile/)
 mobile/node_modules/
 mobile/.expo/

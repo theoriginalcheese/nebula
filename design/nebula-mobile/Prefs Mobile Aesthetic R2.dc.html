@@ -1,0 +1,415 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<meta name="design_doc_mode" content="canvas">
+<style>
+body { margin:0; background:#08070F; }
+a { color:#B9AEF9; text-decoration:none; }
+a:hover { color:#D6CEFF; }
+</style>
+<script src="./nm-space.js"></script>
+</helmet>
+<section id="r2" style="min-height:100vh;background:#08070F;color:#F5F3FF;font-family:-apple-system,BlinkMacSystemFont,'SF Pro Text',system-ui,sans-serif;-webkit-font-smoothing:antialiased;padding:96px 96px 160px;box-sizing:border-box;width:max-content;display:flex;flex-direction:column;gap:120px">
+
+<header style="display:flex;flex-direction:column;gap:16px;max-width:860px">
+  <span style="align-self:flex-start;height:24px;padding:0 12px;border-radius:12px;display:flex;align-items:center;font-size:11px;font-weight:600;letter-spacing:.2em;text-transform:uppercase;color:#B9AEF9;box-shadow:inset 0 0 0 1px rgba(185,174,249,.25)">Nebula Mobile · Aesthetic round 2</span>
+  <h1 style="margin:0;font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display',system-ui,sans-serif;font-size:56px;line-height:60px;font-weight:600;letter-spacing:-.035em">Planets, and a fuller bento.</h1>
+  <p style="margin:0;font-size:17px;line-height:26px;color:#9A93C4;text-wrap:pretty;max-width:680px">From your round 1 notes: Deep field and Eclipse are merged — stars, the diagonal band, and a real rotating planet on the horizon. The dot field now follows the desktop dial and moves properly. Layouts keep the bento info and the clip stack; Scene is swapped for live data.</p>
+  <span style="font-size:15px;font-variant-numeric:tabular-nums">Picks: <span style="color:#FFE8BC">{{ picksText }}</span></span>
+  <div style="display:flex;flex-direction:column;gap:8px;max-width:640px;margin-top:8px">
+    <span style="font-size:11px;font-weight:600;letter-spacing:.2em;text-transform:uppercase;color:#736BA4">Overall notes for Claude</span>
+    <textarea value="{{ overall }}" onChange="{{ onOverall }}" placeholder="Anything that applies across the board — mixes, dislikes, what to try next…" rows="3" style="width:100%;box-sizing:border-box;resize:vertical;min-height:96px;padding:12px 14px;border:0;border-radius:16px;background:#120F20;box-shadow:inset 0 0 0 1px rgba(245,243,255,.08);color:#F5F3FF;font:inherit;font-size:14px;line-height:20px;outline:none" style-focus="box-shadow:inset 0 0 0 1px rgba(185,174,249,.6)"></textarea>
+    <span style="font-size:13px;color:#736BA4">Pick as many as you like. Notes save as you type — tell me in chat when you're done.</span>
+  </div>
+</header>
+
+<div style="display:flex;flex-direction:column;gap:40px">
+  <div style="display:flex;flex-direction:column;gap:8px"><span style="font-size:11px;font-weight:600;letter-spacing:.2em;text-transform:uppercase;color:#736BA4">A · Background</span><span style="font-size:28px;font-weight:600;letter-spacing:-.02em">Stars, planets, pixels</span><span style="font-size:15px;color:#9A93C4">Same Now screen on each. Planets are lit per-pixel and turn slowly. Pick any.</span></div>
+  <div style="display:grid;grid-template-columns:repeat(3,422px);gap:72px 56px">
+    <sc-for list="{{ bgs }}" as="b" hint-placeholder-count="5">
+      <div id="{{ b.id }}" style="display:flex;flex-direction:column;gap:18px;width:422px">
+        <div style="display:flex;align-items:center;gap:10px"><span style="height:24px;padding:0 9px;border-radius:12px;display:grid;place-items:center;background:#241E3B;font-size:12px;font-weight:700;color:#C4B8FF">{{ b.id }}</span><span style="font-size:17px;font-weight:600">{{ b.name }}</span></div>
+        <div style="padding:10px;border-radius:66px;background:#0D0B17;box-shadow:inset 0 0 0 1.5px #221D36">
+          <div style="position:relative;width:402px;height:874px;overflow:hidden;border-radius:56px;background:#06050C">
+            <canvas ref="{{ b.ref }}" aria-hidden="true" style="position:absolute;inset:0;width:100%;height:100%"></canvas>
+            <div style="position:absolute;top:0;left:0;right:0;height:54px;display:flex;align-items:center;justify-content:space-between;padding:0 34px 0 52px;box-sizing:border-box;font-size:17px;font-weight:600"><span>9:41</span><span style="width:27px;height:13px;border-radius:4px;box-shadow:inset 0 0 0 1px rgba(245,243,255,.4);padding:2px;box-sizing:border-box;display:flex"><i style="flex:1;border-radius:2px;background:#F5F3FF"></i></span></div>
+            <div style="position:absolute;top:11px;left:50%;transform:translateX(-50%);width:126px;height:37px;border-radius:19px;background:#000"></div>
+            <span style="position:absolute;top:100px;left:20px;font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display',system-ui,sans-serif;font-size:34px;line-height:41px;font-weight:700;letter-spacing:-.01em">Now</span>
+            <div style="position:absolute;top:160px;left:16px;right:16px;display:flex;flex-direction:column;gap:24px">
+              <div style="border-radius:28px;padding:20px;display:flex;flex-direction:column;gap:14px;background:rgba(30,26,48,.30);backdrop-filter:blur(20px) saturate(180%);-webkit-backdrop-filter:blur(20px) saturate(180%);box-shadow:inset 0 1px 0 rgba(255,255,255,.22), inset 0 0 0 1px rgba(255,255,255,.07)">
+                <div style="display:flex;align-items:center;justify-content:space-between"><span style="display:inline-flex;align-items:center;gap:7px;height:26px;padding:0 11px;border-radius:13px;background:rgba(255,232,188,.10);box-shadow:inset 0 0 0 .5px rgba(255,232,188,.32)"><i style="width:7px;height:7px;border-radius:50%;background:#FFE8BC"></i><span style="font-size:11px;font-weight:600;letter-spacing:.16em;color:#FFE8BC">REC</span></span><span style="font-size:13px;color:#C9C4E6">1080p60 · NVENC</span></div>
+                <div style="display:flex;flex-direction:column;gap:2px"><span style="font-size:22px;font-weight:600">Sifu</span><span style="font-size:15px;color:#C9C4E6">Gameplay</span></div>
+                <span style="font-size:56px;line-height:60px;font-weight:500;letter-spacing:-.02em;color:#FFE8BC;font-variant-numeric:tabular-nums lining-nums">{{ clock }}</span>
+                <div style="display:flex;gap:8px">
+                  <span style="flex:1;height:46px;border-radius:23px;display:flex;align-items:center;justify-content:center;gap:8px;background:rgba(245,243,255,.12);box-shadow:inset 0 1px 0 rgba(255,255,255,.18);font-size:15px;font-weight:600"><svg width="12" height="14" viewBox="0 0 18 20"><rect x="2" y="1" width="4.6" height="18" rx="1.6" fill="#F5F3FF"></rect><rect x="11.4" y="1" width="4.6" height="18" rx="1.6" fill="#F5F3FF"></rect></svg>Pause</span>
+                  <span style="flex:1;height:46px;border-radius:23px;display:flex;align-items:center;justify-content:center;gap:8px;background:#FF5C7A;color:#100D1C;font-size:15px;font-weight:600"><i style="width:11px;height:11px;border-radius:3px;background:#100D1C"></i>Stop</span>
+                </div>
+              </div>
+              <div style="display:flex;flex-direction:column;gap:8px">
+                <span style="padding:0 16px;font-size:11px;font-weight:600;letter-spacing:.16em;text-transform:uppercase;color:#C9C4E6">Activity</span>
+                <div style="background:#1C1730;border-radius:22px;padding:0 16px">
+                  <div style="height:47px;display:flex;align-items:center;justify-content:space-between"><span style="font-size:15px">Recording started · Sifu</span><span style="font-size:13px;color:#9A93C4">8:29</span></div>
+                  <div style="height:47px;display:flex;align-items:center;justify-content:space-between;border-top:.5px solid rgba(245,243,255,.09)"><span style="font-size:15px">Highlight marked</span><span style="font-size:13px;color:#9A93C4">8:41</span></div>
+                  <div style="height:47px;display:flex;align-items:center;justify-content:space-between;border-top:.5px solid rgba(245,243,255,.09)"><span style="font-size:15px">Linked to Studio PC</span><span style="font-size:13px;color:#9A93C4">8:12</span></div>
+                </div>
+              </div>
+            </div>
+            <div style="position:absolute;left:21px;right:21px;bottom:28px;height:62px;border-radius:31px;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));align-items:center;padding:0 6px;box-sizing:border-box;background:rgba(30,26,48,.30);backdrop-filter:blur(14px) saturate(190%) brightness(.92);-webkit-backdrop-filter:blur(14px) saturate(190%) brightness(.92);box-shadow:inset 0 1px 0 rgba(255,255,255,.30), inset 0 0 0 1px rgba(255,255,255,.07), inset 0 0 0 .5px rgba(0,0,0,.65), 0 12px 34px rgba(0,0,0,.5)">
+              <sc-for list="{{ tabs }}" as="tb" hint-placeholder-count="4"><div style="display:flex;flex-direction:column;align-items:center;gap:2px;color:{{ tb.ic }}"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="{{ tb.d }}"></path></svg><span style="font-size:10px;font-weight:600;color:{{ tb.lc }}">{{ tb.name }}</span></div></sc-for>
+            </div>
+          </div>
+        </div>
+        <p style="margin:0;font-size:14px;line-height:21px;color:#9A93C4;text-wrap:pretty">{{ b.note }}</p>
+        <div style="display:flex;align-items:center;gap:10px">
+          <span onClick="{{ b.pk.on }}" style="height:36px;padding:0 16px;border-radius:18px;display:flex;align-items:center;font-size:14px;font-weight:600;cursor:pointer;background:{{ b.pk.bg }};box-shadow:inset 0 0 0 1px {{ b.pk.ring }};color:{{ b.pk.fg }}">{{ b.pk.label }}</span>
+          <sc-if value="{{ b.reroll }}" hint-placeholder-val="{{ false }}">
+            <span onClick="{{ reroll }}" style="height:36px;padding:0 6px 0 16px;border-radius:18px;display:flex;align-items:center;gap:10px;font-size:14px;font-weight:600;cursor:pointer;background:#181428;box-shadow:inset 0 0 0 1px rgba(245,243,255,.10)" style-active="transform:scale(.98)">Reroll<span style="height:26px;padding:0 10px;border-radius:13px;display:flex;align-items:center;font-size:12px;font-weight:600;color:#C4B8FF;background:rgba(139,124,246,.16)">{{ planetName }}</span></span>
+          </sc-if>
+        </div>
+        <textarea value="{{ b.fb }}" onChange="{{ b.onFb }}" placeholder="Notes on this background…" rows="2" style="width:100%;box-sizing:border-box;resize:vertical;min-height:56px;padding:12px 14px;border:0;border-radius:16px;background:#120F20;box-shadow:inset 0 0 0 1px rgba(245,243,255,.08);color:#F5F3FF;font:inherit;font-size:14px;line-height:20px;outline:none" style-focus="box-shadow:inset 0 0 0 1px rgba(185,174,249,.6)"></textarea>
+      </div>
+    </sc-for>
+  </div>
+</div>
+
+<div style="display:flex;flex-direction:column;gap:40px">
+  <div style="display:flex;flex-direction:column;gap:8px"><span style="font-size:11px;font-weight:600;letter-spacing:.2em;text-transform:uppercase;color:#736BA4">B · Layout &amp; design</span><span style="font-size:28px;font-weight:600;letter-spacing:-.02em">Bento info, clip stack, live tiles</span><span style="font-size:15px;color:#9A93C4">Showing on your latest background pick, <span style="color:#F5F3FF">{{ bgName }}</span>. The screen adapts to whether you’re playing. Pick any.</span>
+    <div style="margin-top:10px;align-self:flex-start;display:flex;gap:4px;padding:4px;border-radius:22px;background:#120F20;box-shadow:inset 0 0 0 1px rgba(245,243,255,.08)">
+      <sc-for list="{{ modes }}" as="m" hint-placeholder-count="3"><span onClick="{{ m.on }}" style="height:36px;padding:0 16px;border-radius:18px;display:flex;align-items:center;gap:8px;font-size:14px;font-weight:600;cursor:pointer;transition:background .4s cubic-bezier(.32,.72,0,1);background:{{ m.bg }};color:{{ m.fg }}"><i style="width:7px;height:7px;border-radius:50%;background:{{ m.dot }}"></i>{{ m.label }}</span></sc-for>
+    </div></div>
+  <div style="display:flex;gap:56px;align-items:flex-start">
+
+    <div id="2f" style="display:flex;flex-direction:column;gap:18px;width:422px">
+      <div style="display:flex;align-items:center;gap:10px"><span style="height:24px;padding:0 9px;border-radius:12px;display:grid;place-items:center;background:#241E3B;font-size:12px;font-weight:700;color:#C4B8FF">2f</span><span style="font-size:17px;font-weight:600">Bento + stack</span></div>
+      <div style="padding:10px;border-radius:66px;background:#0D0B17;box-shadow:inset 0 0 0 1.5px #221D36">
+        <div data-screen-label="2f Bento + stack" style="position:relative;width:402px;height:874px;overflow:hidden;border-radius:56px;background:#06050C">
+          <canvas ref="{{ r.lf }}" aria-hidden="true" style="position:absolute;inset:0;width:100%;height:100%"></canvas>
+          <div style="position:absolute;top:0;left:0;right:0;height:54px;display:flex;align-items:center;justify-content:space-between;padding:0 34px 0 52px;box-sizing:border-box;font-size:17px;font-weight:600"><span>9:41</span><span style="width:27px;height:13px;border-radius:4px;box-shadow:inset 0 0 0 1px rgba(245,243,255,.4);padding:2px;box-sizing:border-box;display:flex"><i style="flex:1;border-radius:2px;background:#F5F3FF"></i></span></div>
+          <div style="position:absolute;top:11px;left:50%;transform:translateX(-50%);width:126px;height:37px;border-radius:19px;background:#000"></div>
+          <span style="position:absolute;top:96px;left:20px;font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display',system-ui,sans-serif;font-size:34px;line-height:41px;font-weight:700;letter-spacing:-.01em">Now</span>
+          <div style="position:absolute;top:150px;left:14px;right:14px;display:flex;flex-direction:column;gap:12px">
+            <div style="padding:6px;border-radius:34px;background:rgba(245,243,255,.04);box-shadow:inset 0 0 0 1px rgba(245,243,255,.09)">
+              <sc-if value="{{ playing }}" hint-placeholder-val="{{ true }}"><div style="border-radius:28px;padding:18px;display:flex;flex-direction:column;gap:12px;background:rgba(16,13,28,.50);backdrop-filter:blur(20px) saturate(170%);-webkit-backdrop-filter:blur(20px) saturate(170%);box-shadow:inset 0 1px 1px rgba(255,255,255,.14)">
+                <div style="display:flex;align-items:center;justify-content:space-between"><span style="display:inline-flex;align-items:center;gap:7px;height:26px;padding:0 11px;border-radius:13px;background:rgba(255,232,188,.10);box-shadow:inset 0 0 0 .5px rgba(255,232,188,.32)"><i style="width:7px;height:7px;border-radius:50%;background:#FFE8BC"></i><span style="font-size:11px;font-weight:600;letter-spacing:.16em;color:#FFE8BC">REC</span></span><span style="font-size:13px;color:#C9C4E6">1080p60 · NVENC</span></div>
+                <div style="display:flex;align-items:flex-end;justify-content:space-between;gap:10px">
+                  <div style="display:flex;flex-direction:column;gap:2px;min-width:0"><span style="font-size:17px;font-weight:600">Sifu</span>
+                    <span style="display:flex;font-size:42px;line-height:46px;font-weight:500;letter-spacing:-.025em;color:#FFE8BC;font-variant-numeric:tabular-nums lining-nums"><sc-for list="{{ digits }}" as="d" hint-placeholder-count="8"><span style="display:inline-block;height:1em;overflow:hidden"><span style="display:flex;flex-direction:column;transform:translateY({{ d.y }});transition:transform .6s cubic-bezier(.32,.72,0,1)"><sc-for list="{{ d.col }}" as="ch"><span style="height:1em;line-height:1em">{{ ch }}</span></sc-for></span></span></sc-for></span>
+                  </div>
+                  <div style="display:flex;gap:8px;flex:none">
+                    <span style="width:48px;height:48px;border-radius:24px;display:grid;place-items:center;background:rgba(245,243,255,.10);box-shadow:inset 0 1px 0 rgba(255,255,255,.16)"><svg width="13" height="15" viewBox="0 0 18 20"><rect x="2" y="1" width="4.6" height="18" rx="1.6" fill="#F5F3FF"></rect><rect x="11.4" y="1" width="4.6" height="18" rx="1.6" fill="#F5F3FF"></rect></svg></span>
+                    <span style="width:48px;height:48px;border-radius:24px;display:grid;place-items:center;background:#FF5C7A"><i style="width:13px;height:13px;border-radius:3px;background:#100D1C"></i></span>
+                  </div>
+                </div>
+              </div></sc-if><sc-if value="{{ idle }}" hint-placeholder-val="{{ false }}"><div style="border-radius:28px;padding:18px;display:flex;flex-direction:column;gap:12px;background:rgba(16,13,28,.50);backdrop-filter:blur(20px) saturate(170%);-webkit-backdrop-filter:blur(20px) saturate(170%);box-shadow:inset 0 1px 1px rgba(255,255,255,.14)">
+                <div style="display:flex;align-items:center;justify-content:space-between"><span style="display:inline-flex;align-items:center;gap:7px;height:26px;padding:0 11px;border-radius:13px;background:rgba(245,243,255,.08);box-shadow:inset 0 0 0 .5px rgba(245,243,255,.18)"><i style="width:7px;height:7px;border-radius:50%;background:#9A93C4"></i><span style="font-size:11px;font-weight:600;letter-spacing:.16em;color:#C9C4E6">IDLE</span></span><span style="display:flex;align-items:center;gap:6px;font-size:13px;color:#3EBEB0"><i style="width:6px;height:6px;border-radius:50%;background:#3EBEB0"></i>Studio PC online</span></div>
+                <div style="display:flex;flex-direction:column;gap:3px"><span style="font-size:11px;font-weight:600;letter-spacing:.16em;text-transform:uppercase;color:#9A93C4">Last session · 8:12 pm</span><span style="font-size:22px;font-weight:600;letter-spacing:-.01em">Sifu <span style="color:#9A93C4;font-weight:500">· 1:12:04</span></span><span style="font-size:13px;color:#C9C4E6">3 highlights · 8.4 GB · on nas-vault</span></div>
+                <span style="height:46px;padding:0 4px 0 20px;border-radius:23px;display:flex;align-items:center;justify-content:space-between;background:rgba(255,92,122,.12);box-shadow:inset 0 0 0 1px rgba(255,92,122,.42);font-size:16px;font-weight:600;color:#FFC2CE;cursor:pointer" style-active="transform:scale(.98)">Start recording<span style="width:38px;height:38px;border-radius:19px;display:grid;place-items:center;background:#FF5C7A"><i style="width:12px;height:12px;border-radius:6px;background:#100D1C"></i></span></span>
+              </div></sc-if>
+            </div>
+            <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px">
+              <div style="padding:6px;border-radius:30px;background:rgba(245,243,255,.04);box-shadow:inset 0 0 0 1px rgba(245,243,255,.09)">
+                <div style="border-radius:24px;padding:14px 16px;background:#1C1730;box-shadow:inset 0 1px 1px rgba(255,255,255,.08);display:flex;align-items:center;gap:12px">
+                  <div style="position:relative;width:52px;height:52px;flex:none"><svg width="52" height="52" viewBox="0 0 52 52"><circle cx="26" cy="26" r="22" fill="none" stroke="rgba(245,243,255,.08)" stroke-width="4"></circle><circle cx="26" cy="26" r="22" fill="none" stroke="#8B7CF6" stroke-width="4" stroke-linecap="round" stroke-dasharray="85.7 138.2" transform="rotate(-90 26 26)"></circle></svg><span style="position:absolute;inset:0;display:grid;place-items:center;font-size:13px;font-weight:600;font-variant-numeric:tabular-nums">62%</span></div>
+                  <div style="display:flex;flex-direction:column;gap:2px;min-width:0"><span style="font-size:11px;font-weight:600;letter-spacing:.16em;text-transform:uppercase;color:#9A93C4">Storage</span><span style="font-size:15px;font-weight:600">212 GB</span><span style="font-size:12px;color:#9A93C4">≈ 4 days</span></div>
+                </div>
+              </div>
+              <div style="padding:6px;border-radius:30px;background:rgba(245,243,255,.04);box-shadow:inset 0 0 0 1px rgba(245,243,255,.09)">
+                <sc-if value="{{ playing }}" hint-placeholder-val="{{ true }}"><div style="border-radius:24px;padding:14px 16px 10px;background:#1C1730;box-shadow:inset 0 1px 1px rgba(255,255,255,.08);display:flex;flex-direction:column;gap:4px">
+                  <div style="display:flex;align-items:baseline;justify-content:space-between"><span style="font-size:11px;font-weight:600;letter-spacing:.16em;text-transform:uppercase;color:#9A93C4">Encoder</span><span style="font-size:12px;color:#3EBEB0">0 drops</span></div>
+                  <span style="font-size:17px;font-weight:600;font-variant-numeric:tabular-nums">{{ mbps }} <span style="font-size:12px;font-weight:500;color:#9A93C4">Mb/s</span></span>
+                  <svg width="100%" height="28" viewBox="0 0 140 28" preserveAspectRatio="none"><defs><linearGradient id="spf" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#8B7CF6" stop-opacity=".45"></stop><stop offset="1" stop-color="#8B7CF6" stop-opacity="0"></stop></linearGradient></defs><path d="{{ sparkArea }}" fill="url(#spf)"></path><polyline points="{{ spark }}" fill="none" stroke="#B9AEF9" stroke-width="1.5" stroke-linejoin="round"></polyline></svg>
+                </div></sc-if><sc-if value="{{ idle }}" hint-placeholder-val="{{ false }}"><div style="border-radius:24px;padding:14px 16px;background:#1C1730;box-shadow:inset 0 1px 1px rgba(255,255,255,.08);display:flex;flex-direction:column;gap:6px;height:100%;box-sizing:border-box">
+                  <div style="display:flex;align-items:baseline;justify-content:space-between"><span style="font-size:11px;font-weight:600;letter-spacing:.16em;text-transform:uppercase;color:#9A93C4">Offload</span><span style="font-size:12px;color:#E0A85C;font-variant-numeric:tabular-nums">{{ offPct }}</span></div>
+                  <span style="font-size:15px;font-weight:600">To nas-vault</span>
+                  <div style="height:5px;border-radius:3px;background:rgba(245,243,255,.06);overflow:hidden"><i style="display:block;height:100%;width:{{ offPct }};border-radius:3px;background:linear-gradient(90deg,#E0A85C,#F2D2A4);transition:width .9s cubic-bezier(.32,.72,0,1)"></i></div>
+                  <span style="font-size:12px;color:#9A93C4">2 clips · 3.4 GB left</span>
+                </div></sc-if>
+              </div>
+            </div>
+          
+          <div style="margin-top:6px;padding:0 6px;display:flex;align-items:baseline;justify-content:space-between"><span style="font-size:20px;font-weight:600;letter-spacing:-.01em">Recent clips</span><span style="font-size:15px;color:#B9AEF9">See all</span></div>
+          <div style="position:relative;height:228px">
+            <div style="position:absolute;top:0;left:0;right:0;height:180px;border-radius:26px;overflow:hidden;transform:scale(.84);transform-origin:50% 0;opacity:.45;box-shadow:inset 0 0 0 1px rgba(245,243,255,.1)"><img src="https://upload.wikimedia.org/wikipedia/commons/8/89/Tropical_City_Streets_at_Night.jpg" alt="" style="width:100%;height:100%;object-fit:cover;display:block"></div>
+            <div style="position:absolute;top:22px;left:0;right:0;height:180px;border-radius:26px;overflow:hidden;transform:scale(.92);transform-origin:50% 0;opacity:.72;box-shadow:0 -10px 30px rgba(0,0,0,.45)"><img src="https://upload.wikimedia.org/wikipedia/commons/9/9e/Neon-street-in-Tokyo-Japan.jpg" alt="" style="width:100%;height:100%;object-fit:cover;display:block"></div>
+            <div style="position:absolute;top:48px;left:0;right:0;height:180px;border-radius:26px;overflow:hidden;box-shadow:0 -12px 36px rgba(0,0,0,.55), inset 0 0 0 1px rgba(245,243,255,.12)">
+              <img src="https://upload.wikimedia.org/wikipedia/commons/9/92/Kabukicho_red_gate_and_colorful_neon_street_signs_at_night%2C_Shinjuku%2C_Tokyo%2C_Japan.jpg" alt="Sifu clip still" style="width:100%;height:100%;object-fit:cover;display:block">
+              <div style="position:absolute;inset:0;background:linear-gradient(180deg, rgba(7,6,14,0) 30%, rgba(7,6,14,.9) 100%)"></div>
+              <span style="position:absolute;top:12px;right:12px;height:26px;padding:0 10px;border-radius:13px;display:flex;align-items:center;font-size:12px;font-weight:600;font-variant-numeric:tabular-nums;background:rgba(16,13,28,.55);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px)">18:42</span>
+              <div style="position:absolute;left:16px;right:16px;bottom:14px;display:flex;flex-direction:column;gap:6px">
+                <span style="font-size:17px;font-weight:600">Sifu · boss fight</span>
+                <div style="display:flex;align-items:center;gap:12px;font-size:12px;color:#C9C4E6">
+                  <span style="display:flex;align-items:center;gap:5px;color:#3EBEB0"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5 9.8 17 19 7"></path></svg>nas-vault</span>
+                  <span style="display:flex;align-items:center;gap:5px"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="5" width="18" height="14" rx="2.5"></rect></svg>1080p60</span>
+                  <span style="display:flex;align-items:center;gap:5px"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 3l2.6 5.6 6 .7-4.5 4.1 1.2 6L12 16.4 6.7 19.4l1.2-6L3.4 9.3l6-.7z"></path></svg>2 marks</span>
+                </div>
+              </div>
+            </div>
+          </div>
+          </div>
+          <div style="position:absolute;left:21px;right:21px;bottom:28px;height:62px;border-radius:31px;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));align-items:center;padding:0 6px;box-sizing:border-box;background:rgba(30,26,48,.30);backdrop-filter:blur(14px) saturate(190%) brightness(.92);-webkit-backdrop-filter:blur(14px) saturate(190%) brightness(.92);box-shadow:inset 0 1px 0 rgba(255,255,255,.30), inset 0 0 0 1px rgba(255,255,255,.07), inset 0 0 0 .5px rgba(0,0,0,.65), 0 12px 34px rgba(0,0,0,.5)">
+            <sc-for list="{{ tabs }}" as="tb" hint-placeholder-count="4"><div style="display:flex;flex-direction:column;align-items:center;gap:2px;color:{{ tb.ic }}"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="{{ tb.d }}"></path></svg><span style="font-size:10px;font-weight:600;color:{{ tb.lc }}">{{ tb.name }}</span></div></sc-for>
+          </div>
+        </div>
+      </div>
+      <p style="margin:0;font-size:14px;line-height:21px;color:#9A93C4;text-wrap:pretty">Playing: live encoder tile and the recording card. Idle: last-session summary, Start recording, and an offload progress tile. 1h’s machined trays, tightened. Scene becomes a live encoder tile — bitrate sparkline and dropped frames. Below, the clip stack with status, quality and highlight icons on the front card.</p>
+      <span onClick="{{ lp.f.on }}" style="align-self:flex-start;height:36px;padding:0 16px;border-radius:18px;display:flex;align-items:center;font-size:14px;font-weight:600;cursor:pointer;background:{{ lp.f.bg }};box-shadow:inset 0 0 0 1px {{ lp.f.ring }};color:{{ lp.f.fg }}">{{ lp.f.label }}</span>
+      <textarea value="{{ lp.f.fb }}" onChange="{{ lp.f.onFb }}" placeholder="Notes on this layout…" rows="2" style="width:100%;box-sizing:border-box;resize:vertical;min-height:56px;padding:12px 14px;border:0;border-radius:16px;background:#120F20;box-shadow:inset 0 0 0 1px rgba(245,243,255,.08);color:#F5F3FF;font:inherit;font-size:14px;line-height:20px;outline:none" style-focus="box-shadow:inset 0 0 0 1px rgba(185,174,249,.6)"></textarea>
+    </div>
+
+    <div id="2g" style="display:flex;flex-direction:column;gap:18px;width:422px">
+      <div style="display:flex;align-items:center;gap:10px"><span style="height:24px;padding:0 9px;border-radius:12px;display:grid;place-items:center;background:#241E3B;font-size:12px;font-weight:700;color:#C4B8FF">2g</span><span style="font-size:17px;font-weight:600">Game-aware bento</span></div>
+      <div style="padding:10px;border-radius:66px;background:#0D0B17;box-shadow:inset 0 0 0 1.5px #221D36">
+        <div data-screen-label="2g Game-aware bento" style="position:relative;width:402px;height:874px;overflow:hidden;border-radius:56px;background:#06050C">
+          <canvas ref="{{ r.lg }}" aria-hidden="true" style="position:absolute;inset:0;width:100%;height:100%"></canvas>
+          <div style="position:absolute;top:0;left:0;right:0;height:54px;display:flex;align-items:center;justify-content:space-between;padding:0 34px 0 52px;box-sizing:border-box;font-size:17px;font-weight:600"><span>9:41</span><span style="width:27px;height:13px;border-radius:4px;box-shadow:inset 0 0 0 1px rgba(245,243,255,.4);padding:2px;box-sizing:border-box;display:flex"><i style="flex:1;border-radius:2px;background:#F5F3FF"></i></span></div>
+          <div style="position:absolute;top:11px;left:50%;transform:translateX(-50%);width:126px;height:37px;border-radius:19px;background:#000"></div>
+          <span style="position:absolute;top:96px;left:20px;font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display',system-ui,sans-serif;font-size:34px;line-height:41px;font-weight:700;letter-spacing:-.01em">Now</span>
+          <div style="position:absolute;top:150px;left:14px;right:14px;display:flex;flex-direction:column;gap:12px">
+            <div style="padding:6px;border-radius:34px;background:rgba(245,243,255,.04);box-shadow:inset 0 0 0 1px rgba(245,243,255,.09)">
+              <div style="position:relative;overflow:hidden;border-radius:28px;padding:18px;display:flex;flex-direction:column;gap:12px;background:rgba(16,13,28,.50);backdrop-filter:blur(20px) saturate(170%);-webkit-backdrop-filter:blur(20px) saturate(170%);box-shadow:inset 0 1px 1px rgba(255,255,255,.14)">
+                <img src="https://upload.wikimedia.org/wikipedia/commons/9/92/Kabukicho_red_gate_and_colorful_neon_street_signs_at_night%2C_Shinjuku%2C_Tokyo%2C_Japan.jpg" alt="" aria-hidden="true" style="position:absolute;top:0;right:0;width:60%;height:100%;object-fit:cover;opacity:.5;-webkit-mask-image:linear-gradient(90deg, transparent, #000 70%);mask-image:linear-gradient(90deg, transparent, #000 70%)"><sc-if value="{{ playing }}" hint-placeholder-val="{{ true }}">
+                <div style="position:relative;display:flex;align-items:center;gap:10px"><span style="display:inline-flex;align-items:center;gap:7px;height:26px;padding:0 11px;border-radius:13px;background:rgba(255,232,188,.12);box-shadow:inset 0 0 0 .5px rgba(255,232,188,.32)"><i style="width:7px;height:7px;border-radius:50%;background:#FFE8BC"></i><span style="font-size:11px;font-weight:600;letter-spacing:.16em;color:#FFE8BC">REC</span></span><span style="font-size:13px;color:#E3DFF5">Sifu · Gameplay</span></div>
+                <span style="position:relative;display:flex;font-size:46px;line-height:50px;font-weight:500;letter-spacing:-.025em;color:#FFE8BC;font-variant-numeric:tabular-nums lining-nums"><sc-for list="{{ digits }}" as="d" hint-placeholder-count="8"><span style="display:inline-block;height:1em;overflow:hidden"><span style="display:flex;flex-direction:column;transform:translateY({{ d.y }});transition:transform .6s cubic-bezier(.32,.72,0,1)"><sc-for list="{{ d.col }}" as="ch"><span style="height:1em;line-height:1em">{{ ch }}</span></sc-for></span></span></sc-for></span>
+                <div style="position:relative;display:flex;gap:8px">
+                  <span style="flex:1;height:46px;border-radius:23px;display:flex;align-items:center;justify-content:center;gap:8px;background:rgba(245,243,255,.12);box-shadow:inset 0 1px 0 rgba(255,255,255,.16);font-size:15px;font-weight:600"><svg width="12" height="14" viewBox="0 0 18 20"><rect x="2" y="1" width="4.6" height="18" rx="1.6" fill="#F5F3FF"></rect><rect x="11.4" y="1" width="4.6" height="18" rx="1.6" fill="#F5F3FF"></rect></svg>Pause</span>
+                  <span style="flex:1;height:46px;border-radius:23px;display:flex;align-items:center;justify-content:center;gap:8px;background:#FF5C7A;color:#100D1C;font-size:15px;font-weight:600"><i style="width:11px;height:11px;border-radius:3px;background:#100D1C"></i>Stop</span>
+                </div>
+              </sc-if><sc-if value="{{ idle }}" hint-placeholder-val="{{ false }}">
+                <div style="position:relative;display:flex;align-items:center;gap:10px"><span style="display:inline-flex;align-items:center;gap:7px;height:26px;padding:0 11px;border-radius:13px;background:rgba(245,243,255,.10);box-shadow:inset 0 0 0 .5px rgba(245,243,255,.2)"><i style="width:7px;height:7px;border-radius:50%;background:#9A93C4"></i><span style="font-size:11px;font-weight:600;letter-spacing:.16em;color:#E3DFF5">LAST PLAYED</span></span><span style="font-size:13px;color:#E3DFF5">2 h ago</span></div>
+                <div style="position:relative;display:flex;flex-direction:column;gap:2px"><span style="font-size:30px;line-height:34px;font-weight:600;letter-spacing:-.02em">Sifu</span><span style="font-size:13px;color:#E3DFF5">Boss phase 2 reached · personal best</span></div>
+                <div style="position:relative;display:flex;gap:8px">
+                  <span style="flex:1;height:46px;border-radius:23px;display:flex;align-items:center;justify-content:center;gap:8px;background:rgba(255,92,122,.14);box-shadow:inset 0 0 0 1px rgba(255,92,122,.45);font-size:15px;font-weight:600;color:#FFC2CE"><i style="width:10px;height:10px;border-radius:5px;background:#FF5C7A"></i>Record</span>
+                  <span style="flex:1;height:46px;border-radius:23px;display:flex;align-items:center;justify-content:center;gap:8px;background:rgba(245,243,255,.12);box-shadow:inset 0 1px 0 rgba(255,255,255,.16);font-size:15px;font-weight:600">Launch on PC</span>
+                </div>
+              </sc-if></div>
+            </div>
+            <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px">
+              <div style="padding:6px;border-radius:30px;background:rgba(245,243,255,.04);box-shadow:inset 0 0 0 1px rgba(245,243,255,.09)">
+                <sc-if value="{{ playing }}" hint-placeholder-val="{{ true }}"><div style="border-radius:24px;padding:14px 16px;background:#1C1730;box-shadow:inset 0 1px 1px rgba(255,255,255,.08);display:flex;flex-direction:column;gap:6px">
+                  <div style="display:flex;align-items:baseline;justify-content:space-between"><span style="font-size:11px;font-weight:600;letter-spacing:.16em;text-transform:uppercase;color:#9A93C4">Game</span><span style="font-size:12px;color:#9A93C4;font-variant-numeric:tabular-nums">GPU {{ gpu }}°</span></div>
+                  <span style="font-size:28px;line-height:30px;font-weight:500;font-variant-numeric:tabular-nums">{{ fps }}<span style="font-size:13px;font-weight:500;color:#9A93C4"> fps</span></span>
+                  <div style="height:22px;display:flex;align-items:flex-end;gap:2px"><sc-for list="{{ fpsBars }}" as="fb" hint-placeholder-count="16"><i style="flex:1;border-radius:1.5px;height:{{ fb.h }};background:{{ fb.c }};transition:height .5s cubic-bezier(.32,.72,0,1)"></i></sc-for></div>
+                </div></sc-if><sc-if value="{{ idle }}" hint-placeholder-val="{{ false }}"><div style="border-radius:24px;padding:14px 16px;background:#1C1730;box-shadow:inset 0 1px 1px rgba(255,255,255,.08);display:flex;flex-direction:column;gap:6px">
+                  <div style="display:flex;align-items:baseline;justify-content:space-between"><span style="font-size:11px;font-weight:600;letter-spacing:.16em;text-transform:uppercase;color:#9A93C4">This week</span><span style="font-size:12px;color:#9A93C4">14 clips</span></div>
+                  <span style="font-size:28px;line-height:30px;font-weight:500;font-variant-numeric:tabular-nums">11h 40<span style="font-size:13px;color:#9A93C4"> m</span></span>
+                  <div style="height:22px;display:flex;align-items:flex-end;gap:4px"><sc-for list="{{ week }}" as="wd" hint-placeholder-count="7"><i style="flex:1;border-radius:2px;height:{{ wd.h }};background:{{ wd.c }}"></i></sc-for></div>
+                </div></sc-if>
+              </div>
+              <div style="padding:6px;border-radius:30px;background:rgba(245,243,255,.04);box-shadow:inset 0 0 0 1px rgba(245,243,255,.09)">
+                <div style="border-radius:24px;padding:14px 16px;background:#1C1730;box-shadow:inset 0 1px 1px rgba(255,255,255,.08);display:flex;align-items:center;gap:12px;height:100%;box-sizing:border-box">
+                  <div style="position:relative;width:52px;height:52px;flex:none"><svg width="52" height="52" viewBox="0 0 52 52"><circle cx="26" cy="26" r="22" fill="none" stroke="rgba(245,243,255,.08)" stroke-width="4"></circle><circle cx="26" cy="26" r="22" fill="none" stroke="#8B7CF6" stroke-width="4" stroke-linecap="round" stroke-dasharray="85.7 138.2" transform="rotate(-90 26 26)"></circle></svg><span style="position:absolute;inset:0;display:grid;place-items:center;font-size:13px;font-weight:600">62%</span></div>
+                  <div style="display:flex;flex-direction:column;gap:2px;min-width:0"><span style="font-size:11px;font-weight:600;letter-spacing:.16em;text-transform:uppercase;color:#9A93C4">Storage</span><span style="font-size:15px;font-weight:600">212 GB</span><span style="font-size:12px;color:#9A93C4">≈ 4 days</span></div>
+                </div>
+              </div>
+            </div>
+            <div style="padding:6px;border-radius:30px;background:rgba(245,243,255,.04);box-shadow:inset 0 0 0 1px rgba(245,243,255,.09)">
+              <div style="border-radius:24px;padding:14px 16px;background:#1C1730;box-shadow:inset 0 1px 1px rgba(255,255,255,.08);display:flex;flex-direction:column;gap:10px">
+                <div style="display:flex;align-items:baseline;justify-content:space-between"><span style="font-size:11px;font-weight:600;letter-spacing:.16em;text-transform:uppercase;color:#9A93C4">{{ hlLabel }}</span><span style="font-size:15px;font-weight:600;color:#C4B8FF">3</span></div>
+                <div style="position:relative;height:24px;border-radius:6px;background:rgba(245,243,255,.04)">
+                  <span style="position:absolute;top:0;bottom:0;left:0;width:{{ hlFill }};border-radius:6px;background:linear-gradient(90deg, rgba(139,124,246,.06), rgba(139,124,246,.22))"></span>
+                  <i style="position:absolute;top:3px;bottom:3px;left:18%;width:3px;border-radius:2px;background:#B9AEF9"></i>
+                  <i style="position:absolute;top:3px;bottom:3px;left:41%;width:3px;border-radius:2px;background:#B9AEF9"></i>
+                  <i style="position:absolute;top:3px;bottom:3px;left:46%;width:3px;border-radius:2px;background:#E9B872"></i>
+                  <sc-if value="{{ playing }}" hint-placeholder-val="{{ true }}"><span style="position:absolute;top:-3px;bottom:-3px;left:{{ playPct }};width:2px;border-radius:1px;background:#FFE8BC;box-shadow:0 0 8px rgba(255,232,188,.8)"></span></sc-if>
+                </div>
+                <div style="display:flex;justify-content:space-between;font-size:12px;color:#9A93C4"><span>Kill streak · 4:12</span><span>Boss phase 2 · 10:31</span></div>
+              </div>
+            </div>
+          </div>
+          <div style="position:absolute;top:626px;left:20px;right:20px;display:flex;align-items:baseline;justify-content:space-between"><span style="font-size:20px;font-weight:600;letter-spacing:-.01em">Recent clips</span><span style="font-size:15px;color:#B9AEF9">See all</span></div>
+          <div style="position:absolute;top:660px;left:14px;right:14px;display:flex;gap:10px">
+            <div style="flex:1;min-width:0;height:118px;border-radius:22px;overflow:hidden;position:relative;box-shadow:inset 0 0 0 1px rgba(245,243,255,.12)"><img src="https://upload.wikimedia.org/wikipedia/commons/9/9e/Neon-street-in-Tokyo-Japan.jpg" alt="" style="width:100%;height:100%;object-fit:cover;display:block"><div style="position:absolute;inset:0;background:linear-gradient(180deg, rgba(7,6,14,0) 30%, rgba(7,6,14,.9))"></div><div style="position:absolute;left:12px;right:12px;bottom:10px;display:flex;flex-direction:column;gap:3px"><span style="font-size:14px;font-weight:600">Sifu · 18:42</span><span style="display:flex;align-items:center;gap:5px;font-size:12px;color:#E0A85C"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M6.5 10.5 12 5l5.5 5.5"></path></svg>Offloading</span></div></div>
+            <div style="flex:1;min-width:0;height:118px;border-radius:22px;overflow:hidden;position:relative;box-shadow:inset 0 0 0 1px rgba(245,243,255,.12)"><img src="https://upload.wikimedia.org/wikipedia/commons/8/89/Tropical_City_Streets_at_Night.jpg" alt="" style="width:100%;height:100%;object-fit:cover;display:block"><div style="position:absolute;inset:0;background:linear-gradient(180deg, rgba(7,6,14,0) 30%, rgba(7,6,14,.9))"></div><div style="position:absolute;left:12px;right:12px;bottom:10px;display:flex;flex-direction:column;gap:3px"><span style="font-size:14px;font-weight:600">Sifu · 32:05</span><span style="display:flex;align-items:center;gap:5px;font-size:12px;color:#3EBEB0"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5 9.8 17 19 7"></path></svg>nas-vault</span></div></div>
+          </div>
+          <div style="position:absolute;left:21px;right:21px;bottom:28px;height:62px;border-radius:31px;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));align-items:center;padding:0 6px;box-sizing:border-box;background:rgba(30,26,48,.30);backdrop-filter:blur(14px) saturate(190%) brightness(.92);-webkit-backdrop-filter:blur(14px) saturate(190%) brightness(.92);box-shadow:inset 0 1px 0 rgba(255,255,255,.30), inset 0 0 0 1px rgba(255,255,255,.07), inset 0 0 0 .5px rgba(0,0,0,.65), 0 12px 34px rgba(0,0,0,.5)">
+            <sc-for list="{{ tabs }}" as="tb" hint-placeholder-count="4"><div style="display:flex;flex-direction:column;align-items:center;gap:2px;color:{{ tb.ic }}"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="{{ tb.d }}"></path></svg><span style="font-size:10px;font-weight:600;color:{{ tb.lc }}">{{ tb.name }}</span></div></sc-for>
+          </div>
+        </div>
+      </div>
+      <p style="margin:0;font-size:14px;line-height:21px;color:#9A93C4;text-wrap:pretty">Idle swaps to Last played with Record / Launch on PC, a weekly playtime chart, and last session’s highlights. The hero card carries the game’s art. Tiles read the game itself — live fps bars and GPU temp — plus a highlights strip with the playhead moving through auto-marked moments. Clips as a two-up row.</p>
+      <span onClick="{{ lp.g.on }}" style="align-self:flex-start;height:36px;padding:0 16px;border-radius:18px;display:flex;align-items:center;font-size:14px;font-weight:600;cursor:pointer;background:{{ lp.g.bg }};box-shadow:inset 0 0 0 1px {{ lp.g.ring }};color:{{ lp.g.fg }}">{{ lp.g.label }}</span>
+      <textarea value="{{ lp.g.fb }}" onChange="{{ lp.g.onFb }}" placeholder="Notes on this layout…" rows="2" style="width:100%;box-sizing:border-box;resize:vertical;min-height:56px;padding:12px 14px;border:0;border-radius:16px;background:#120F20;box-shadow:inset 0 0 0 1px rgba(245,243,255,.08);color:#F5F3FF;font:inherit;font-size:14px;line-height:20px;outline:none" style-focus="box-shadow:inset 0 0 0 1px rgba(185,174,249,.6)"></textarea>
+    </div>
+
+    <div id="2h" style="display:flex;flex-direction:column;gap:18px;width:422px">
+      <div style="display:flex;align-items:center;gap:10px"><span style="height:24px;padding:0 9px;border-radius:12px;display:grid;place-items:center;background:#241E3B;font-size:12px;font-weight:700;color:#C4B8FF">2h</span><span style="font-size:17px;font-weight:600">Clips-led</span></div>
+      <div style="padding:10px;border-radius:66px;background:#0D0B17;box-shadow:inset 0 0 0 1.5px #221D36">
+        <div data-screen-label="2h Clips-led" style="position:relative;width:402px;height:874px;overflow:hidden;border-radius:56px;background:#06050C">
+          <canvas ref="{{ r.lh }}" aria-hidden="true" style="position:absolute;inset:0;width:100%;height:100%"></canvas>
+          <div style="position:absolute;top:0;left:0;right:0;height:54px;display:flex;align-items:center;justify-content:space-between;padding:0 34px 0 52px;box-sizing:border-box;font-size:17px;font-weight:600"><span>9:41</span><span style="width:27px;height:13px;border-radius:4px;box-shadow:inset 0 0 0 1px rgba(245,243,255,.4);padding:2px;box-sizing:border-box;display:flex"><i style="flex:1;border-radius:2px;background:#F5F3FF"></i></span></div>
+          <div style="position:absolute;top:11px;left:50%;transform:translateX(-50%);width:126px;height:37px;border-radius:19px;background:#000"></div>
+          <span style="position:absolute;top:96px;left:20px;font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display',system-ui,sans-serif;font-size:34px;line-height:41px;font-weight:700;letter-spacing:-.01em">Now</span>
+          <div style="position:absolute;top:150px;left:14px;right:14px;display:flex;flex-direction:column;gap:12px">
+            <div style="padding:6px;border-radius:34px;background:rgba(245,243,255,.04);box-shadow:inset 0 0 0 1px rgba(245,243,255,.09)">
+              <sc-if value="{{ playing }}" hint-placeholder-val="{{ true }}"><div style="border-radius:28px;padding:16px 14px 16px 18px;display:flex;align-items:center;gap:12px;background:rgba(16,13,28,.50);backdrop-filter:blur(20px) saturate(170%);-webkit-backdrop-filter:blur(20px) saturate(170%);box-shadow:inset 0 1px 1px rgba(255,255,255,.14)">
+                <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:4px">
+                  <span style="display:flex;align-items:center;gap:7px;font-size:11px;font-weight:600;letter-spacing:.16em;color:#FFE8BC"><i style="width:6px;height:6px;border-radius:50%;background:#FFE8BC"></i>REC · SIFU</span>
+                  <span style="display:flex;font-size:38px;line-height:42px;font-weight:500;letter-spacing:-.025em;color:#FFE8BC;font-variant-numeric:tabular-nums lining-nums"><sc-for list="{{ digits }}" as="d" hint-placeholder-count="8"><span style="display:inline-block;height:1em;overflow:hidden"><span style="display:flex;flex-direction:column;transform:translateY({{ d.y }});transition:transform .6s cubic-bezier(.32,.72,0,1)"><sc-for list="{{ d.col }}" as="ch"><span style="height:1em;line-height:1em">{{ ch }}</span></sc-for></span></span></sc-for></span>
+                </div>
+                <span style="width:48px;height:48px;border-radius:24px;display:grid;place-items:center;background:rgba(245,243,255,.10);box-shadow:inset 0 1px 0 rgba(255,255,255,.16)"><svg width="13" height="15" viewBox="0 0 18 20"><rect x="2" y="1" width="4.6" height="18" rx="1.6" fill="#F5F3FF"></rect><rect x="11.4" y="1" width="4.6" height="18" rx="1.6" fill="#F5F3FF"></rect></svg></span>
+                <span style="width:48px;height:48px;border-radius:24px;display:grid;place-items:center;background:#FF5C7A"><i style="width:13px;height:13px;border-radius:3px;background:#100D1C"></i></span>
+              </div></sc-if><sc-if value="{{ idle }}" hint-placeholder-val="{{ false }}"><div style="border-radius:28px;padding:18px;display:flex;flex-direction:column;gap:12px;background:rgba(16,13,28,.50);backdrop-filter:blur(20px) saturate(170%);-webkit-backdrop-filter:blur(20px) saturate(170%);box-shadow:inset 0 1px 1px rgba(255,255,255,.14)">
+                <div style="display:flex;align-items:center;justify-content:space-between"><span style="display:inline-flex;align-items:center;gap:7px;height:26px;padding:0 11px;border-radius:13px;background:rgba(245,243,255,.08);box-shadow:inset 0 0 0 .5px rgba(245,243,255,.18)"><i style="width:7px;height:7px;border-radius:50%;background:#9A93C4"></i><span style="font-size:11px;font-weight:600;letter-spacing:.16em;color:#C9C4E6">IDLE</span></span><span style="display:flex;align-items:center;gap:6px;font-size:13px;color:#3EBEB0"><i style="width:6px;height:6px;border-radius:50%;background:#3EBEB0"></i>Studio PC online</span></div>
+                <div style="display:flex;flex-direction:column;gap:3px"><span style="font-size:11px;font-weight:600;letter-spacing:.16em;text-transform:uppercase;color:#9A93C4">Last session · 8:12 pm</span><span style="font-size:22px;font-weight:600;letter-spacing:-.01em">Sifu <span style="color:#9A93C4;font-weight:500">· 1:12:04</span></span><span style="font-size:13px;color:#C9C4E6">3 highlights · 8.4 GB · on nas-vault</span></div>
+                <span style="height:46px;padding:0 4px 0 20px;border-radius:23px;display:flex;align-items:center;justify-content:space-between;background:rgba(255,92,122,.12);box-shadow:inset 0 0 0 1px rgba(255,92,122,.42);font-size:16px;font-weight:600;color:#FFC2CE;cursor:pointer" style-active="transform:scale(.98)">Start recording<span style="width:38px;height:38px;border-radius:19px;display:grid;place-items:center;background:#FF5C7A"><i style="width:12px;height:12px;border-radius:6px;background:#100D1C"></i></span></span>
+              </div></sc-if>
+            </div>
+            <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px">
+              <div style="padding:6px;border-radius:30px;background:rgba(245,243,255,.04);box-shadow:inset 0 0 0 1px rgba(245,243,255,.09)">
+                <div style="border-radius:24px;padding:14px 16px;background:#1C1730;box-shadow:inset 0 1px 1px rgba(255,255,255,.08);display:flex;flex-direction:column;gap:8px">
+                  <span style="font-size:11px;font-weight:600;letter-spacing:.16em;text-transform:uppercase;color:#9A93C4">Highlights</span>
+                  <span style="font-size:28px;line-height:30px;font-weight:500">3<span style="font-size:13px;color:#9A93C4"> {{ hlSub }}</span></span>
+                  <div style="position:relative;height:6px;border-radius:3px;background:rgba(245,243,255,.06)"><i style="position:absolute;top:-2px;left:18%;width:10px;height:10px;border-radius:5px;background:#B9AEF9"></i><i style="position:absolute;top:-2px;left:41%;width:10px;height:10px;border-radius:5px;background:#B9AEF9"></i><i style="position:absolute;top:-2px;left:70%;width:10px;height:10px;border-radius:5px;background:#E9B872;box-shadow:0 0 8px rgba(233,184,114,.7)"></i></div>
+                </div>
+              </div>
+              <div style="padding:6px;border-radius:30px;background:rgba(245,243,255,.04);box-shadow:inset 0 0 0 1px rgba(245,243,255,.09)">
+                <sc-if value="{{ playing }}" hint-placeholder-val="{{ true }}"><div style="border-radius:24px;padding:14px 16px;background:#1C1730;box-shadow:inset 0 1px 1px rgba(255,255,255,.08);display:flex;flex-direction:column;gap:8px">
+                  <span style="font-size:11px;font-weight:600;letter-spacing:.16em;text-transform:uppercase;color:#9A93C4">Audio</span>
+                  <div style="display:flex;flex-direction:column;gap:7px">
+                    <div style="display:flex;align-items:center;gap:8px"><span style="width:34px;font-size:12px;color:#C9C4E6">Game</span><div style="flex:1;height:5px;border-radius:3px;background:rgba(245,243,255,.06);overflow:hidden"><i style="display:block;height:100%;width:{{ lvGame }};border-radius:3px;background:linear-gradient(90deg,#8B7CF6,#B9AEF9);transition:width .25s cubic-bezier(.32,.72,0,1)"></i></div></div>
+                    <div style="display:flex;align-items:center;gap:8px"><span style="width:34px;font-size:12px;color:#C9C4E6">Mic</span><div style="flex:1;height:5px;border-radius:3px;background:rgba(245,243,255,.06);overflow:hidden"><i style="display:block;height:100%;width:{{ lvMic }};border-radius:3px;background:linear-gradient(90deg,#3EBEB0,#9FE3D6);transition:width .25s cubic-bezier(.32,.72,0,1)"></i></div></div>
+                    <div style="display:flex;align-items:center;gap:8px"><span style="width:34px;font-size:12px;color:#C9C4E6">Chat</span><div style="flex:1;height:5px;border-radius:3px;background:rgba(245,243,255,.06);overflow:hidden"><i style="display:block;height:100%;width:{{ lvChat }};border-radius:3px;background:linear-gradient(90deg,#D471E0,#E7A9EE);transition:width .25s cubic-bezier(.32,.72,0,1)"></i></div></div>
+                  </div>
+                </div></sc-if><sc-if value="{{ idle }}" hint-placeholder-val="{{ false }}"><div style="border-radius:24px;padding:14px 16px;background:#1C1730;box-shadow:inset 0 1px 1px rgba(255,255,255,.08);display:flex;flex-direction:column;gap:8px">
+                  <span style="font-size:11px;font-weight:600;letter-spacing:.16em;text-transform:uppercase;color:#9A93C4">Library</span>
+                  <span style="font-size:28px;line-height:30px;font-weight:500">212<span style="font-size:13px;color:#9A93C4"> GB free</span></span>
+                  <span style="display:flex;align-items:center;gap:6px;font-size:12px;color:#3EBEB0"><i style="width:6px;height:6px;border-radius:50%;background:#3EBEB0"></i>All synced to nas-vault</span>
+                </div></sc-if>
+              </div>
+            </div>
+          
+          <div style="margin-top:6px;padding:0 6px;display:flex;align-items:baseline;justify-content:space-between"><span style="font-size:20px;font-weight:600;letter-spacing:-.01em">Recent clips</span><span style="font-size:15px;color:#B9AEF9">See all</span></div>
+          <div style="position:relative;height:224px">
+            <div style="position:absolute;top:0;left:0;right:0;height:180px;border-radius:28px;overflow:hidden;transform:scale(.84);transform-origin:50% 0;opacity:.45;box-shadow:inset 0 0 0 1px rgba(245,243,255,.1)"><img src="https://upload.wikimedia.org/wikipedia/commons/8/89/Tropical_City_Streets_at_Night.jpg" alt="" style="width:100%;height:100%;object-fit:cover;display:block"></div>
+            <div style="position:absolute;top:20px;left:0;right:0;height:180px;border-radius:28px;overflow:hidden;transform:scale(.92);transform-origin:50% 0;opacity:.72;box-shadow:0 -10px 30px rgba(0,0,0,.45)"><img src="https://upload.wikimedia.org/wikipedia/commons/9/9e/Neon-street-in-Tokyo-Japan.jpg" alt="" style="width:100%;height:100%;object-fit:cover;display:block"></div>
+            <div style="position:absolute;top:44px;left:0;right:0;height:180px;border-radius:28px;overflow:hidden;box-shadow:0 -12px 36px rgba(0,0,0,.55), inset 0 0 0 1px rgba(245,243,255,.12)">
+              <img src="https://upload.wikimedia.org/wikipedia/commons/9/92/Kabukicho_red_gate_and_colorful_neon_street_signs_at_night%2C_Shinjuku%2C_Tokyo%2C_Japan.jpg" alt="Sifu clip still" style="width:100%;height:100%;object-fit:cover;display:block">
+              <div style="position:absolute;inset:0;background:linear-gradient(180deg, rgba(7,6,14,0) 30%, rgba(7,6,14,.92) 100%)"></div>
+              <span style="position:absolute;top:14px;left:14px;width:40px;height:40px;border-radius:20px;display:grid;place-items:center;background:rgba(16,13,28,.5);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);box-shadow:inset 0 1px 0 rgba(255,255,255,.2)"><svg width="14" height="16" viewBox="0 0 14 16"><path d="M2 1.5v13l11-6.5z" fill="#F5F3FF"></path></svg></span>
+              <span style="position:absolute;top:14px;right:14px;height:26px;padding:0 10px;border-radius:13px;display:flex;align-items:center;font-size:12px;font-weight:600;font-variant-numeric:tabular-nums;background:rgba(16,13,28,.55);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px)">18:42</span>
+              <div style="position:absolute;left:18px;right:18px;bottom:16px;display:flex;flex-direction:column;gap:8px">
+                <div style="display:flex;flex-direction:column;gap:2px"><span style="font-size:19px;font-weight:600;letter-spacing:-.01em">Sifu · boss fight</span><span style="font-size:13px;color:#C9C4E6">Today, 8:12 pm</span></div>
+                <div style="display:flex;align-items:center;gap:6px">
+                  <span style="height:24px;padding:0 9px;border-radius:12px;display:flex;align-items:center;gap:5px;font-size:12px;font-weight:600;color:#3EBEB0;background:rgba(62,190,176,.14)"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5 9.8 17 19 7"></path></svg>nas-vault</span>
+                  <span style="height:24px;padding:0 9px;border-radius:12px;display:flex;align-items:center;font-size:12px;font-weight:600;color:#E3DFF5;background:rgba(245,243,255,.10)">1080p60</span>
+                  <span style="height:24px;padding:0 9px;border-radius:12px;display:flex;align-items:center;font-size:12px;font-weight:600;color:#E3DFF5;background:rgba(245,243,255,.10)">2.1 GB</span>
+                  <span style="height:24px;padding:0 9px;border-radius:12px;display:flex;align-items:center;font-size:12px;font-weight:600;color:#C4B8FF;background:rgba(139,124,246,.16)">2 marks</span>
+                </div>
+              </div>
+            </div>
+          </div>
+          </div>
+          <div style="position:absolute;left:21px;right:21px;bottom:28px;height:62px;border-radius:31px;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));align-items:center;padding:0 6px;box-sizing:border-box;background:rgba(30,26,48,.30);backdrop-filter:blur(14px) saturate(190%) brightness(.92);-webkit-backdrop-filter:blur(14px) saturate(190%) brightness(.92);box-shadow:inset 0 1px 0 rgba(255,255,255,.30), inset 0 0 0 1px rgba(255,255,255,.07), inset 0 0 0 .5px rgba(0,0,0,.65), 0 12px 34px rgba(0,0,0,.5)">
+            <sc-for list="{{ tabs }}" as="tb" hint-placeholder-count="4"><div style="display:flex;flex-direction:column;align-items:center;gap:2px;color:{{ tb.ic }}"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="{{ tb.d }}"></path></svg><span style="font-size:10px;font-weight:600;color:{{ tb.lc }}">{{ tb.name }}</span></div></sc-for>
+          </div>
+        </div>
+      </div>
+      <p style="margin:0;font-size:14px;line-height:21px;color:#9A93C4;text-wrap:pretty">Idle swaps the strip for a last-session card and Audio for library status. 1j’s compact strip in a bento tray, then a bigger stack — front card gets play, duration and chip-style info. Tiles: highlight count with marks, and live game / mic / chat levels.</p>
+      <span onClick="{{ lp.h.on }}" style="align-self:flex-start;height:36px;padding:0 16px;border-radius:18px;display:flex;align-items:center;font-size:14px;font-weight:600;cursor:pointer;background:{{ lp.h.bg }};box-shadow:inset 0 0 0 1px {{ lp.h.ring }};color:{{ lp.h.fg }}">{{ lp.h.label }}</span>
+      <textarea value="{{ lp.h.fb }}" onChange="{{ lp.h.onFb }}" placeholder="Notes on this layout…" rows="2" style="width:100%;box-sizing:border-box;resize:vertical;min-height:56px;padding:12px 14px;border:0;border-radius:16px;background:#120F20;box-shadow:inset 0 0 0 1px rgba(245,243,255,.08);color:#F5F3FF;font:inherit;font-size:14px;line-height:20px;outline:none" style-focus="box-shadow:inset 0 0 0 1px rgba(185,174,249,.6)"></textarea>
+    </div>
+  </div>
+</div>
+</section>
+</x-dc>
+<script type="text/x-dc" data-dc-script>
+class Component extends DCLogic {
+  state = (() => { let s = {}; try { s = JSON.parse(localStorage.getItem('nmAesR2') || '{}'); } catch (e) {} return { t: 4324, bg: s.bg || [], lay: s.lay || [], last: s.last || null, notes: s.notes || {}, seed: s.seed || 7, fps: 144, mb: 48.2, spark: Array.from({ length: 28 }, (_, i) => 46 + 3 * Math.sin(i * .7)), bars: Array.from({ length: 16 }, () => 142), lv: [.6, .3, .2], mode: s.mode || 'playing', off: .42 }; })();
+  r = ['lf', 'lg', 'lh'].reduce((o, k) => (o[k] = React.createRef(), o), {});
+  BG = [
+    ['2a', 'earth', 'Earth at night', 'Deep field + eclipse, merged. Real NASA-derived Earth texture, city lights on the night side, clouds drifting faster than the surface, sunrise burning on the limb. Turns once every four minutes.'],
+    ['2b', 'proc', 'Random planet', 'Same scene with a procedurally generated world — gas giant or rocky, banded storms or polar ice, in Nebula’s palette. Reroll until one feels right; every user could get their own.'],
+    ['2c', 'moon', 'Moonrise', 'A cratered moon on the horizon, side-lit gold, no atmosphere. Starker and quieter than Earth.'],
+    ['2d', 'dots', 'Dot bloom', 'The desktop dial’s current dot field — superellipse blooms, violet to magenta to ink with amber hot cores — scaled to the phone. Blooms wander the whole screen and a pulse ripples out from the hero every 7 s.'],
+    ['2e', 'ring', 'Pixel orbit', 'The desktop dial’s tilted pixel ring, big behind the hero card: a comet trail outside, coloured blocks counter-rotating inside, over the 2b star field.'],
+    ['2i', 'solar', 'Live solar system', 'Every planet where it actually is right now — real orbital positions for today, computed on device. A slow camera drift around the Sun; Earth is ringed in gold as “you”.'],
+    ['2j', 'galaxy', 'Pixel galaxy', '2e’s 4pt pixel cells, arranged as a two-armed spiral galaxy turning slowly. Gold-white core, violet arms fading to magenta at the rim.'],
+    ['2k', 'saturn', 'Pixel ringed planet', 'A banded pixel planet in Nebula colours with a rotating cell ring and a Cassini gap. The ring passes behind and in front of the planet.'],
+    ['2l', 'dither', 'Dither nebula', 'Flowing nebula clouds quantised to 4pt cells with ordered dithering — six steps from ink to violet, magenta and a warm peach highlight. Retro, but in the system’s palette.']
+  ].map(a => ({ id: a[0], key: a[1], name: a[2], note: a[3], ref: React.createRef() }));
+  save() { try { const { bg, lay, last, notes, seed, mode } = this.state; localStorage.setItem('nmAesR2', JSON.stringify({ bg, lay, last, notes, seed, mode })); } catch (e) {} }
+  tog(list, k) { this.setState(s => { const on = s[list].includes(k), arr = on ? s[list].filter(x => x !== k) : [...s[list], k]; const up = { [list]: arr }; if (list === 'bg') up.last = on ? (arr[arr.length - 1] || null) : k; return up; }, () => this.save()); }
+  note(id, v) { this.setState(s => ({ notes: { ...s.notes, [id]: v } }), () => this.save()); }
+  componentDidMount() {
+    const mq = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)');
+    this.rm = !!(mq && mq.matches);
+    const go = () => {
+      if (!window.NMSpace) { this.wt = setTimeout(go, 100); return; }
+      window.NMSpace.ready.then(() => { this.forceUpdate(); this.frame(20); });
+      if (this.rm) { this.frame(20); return; }
+      let last = 0;
+      const loop = now => { if (now - last > 50) { last = now; this.frame(now / 1000); } this.raf = requestAnimationFrame(loop); };
+      this.raf = requestAnimationFrame(loop);
+    };
+    go();
+    if (this.rm) return;
+    this.iv = setInterval(() => this.setState(s => {
+      const fps = Math.round(138 + Math.random() * 8), mb = +(45 + Math.random() * 7).toFixed(1);
+      return { t: s.t + (s.mode === 'playing' ? 1 : 0), fps, mb, spark: [...s.spark.slice(1), mb], bars: [...s.bars.slice(1), fps], off: s.off >= 1 ? .1 : s.off + .012 };
+    }), 1000);
+    this.iv2 = setInterval(() => this.setState({ lv: [.45 + Math.random() * .4, Math.random() < .4 ? .1 + Math.random() * .7 : .05, Math.random() < .25 ? .2 + Math.random() * .5 : .04] }), 240);
+  }
+  componentWillUnmount() { if (this.io) this.io.disconnect(); clearInterval(this.iv); clearInterval(this.iv2); clearTimeout(this.wt); cancelAnimationFrame(this.raf); }
+  vis(c) {
+    if (!c) return false;
+    if (!this.io) { this.seen = new WeakMap(); this.io = new IntersectionObserver(es => es.forEach(e => this.seen.set(e.target, e.isIntersecting)), { rootMargin: '200px' }); }
+    if (!c.__obs) { c.__obs = 1; this.io.observe(c); this.seen.set(c, true); }
+    return this.seen.get(c);
+  }
+  paint(c, kind, t) {
+    if (!this.vis(c) && !this.rm) return;
+    if (!this.off) this.off = {};
+    let o = this.off[kind];
+    if (!o) { const cv = document.createElement('canvas'); cv.width = 603; cv.height = 1311; o = this.off[kind] = { cv, x: cv.getContext('2d'), t: -1 }; }
+    if (o.t !== t) { o.t = t; o.x.setTransform(1.5, 0, 0, 1.5, 0, 0); o.x.globalAlpha = 1; o.x.globalCompositeOperation = 'source-over'; window.NMSpace.draw(kind, o.x, t, this.state.seed); }
+    if (c.width !== 603) { c.width = 603; c.height = 1311; }
+    c.getContext('2d').drawImage(o.cv, 0, 0);
+  }
+  frame(t) {
+    for (const b of this.BG) this.paint(b.ref.current, b.key, t);
+    const k = this.state.last || 'earth';
+    for (const n of ['lf', 'lg', 'lh']) this.paint(this.r[n].current, k, t);
+  }
+  pick(on) { return { label: on ? 'Picked' : 'Pick', bg: on ? 'rgba(255,232,188,.14)' : '#181428', ring: on ? 'rgba(255,232,188,.5)' : 'rgba(245,243,255,.10)', fg: on ? '#FFE8BC' : '#F5F3FF' }; }
+  renderVals() {
+    const t = this.state.t, p = n => String(n).padStart(2, '0');
+    const clock = `${p(Math.floor(t / 3600))}:${p(Math.floor(t / 60) % 60)}:${p(t % 60)}`;
+    const nums = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9'];
+    const digits = clock.split('').map(ch => ch === ':' ? { col: [':'], y: '0em' } : { col: nums, y: `-${ch}em` });
+    const D = ['M12 3.4a8.6 8.6 0 1 1 0 17.2a8.6 8.6 0 1 1 0-17.2M12 9.2a2.8 2.8 0 1 1 0 5.6a2.8 2.8 0 1 1 0-5.6', 'M6.1 5h11.8a2.6 2.6 0 0 1 2.6 2.6v8.8a2.6 2.6 0 0 1-2.6 2.6H6.1a2.6 2.6 0 0 1-2.6-2.6V7.6A2.6 2.6 0 0 1 6.1 5M7.6 5v14M16.4 5v14', 'M5.2 4.2h13.6a2.4 2.4 0 0 1 2.4 2.4v7.8a2.4 2.4 0 0 1-2.4 2.4H5.2a2.4 2.4 0 0 1-2.4-2.4V6.6a2.4 2.4 0 0 1 2.4-2.4M9 20.2h6M12 16.8v3.4M10.6 8.4v4.4l3.8-2.2z', 'M7.6 7.4h8.8c2.5 0 4.1 1.9 4.5 4.4l.6 4.2c.3 1.8-1.6 3-3 2L16.3 16.4a2.4 2.4 0 0 0-1.4-.5H9.1a2.4 2.4 0 0 0-1.4.5L5.5 18c-1.4 1-3.3-.2-3-2l.6-4.2c.4-2.5 2-4.4 4.5-4.4zM7.6 10.2v3.2M6 11.8h3.2'];
+    const tabs = ['Now', 'Clips', 'Remote', 'Games'].map((n, i) => ({ name: n, d: D[i], ic: i === 0 ? '#8B7CF6' : '#9A93C4', lc: i === 0 ? '#F5F3FF' : '#9A93C4' }));
+    const bgs = this.BG.map(b => ({ ...b, reroll: b.key === 'proc', fb: this.state.notes[b.id] || '', onFb: e => this.note(b.id, e.target.value), pk: { ...this.pick(this.state.bg.includes(b.key)), on: () => this.tog('bg', b.key) } }));
+    const lp = {};
+    ['f', 'g', 'h'].forEach(k => { lp[k] = { ...this.pick(this.state.lay.includes(k)), on: () => this.tog('lay', k), fb: this.state.notes['2' + k] || '', onFb: e => this.note('2' + k, e.target.value) }; });
+    const sel = this.BG.find(b => b.key === this.state.last);
+    const picks = [...this.BG.filter(b => this.state.bg.includes(b.key)).map(b => b.id), ...['f', 'g', 'h'].filter(k => this.state.lay.includes(k)).map(k => '2' + k)];
+    const sp = this.state.spark, n = sp.length, Y = v => (28 - (v - 40) / 14 * 26).toFixed(1);
+    const spark = sp.map((v, i) => `${(i / (n - 1) * 140).toFixed(1)},${Y(v)}`).join(' ');
+    const sparkArea = `M0,28 L${sp.map((v, i) => `${(i / (n - 1) * 140).toFixed(1)},${Y(v)}`).join(' L')} L140,28 Z`;
+    const fpsBars = this.state.bars.map((v, i) => ({ h: `${Math.round(30 + (v - 130) / 20 * 70)}%`, c: i === this.state.bars.length - 1 ? '#FFE8BC' : 'rgba(185,174,249,.55)' }));
+    const pct = v => `${Math.round(v * 100)}%`, lv = this.state.lv;
+    const mode = this.state.mode, playing = mode === 'playing';
+    const modes = [['playing', 'Playing', '#FFE8BC'], ['idle', 'Not playing', '#9A93C4']].map(m => ({ label: m[1], dot: m[2], bg: mode === m[0] ? '#2A2442' : 'transparent', fg: mode === m[0] ? '#F5F3FF' : '#9A93C4', on: () => this.setState({ mode: m[0] }, () => this.save()) }));
+    const week = [1.5, 2.2, .6, 3.1, 1.2, 2.4, .7].map((v, i) => ({ h: `${Math.round(v / 3.1 * 100)}%`, c: i === 5 ? '#FFE8BC' : 'rgba(185,174,249,.55)' }));
+
+    const planetName = window.NMSpace ? window.NMSpace.name(this.state.seed) : '…';
+    return {
+      r: this.r, playing, idle: !playing, modes, week, offPct: `${Math.round(this.state.off * 100)}%`, hlLabel: playing ? 'Highlights · auto-marked' : 'Last session highlights', hlFill: playing ? `${(((t % 900) / 900) * 100).toFixed(1)}%` : '100%', hlSub: playing ? 'this session' : 'last session', clock, digits, tabs, bgs, lp, spark, sparkArea, fpsBars, fps: this.state.fps, mbps: this.state.mb.toFixed(1), gpu: 68 + (t % 5),
+      playPct: `${(((t % 900) / 900) * 100).toFixed(1)}%`, lvGame: pct(lv[0]), lvMic: pct(lv[1]), lvChat: pct(lv[2]), planetName,
+      reroll: () => this.setState(s => ({ seed: s.seed + 1 }), () => this.save()),
+      bgName: sel ? sel.name : 'Earth at night (default until you pick)',
+      overall: this.state.notes.overall || '', onOverall: e => this.note('overall', e.target.value),
+      picksText: picks.length ? picks.join(', ') : '—'
+    };
+  }
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,446 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body { margin:0; }
+a { color:#5B4BC4; text-decoration:underline; text-underline-offset:2px; }
+a:hover { color:#3E2FA6; }
+doc-page:not(:defined) { visibility:hidden; }
+</style>
+<script src="./doc-page.js"></script>
+</helmet>
+<doc-page margin="0.75in">
+<div style="font-family:-apple-system,BlinkMacSystemFont,'SF Pro Text','Segoe UI',system-ui,sans-serif;font-size:14.5px;line-height:1.65;color:#1B1726">
+
+<h1 style="margin:0 0 6px;font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display',system-ui,sans-serif;font-size:34px;line-height:1.15;font-weight:700;letter-spacing:-.02em">Nebula Mobile — build specification</h1>
+<p style="margin:0 0 4px;font-size:16px;color:#5A5470">iOS companion app for the Nebula desktop recorder · v1.0 spec · 18 Nov 2026</p>
+<p style="margin:0 0 24px;font-size:13px;color:#5A5470">Visual source of truth: <a href="Nebula Mobile App Pages.dc.html">Nebula Mobile App Pages</a> (3a–3h), <a href="Prefs Mobile Aesthetic R2.dc.html">Prefs Mobile Aesthetic R2</a> (backgrounds 2a–2l, Now layouts 2f–2h), and <span style="font-family:ui-monospace,'SF Mono',Menlo,monospace;font-size:12.5px">nm-space.js</span> (background renderers). Where this document and a mockup disagree, this document wins on behaviour and the mockup wins on pixels.</p>
+
+<div style="break-inside:avoid;margin:0 0 28px;padding:16px 18px;border-radius:10px;background:#F3F1FA;border:1px solid #E1DCF2">
+  <p style="margin:0 0 6px;font-weight:700">How to use this document</p>
+  <ul style="margin:0;padding-left:20px">
+    <li>Build in the order of §15 (Build order). Each phase has acceptance checks; do not start the next phase until they pass.</li>
+    <li>Every number in this document (sizes, colours, durations) is normative. If you need a value that is not here, take it from the mockup file named in the section, never invent it.</li>
+    <li>Text in <span style="font-family:ui-monospace,'SF Mono',Menlo,monospace;font-size:12.5px;background:#ECE9F5;padding:1px 4px;border-radius:4px">mono</span> is an identifier, file, or literal UI string. Quoted UI copy must be used verbatim.</li>
+    <li>“MUST” is a requirement, “SHOULD” a strong default, “MAY” optional. Anything marked <b>Open question</b> (§16) needs a decision from the owner before it is built — stub it, don’t guess.</li>
+  </ul>
+</div>
+
+<h2 style="margin:32px 0 10px;font-size:22px;line-height:1.25;font-weight:700;letter-spacing:-.01em">1. What the product is</h2>
+<p style="margin:0 0 10px">Nebula is a Windows desktop app that watches for games, drives OBS over its WebSocket API, and files every recording into a per-game folder (<span style="font-family:ui-monospace,'SF Mono',Menlo,monospace;font-size:12.5px">Videos\Nebula\&lt;Game&gt;</span>). It classifies apps as games (Steam library auto-classifies; anything else triggers a one-time “Is this a game?” prompt, remembered forever), pauses on idle, discards tiny accidental clips, offloads to a NAS, and launches Moonlight for remote play over Tailscale.</p>
+<p style="margin:0 0 10px"><b>Nebula Mobile</b> is a companion that lets the user, away from the desk: see and control the current recording; answer “Is this a game?” prompts; browse, play and share clips; set per-game capture behaviour; start a Moonlight stream; and change the subset of settings that make sense from a phone.</p>
+<p style="margin:0 0 10px"><b>The phone never talks to OBS directly.</b> It talks only to the Nebula desktop app (“the PC agent”), which remains the single source of truth for state, settings and files.</p>
+<p style="margin:0 0 10px"><b>Out of scope for v1:</b> recording on the phone itself; editing clips beyond trim; multiple paired PCs at once (one active PC; switching is allowed); Android; iPad-specific layouts (iPad runs the iPhone layout scaled); macropad configuration.</p>
+
+<h2 style="margin:32px 0 10px;font-size:22px;line-height:1.25;font-weight:700;letter-spacing:-.01em">2. Architecture</h2>
+<h3 style="margin:20px 0 8px;font-size:16.5px;font-weight:700">2.1 Components</h3>
+<ul style="margin:0 0 10px;padding-left:20px">
+  <li><b>PC agent</b> (inside the existing desktop app): exposes a local API on <span style="font-family:ui-monospace,'SF Mono',Menlo,monospace;font-size:12.5px">ws://&lt;host&gt;:47990/nebula</span> (WebSocket, JSON) and <span style="font-family:ui-monospace,'SF Mono',Menlo,monospace;font-size:12.5px">http://&lt;host&gt;:47990/files/…</span> (HTTP range requests for clip streaming, thumbnails). Reachable on LAN and over the Tailscale interface. Port is configurable on the PC.</li>
+  <li><b>iOS app</b>: SwiftUI, iOS 17+, iPhone only. A single <span style="font-family:ui-monospace,'SF Mono',Menlo,monospace;font-size:12.5px">AgentClient</span> owns the socket; all screens observe one <span style="font-family:ui-monospace,'SF Mono',Menlo,monospace;font-size:12.5px">AppStore</span> (observable state). No screen opens its own connection.</li>
+  <li><b>Live Activity + widget extension</b>: shows the recording clock on the Lock Screen / Dynamic Island while recording.</li>
+  <li><b>Push relay</b> (small hosted service): forwards PC-originated events (unknown app, recording started/stopped, offload finished) to APNs when the app is not foregrounded. The PC agent posts to the relay with the device token received at pairing.</li>
+</ul>
+<h3 style="margin:20px 0 8px;font-size:16.5px;font-weight:700">2.2 Pairing</h3>
+<ol style="margin:0 0 10px;padding-left:20px">
+  <li>On the PC: Settings → Remote → “Pair a phone” shows a QR code encoding <span style="font-family:ui-monospace,'SF Mono',Menlo,monospace;font-size:12.5px">{host candidates[], port, pcName, pairingToken (single use, 5 min TTL), pcPublicKey}</span>.</li>
+  <li>The phone scans it (first-run screen, or Settings → Studio PC → “Pair another PC”), connects to the first reachable host candidate (Tailscale IP first, then LAN IPs), and sends <span style="font-family:ui-monospace,'SF Mono',Menlo,monospace;font-size:12.5px">pair.request {pairingToken, deviceName, devicePublicKey, apnsToken}</span>.</li>
+  <li>The PC shows a toast “Allow &lt;deviceName&gt;?”; on accept it returns a long-lived <span style="font-family:ui-monospace,'SF Mono',Menlo,monospace;font-size:12.5px">deviceToken</span>. The phone stores it in the Keychain. All later connections send it in <span style="font-family:ui-monospace,'SF Mono',Menlo,monospace;font-size:12.5px">hello</span>.</li>
+  <li>Unpairing on either side revokes the token; the phone returns to the first-run screen.</li>
+</ol>
+<h3 style="margin:20px 0 8px;font-size:16.5px;font-weight:700">2.3 Sync model</h3>
+<ul style="margin:0 0 10px;padding-left:20px">
+  <li>On connect, the phone sends <span style="font-family:ui-monospace,'SF Mono',Menlo,monospace;font-size:12.5px">hello</span>; the PC replies with a full <span style="font-family:ui-monospace,'SF Mono',Menlo,monospace;font-size:12.5px">snapshot</span> (session, games, settings, pending apps, last 50 clips, peers). After that the PC pushes <span style="font-family:ui-monospace,'SF Mono',Menlo,monospace;font-size:12.5px">event</span> messages; the phone never polls.</li>
+  <li>The recording clock is <b>computed on the phone</b> from <span style="font-family:ui-monospace,'SF Mono',Menlo,monospace;font-size:12.5px">session.startedAt</span> and <span style="font-family:ui-monospace,'SF Mono',Menlo,monospace;font-size:12.5px">session.pausedTotal</span>, so it ticks smoothly without a message per second. Live stats (bitrate, fps, GPU temp, audio levels) arrive as <span style="font-family:ui-monospace,'SF Mono',Menlo,monospace;font-size:12.5px">stats</span> events at 1 Hz (audio levels 4 Hz) only while a Now screen is visible; the phone sends <span style="font-family:ui-monospace,'SF Mono',Menlo,monospace;font-size:12.5px">stats.subscribe</span> / <span style="font-family:ui-monospace,'SF Mono',Menlo,monospace;font-size:12.5px">stats.unsubscribe</span>.</li>
+  <li>Commands are optimistic: update local state immediately, send the command, and revert with a toast if the PC answers <span style="font-family:ui-monospace,'SF Mono',Menlo,monospace;font-size:12.5px">error</span> or no ack arrives within 4 s.</li>
+  <li>Reconnect with exponential backoff (0.5 s, 1, 2, 4, 8, max 15 s). On reconnect, request a fresh snapshot and replace state wholesale.</li>
+</ul>
+
+<h2 style="margin:32px 0 10px;font-size:22px;line-height:1.25;font-weight:700;letter-spacing:-.01em">3. Data model</h2>
+<p style="margin:0 0 10px">Swift types mirror the JSON exactly (camelCase keys). Times are ISO-8601 UTC strings; durations are seconds (Double); sizes are bytes (Int64).</p>
+<pre style="break-inside:avoid;margin:0 0 6px;padding:14px 16px;border-radius:8px;background:#F6F5FA;border:1px solid #E4E0EE;font-family:ui-monospace,'SF Mono',Menlo,monospace;font-size:11.5px;line-height:1.55;white-space:pre-wrap">Session {
+  state: "idle" | "recording" | "paused" | "bufferOnly"
+  game: GameRef?             // null when idle
+  startedAt: Date?           // first frame of this recording
+  pausedTotal: Double        // seconds spent paused so far
+  pausedAt: Date?            // set while paused
+  scene: String              // OBS scene name, e.g. "Gameplay"
+  output: { resolution: "1920x1080", fps: 60, encoder: "NVENC" }
+  bytesWritten: Int64
+  highlights: [Highlight]    // this session
+  storageFreeBytes: Int64
+  estimatedRemaining: Double // seconds of recording left at current bitrate
+  lastSession: LastSession?  // shown when idle
+}
+LastSession { game: GameRef, endedAt: Date, duration: Double, bytes: Int64, highlightCount: Int, offload: OffloadState }
+Highlight  { at: Double, label: String?, kind: "auto" | "manual" }
+Stats      { bitrateMbps: Double, droppedFrames: Int, gameFps: Int?, gpuTempC: Int?, audio: { game: 0…1, mic: 0…1, chat: 0…1 } }
+
+Clip {
+  id: String, game: GameRef, file: String, folder: String
+  kind: "recording" | "replay"
+  createdAt: Date, duration: Double?, bytes: Int64?   // null while OBS is still writing
+  resolution: String, fps: Int, encoder: String
+  highlights: [Highlight]
+  locations: ["pc" | "nas"]
+  offload: OffloadState
+  thumbnailURL: String       // /files/thumb/&lt;id&gt;.jpg, 16:9, 640×360
+  writing: Bool
+}
+OffloadState = "none" | "queued" | { progress: 0…1, bytesLeft: Int64 } | "done" | { error: String }
+
+Game {
+  id: String, name: String
+  source: "steam" | "user" | "prompt"   // shown as "Steam" / "Added by you" / "Added just now"
+  capture: "default" | "record" | "buffer" | "both"
+  clipCount: Int, bytes: Int64, coverURL: String?, lastPlayed: Date?
+  weekPlaytime: [Double]                // 7 values, Mon…Sun, seconds
+}
+PendingApp { id: String, exe: String, window: { fullscreen: Bool, width: Int, height: Int }, inSteam: Bool, seenAt: Date }
+NonGame    { exe: String, displayName: String }
+Peer       { name: String, online: Bool, isHost: Bool }
+Settings {
+  launchCapture: "record" | "buffer" | "both"
+  replaySeconds: 15 | 30 | 60 | 120
+  idleTimeout: Int (1…60)              // seconds
+  discardUnder: Int (0…120, step 5)    // seconds
+  keepAliveApps: [String]              // exe names
+  recordingRoot: String                // read-only on phone
+  gameListSync: { provider: "onedrive" | "none", path: String }
+  offload: { target: String?, auto: Bool }
+  remote: { tailscale: Bool, moonlightInstalled: Bool }
+  hotkey: String                       // read-only on phone
+  appVersion: String, updateAvailable: String?
+}
+PhonePrefs (stored on the phone only, UserDefaults) {
+  background: "earth"|"proc"|"moon"|"solar"|"dots"|"ring"|"galaxy"|"saturn"|"dither"  // default "earth"
+  planetSeed: Int                      // default 7
+  motion: "live" | "still"             // default "live"
+  surfaces: "glass" | "lively" | "solid"  // default "glass"
+  nowLayout: "bento" | "game" | "clips"   // default "bento" (2f)
+}</pre>
+<p style="margin:0 0 10px;font-size:12.5px;color:#5A5470">Figure 1 — wire and app data types.</p>
+
+<h2 style="margin:32px 0 10px;font-size:22px;line-height:1.25;font-weight:700;letter-spacing:-.01em">4. API contract</h2>
+<p style="margin:0 0 10px">Every message is <span style="font-family:ui-monospace,'SF Mono',Menlo,monospace;font-size:12.5px">{ "type": String, "id": String?, "data": Object }</span>. Commands carry an <span style="font-family:ui-monospace,'SF Mono',Menlo,monospace;font-size:12.5px">id</span>; the PC answers <span style="font-family:ui-monospace,'SF Mono',Menlo,monospace;font-size:12.5px">ack {id}</span> or <span style="font-family:ui-monospace,'SF Mono',Menlo,monospace;font-size:12.5px">error {id, code, message}</span>.</p>
+<table style="width:100%;border-collapse:collapse;margin:0 0 6px;font-size:12.5px;line-height:1.45">
+  <thead><tr><th style="text-align:left;padding:7px 8px;border-bottom:1.5px solid #CFC9E3;font-weight:700">Phone → PC</th><th style="text-align:left;padding:7px 8px;border-bottom:1.5px solid #CFC9E3;font-weight:700">Data</th><th style="text-align:left;padding:7px 8px;border-bottom:1.5px solid #CFC9E3;font-weight:700">Effect</th></tr></thead>
+  <tbody>
+    <tr><td style="padding:6px 8px;border-bottom:1px solid #ECE9F5;font-family:ui-monospace,'SF Mono',Menlo,monospace">hello</td><td style="padding:6px 8px;border-bottom:1px solid #ECE9F5">deviceToken, appVersion</td><td style="padding:6px 8px;border-bottom:1px solid #ECE9F5">PC replies <span style="font-family:ui-monospace,monospace">snapshot</span></td></tr>
+    <tr><td style="padding:6px 8px;border-bottom:1px solid #ECE9F5;font-family:ui-monospace,'SF Mono',Menlo,monospace">session.start</td><td style="padding:6px 8px;border-bottom:1px solid #ECE9F5">capture?</td><td style="padding:6px 8px;border-bottom:1px solid #ECE9F5">Starts recording for the foreground game (error <span style="font-family:ui-monospace,monospace">noGame</span> if none)</td></tr>
+    <tr><td style="padding:6px 8px;border-bottom:1px solid #ECE9F5;font-family:ui-monospace,'SF Mono',Menlo,monospace">session.pause / .resume / .stop</td><td style="padding:6px 8px;border-bottom:1px solid #ECE9F5">—</td><td style="padding:6px 8px;border-bottom:1px solid #ECE9F5">As named. Stop finalises the clip.</td></tr>
+    <tr><td style="padding:6px 8px;border-bottom:1px solid #ECE9F5;font-family:ui-monospace,'SF Mono',Menlo,monospace">session.mark</td><td style="padding:6px 8px;border-bottom:1px solid #ECE9F5">label?</td><td style="padding:6px 8px;border-bottom:1px solid #ECE9F5">Adds a manual highlight at the current time</td></tr>
+    <tr><td style="padding:6px 8px;border-bottom:1px solid #ECE9F5;font-family:ui-monospace,'SF Mono',Menlo,monospace">replay.save</td><td style="padding:6px 8px;border-bottom:1px solid #ECE9F5">—</td><td style="padding:6px 8px;border-bottom:1px solid #ECE9F5">Saves the replay buffer as a clip</td></tr>
+    <tr><td style="padding:6px 8px;border-bottom:1px solid #ECE9F5;font-family:ui-monospace,'SF Mono',Menlo,monospace">stats.subscribe / .unsubscribe</td><td style="padding:6px 8px;border-bottom:1px solid #ECE9F5">—</td><td style="padding:6px 8px;border-bottom:1px solid #ECE9F5">Start/stop 1 Hz <span style="font-family:ui-monospace,monospace">stats</span></td></tr>
+    <tr><td style="padding:6px 8px;border-bottom:1px solid #ECE9F5;font-family:ui-monospace,'SF Mono',Menlo,monospace">app.classify</td><td style="padding:6px 8px;border-bottom:1px solid #ECE9F5">pendingId, isGame, capture?</td><td style="padding:6px 8px;border-bottom:1px solid #ECE9F5">Answers “Is this a game?”. Permanent.</td></tr>
+    <tr><td style="padding:6px 8px;border-bottom:1px solid #ECE9F5;font-family:ui-monospace,'SF Mono',Menlo,monospace">app.reclassify</td><td style="padding:6px 8px;border-bottom:1px solid #ECE9F5">exe, isGame</td><td style="padding:6px 8px;border-bottom:1px solid #ECE9F5">Used by Undo and by moving an app between lists</td></tr>
+    <tr><td style="padding:6px 8px;border-bottom:1px solid #ECE9F5;font-family:ui-monospace,'SF Mono',Menlo,monospace">game.setCapture</td><td style="padding:6px 8px;border-bottom:1px solid #ECE9F5">gameId, capture</td><td style="padding:6px 8px;border-bottom:1px solid #ECE9F5">Per-game override</td></tr>
+    <tr><td style="padding:6px 8px;border-bottom:1px solid #ECE9F5;font-family:ui-monospace,'SF Mono',Menlo,monospace">settings.set</td><td style="padding:6px 8px;border-bottom:1px solid #ECE9F5">key, value</td><td style="padding:6px 8px;border-bottom:1px solid #ECE9F5">Writes config.json on the PC. Only keys listed in §9.9 are allowed.</td></tr>
+    <tr><td style="padding:6px 8px;border-bottom:1px solid #ECE9F5;font-family:ui-monospace,'SF Mono',Menlo,monospace">clips.list</td><td style="padding:6px 8px;border-bottom:1px solid #ECE9F5">gameId?, query?, cursor?</td><td style="padding:6px 8px;border-bottom:1px solid #ECE9F5">Paged, 50 per page, newest first</td></tr>
+    <tr><td style="padding:6px 8px;border-bottom:1px solid #ECE9F5;font-family:ui-monospace,'SF Mono',Menlo,monospace">clip.delete / clip.trim</td><td style="padding:6px 8px;border-bottom:1px solid #ECE9F5">id / id, in, out</td><td style="padding:6px 8px;border-bottom:1px solid #ECE9F5">Delete removes from PC and NAS. Trim writes a new clip; original kept.</td></tr>
+    <tr><td style="padding:6px 8px;border-bottom:1px solid #ECE9F5;font-family:ui-monospace,'SF Mono',Menlo,monospace">remote.stream</td><td style="padding:6px 8px;border-bottom:1px solid #ECE9F5">—</td><td style="padding:6px 8px;border-bottom:1px solid #ECE9F5">PC starts its Moonlight host (Sunshine); phone then opens the Moonlight app via URL scheme</td></tr>
+  </tbody>
+</table>
+<table style="width:100%;border-collapse:collapse;margin:10px 0 6px;font-size:12.5px;line-height:1.45">
+  <thead><tr><th style="text-align:left;padding:7px 8px;border-bottom:1.5px solid #CFC9E3;font-weight:700">PC → phone event</th><th style="text-align:left;padding:7px 8px;border-bottom:1.5px solid #CFC9E3;font-weight:700">When</th><th style="text-align:left;padding:7px 8px;border-bottom:1.5px solid #CFC9E3;font-weight:700">Phone reaction</th></tr></thead>
+  <tbody>
+    <tr><td style="padding:6px 8px;border-bottom:1px solid #ECE9F5;font-family:ui-monospace,'SF Mono',Menlo,monospace">session</td><td style="padding:6px 8px;border-bottom:1px solid #ECE9F5">Any Session field changes</td><td style="padding:6px 8px;border-bottom:1px solid #ECE9F5">Replace session; Now re-renders; Live Activity updates</td></tr>
+    <tr><td style="padding:6px 8px;border-bottom:1px solid #ECE9F5;font-family:ui-monospace,'SF Mono',Menlo,monospace">stats</td><td style="padding:6px 8px;border-bottom:1px solid #ECE9F5">1 Hz while subscribed</td><td style="padding:6px 8px;border-bottom:1px solid #ECE9F5">Append to 28-sample ring buffers (sparkline, fps bars)</td></tr>
+    <tr><td style="padding:6px 8px;border-bottom:1px solid #ECE9F5;font-family:ui-monospace,'SF Mono',Menlo,monospace">app.pending</td><td style="padding:6px 8px;border-bottom:1px solid #ECE9F5">Unknown fullscreen app detected</td><td style="padding:6px 8px;border-bottom:1px solid #ECE9F5">Insert into pending; show card on Games; present sheet if foregrounded (§9.4)</td></tr>
+    <tr><td style="padding:6px 8px;border-bottom:1px solid #ECE9F5;font-family:ui-monospace,'SF Mono',Menlo,monospace">app.resolved</td><td style="padding:6px 8px;border-bottom:1px solid #ECE9F5">Answered on any device</td><td style="padding:6px 8px;border-bottom:1px solid #ECE9F5">Remove pending; dismiss sheet if open; update lists</td></tr>
+    <tr><td style="padding:6px 8px;border-bottom:1px solid #ECE9F5;font-family:ui-monospace,'SF Mono',Menlo,monospace">clip.added / .updated / .removed</td><td style="padding:6px 8px;border-bottom:1px solid #ECE9F5">File system changes</td><td style="padding:6px 8px;border-bottom:1px solid #ECE9F5">Upsert by id; keep newest-first order</td></tr>
+    <tr><td style="padding:6px 8px;border-bottom:1px solid #ECE9F5;font-family:ui-monospace,'SF Mono',Menlo,monospace">games / settings / peers</td><td style="padding:6px 8px;border-bottom:1px solid #ECE9F5">Lists change</td><td style="padding:6px 8px;border-bottom:1px solid #ECE9F5">Replace wholesale</td></tr>
+    <tr><td style="padding:6px 8px;border-bottom:1px solid #ECE9F5;font-family:ui-monospace,'SF Mono',Menlo,monospace">obs</td><td style="padding:6px 8px;border-bottom:1px solid #ECE9F5">OBS connects/disconnects</td><td style="padding:6px 8px;border-bottom:1px solid #ECE9F5">Drives the OBS-disconnected state (§8)</td></tr>
+  </tbody>
+</table>
+
+<h2 style="margin:32px 0 10px;font-size:22px;line-height:1.25;font-weight:700;letter-spacing:-.01em">5. App structure and navigation</h2>
+<ul style="margin:0 0 10px;padding-left:20px">
+  <li><b>Root</b>: a floating glass tab bar with four tabs, in this order: <b>Now</b>, <b>Clips</b>, <b>Remote</b>, <b>Games</b>. Each tab has its own NavigationStack and keeps its scroll position and stack when you switch away.</li>
+  <li><b>Settings</b> is not a tab. It opens as a full-height sheet from the sliders button (42 pt glass circle, top right of the large-title row) on Now, Clips and Remote. Games uses that slot for “+” (add a game by exe name). Settings has a “Done” button top right; sub-pages push inside the sheet with a standard back chevron labelled “Settings”.</li>
+  <li><b>Clip detail</b> pushes on the Clips stack (and on the Now stack when a clip is tapped from Now). The tab bar stays visible.</li>
+  <li><b>“Is this a game?” sheet</b> is a modal sheet presented over whatever is on screen (detents: medium on SE-size screens, large otherwise). It covers the tab bar.</li>
+  <li><b>Deep links</b>: <span style="font-family:ui-monospace,'SF Mono',Menlo,monospace;font-size:12.5px">nebula://now</span>, <span style="font-family:ui-monospace,'SF Mono',Menlo,monospace;font-size:12.5px">nebula://clip/&lt;id&gt;</span>, <span style="font-family:ui-monospace,'SF Mono',Menlo,monospace;font-size:12.5px">nebula://pending/&lt;id&gt;</span>, <span style="font-family:ui-monospace,'SF Mono',Menlo,monospace;font-size:12.5px">nebula://settings/&lt;page&gt;</span>. Notifications and the Live Activity use these.</li>
+</ul>
+
+<h2 style="margin:32px 0 10px;font-size:22px;line-height:1.25;font-weight:700;letter-spacing:-.01em">6. Visual system</h2>
+<h3 style="margin:20px 0 8px;font-size:16.5px;font-weight:700">6.1 Colour tokens</h3>
+<table style="width:100%;border-collapse:collapse;margin:0 0 6px;font-size:12.5px;line-height:1.45">
+  <thead><tr><th style="text-align:left;padding:7px 8px;border-bottom:1.5px solid #CFC9E3;font-weight:700">Token</th><th style="text-align:left;padding:7px 8px;border-bottom:1.5px solid #CFC9E3;font-weight:700">Value</th><th style="text-align:left;padding:7px 8px;border-bottom:1.5px solid #CFC9E3;font-weight:700">Used for — and only for</th></tr></thead>
+  <tbody>
+    <tr><td style="padding:6px 8px;border-bottom:1px solid #ECE9F5;font-family:ui-monospace,monospace">ground</td><td style="padding:6px 8px;border-bottom:1px solid #ECE9F5;font-family:ui-monospace,monospace">#06050C</td><td style="padding:6px 8px;border-bottom:1px solid #ECE9F5">Behind backgrounds; first paint before the renderer is ready</td></tr>
+    <tr><td style="padding:6px 8px;border-bottom:1px solid #ECE9F5;font-family:ui-monospace,monospace">ink</td><td style="padding:6px 8px;border-bottom:1px solid #ECE9F5;font-family:ui-monospace,monospace">#F5F3FF</td><td style="padding:6px 8px;border-bottom:1px solid #ECE9F5">Primary text and icons</td></tr>
+    <tr><td style="padding:6px 8px;border-bottom:1px solid #ECE9F5;font-family:ui-monospace,monospace">ink-2 / ink-3</td><td style="padding:6px 8px;border-bottom:1px solid #ECE9F5;font-family:ui-monospace,monospace">#C9C4E6 / #9A93C4</td><td style="padding:6px 8px;border-bottom:1px solid #ECE9F5">Secondary text over glass / tertiary labels, inactive tabs</td></tr>
+    <tr><td style="padding:6px 8px;border-bottom:1px solid #ECE9F5;font-family:ui-monospace,monospace">violet</td><td style="padding:6px 8px;border-bottom:1px solid #ECE9F5;font-family:ui-monospace,monospace">#8B7CF6 (light #B9AEF9, pale #C4B8FF)</td><td style="padding:6px 8px;border-bottom:1px solid #ECE9F5">Active tab icon, selection, links, primary outlined actions, storage ring</td></tr>
+    <tr><td style="padding:6px 8px;border-bottom:1px solid #ECE9F5;font-family:ui-monospace,monospace">gold</td><td style="padding:6px 8px;border-bottom:1px solid #ECE9F5;font-family:ui-monospace,monospace">#FFE8BC</td><td style="padding:6px 8px;border-bottom:1px solid #ECE9F5">Running clock, REC dot and chip, live playhead. Gold means “live now”; never decorative.</td></tr>
+    <tr><td style="padding:6px 8px;border-bottom:1px solid #ECE9F5;font-family:ui-monospace,monospace">amber</td><td style="padding:6px 8px;border-bottom:1px solid #ECE9F5;font-family:ui-monospace,monospace">#E9B872 / #E0A85C</td><td style="padding:6px 8px;border-bottom:1px solid #ECE9F5">Highlight marks / offloading in progress</td></tr>
+    <tr><td style="padding:6px 8px;border-bottom:1px solid #ECE9F5;font-family:ui-monospace,monospace">teal</td><td style="padding:6px 8px;border-bottom:1px solid #ECE9F5;font-family:ui-monospace,monospace">#3EBEB0 (pale #9FE3D6)</td><td style="padding:6px 8px;border-bottom:1px solid #ECE9F5">Online, synced, on NAS, zero dropped frames</td></tr>
+    <tr><td style="padding:6px 8px;border-bottom:1px solid #ECE9F5;font-family:ui-monospace,monospace">coral</td><td style="padding:6px 8px;border-bottom:1px solid #ECE9F5;font-family:ui-monospace,monospace">#FF5C7A (text on tint #FFC2CE / #FF8FA3)</td><td style="padding:6px 8px;border-bottom:1px solid #ECE9F5">Stop, Start recording, Delete, errors. Stop is the only solid coral fill.</td></tr>
+    <tr><td style="padding:6px 8px;border-bottom:1px solid #ECE9F5;font-family:ui-monospace,monospace">magenta</td><td style="padding:6px 8px;border-bottom:1px solid #ECE9F5;font-family:ui-monospace,monospace">#D471E0</td><td style="padding:6px 8px;border-bottom:1px solid #ECE9F5">Backgrounds and the chat audio meter only</td></tr>
+  </tbody>
+</table>
+<h3 style="margin:20px 0 8px;font-size:16.5px;font-weight:700">6.2 Surfaces</h3>
+<ul style="margin:0 0 10px;padding-left:20px">
+  <li><b>Glass (live surfaces)</b> — hero card, tab bar, round buttons, search field: fill <span style="font-family:ui-monospace,monospace;font-size:12.5px">rgba(16,13,28,.50)</span> (hero) or <span style="font-family:ui-monospace,monospace;font-size:12.5px">rgba(30,26,48,.30)</span> (bar/buttons), background blur 20 pt (hero) / 14 pt (bar), saturation 170–190%, a 1 pt inner top highlight <span style="font-family:ui-monospace,monospace;font-size:12.5px">rgba(255,255,255,.14–.30)</span> and a 1 pt inner hairline <span style="font-family:ui-monospace,monospace;font-size:12.5px">rgba(255,255,255,.07)</span>. In SwiftUI use <span style="font-family:ui-monospace,monospace;font-size:12.5px">.ultraThinMaterial</span> tinted with the fill colour; do not stack two materials.</li>
+  <li><b>Reading surfaces</b> — tiles, list groups, settings rows. Rendered per <span style="font-family:ui-monospace,monospace;font-size:12.5px">PhonePrefs.surfaces</span>:
+    <ul style="padding-left:18px">
+      <li><span style="font-family:ui-monospace,monospace;font-size:12.5px">glass</span> (default): fill <span style="font-family:ui-monospace,monospace;font-size:12.5px">rgba(22,18,40,.40)</span>, blur 18 pt, saturation 170%, plus a 150° sheen gradient <span style="font-family:ui-monospace,monospace;font-size:12.5px">rgba(185,174,249,.16) → 0</span> by 46%.</li>
+      <li><span style="font-family:ui-monospace,monospace;font-size:12.5px">lively</span>: opaque; violet radial glow top-left (<span style="font-family:ui-monospace,monospace;font-size:12.5px">rgba(139,124,246,.30)</span>), magenta radial bottom-right (<span style="font-family:ui-monospace,monospace;font-size:12.5px">rgba(212,113,224,.18)</span>) over a 160° gradient <span style="font-family:ui-monospace,monospace;font-size:12.5px">#241C44 → #17122C</span>.</li>
+      <li><span style="font-family:ui-monospace,monospace;font-size:12.5px">solid</span>: <span style="font-family:ui-monospace,monospace;font-size:12.5px">#1C1730</span>.</li>
+    </ul>
+    Text contrast over glass MUST stay ≥ 4.5:1: if the background behind a glass reading surface measures brighter than L* 35, raise fill alpha toward .60 (implement as a per-background constant table, not per-frame sampling).</li>
+  <li><b>Trays (“machined bezel”)</b> — every hero card, tile and featured card sits in an outer tray: padding 6 pt, fill <span style="font-family:ui-monospace,monospace;font-size:12.5px">rgba(245,243,255,.04)</span>, inner hairline <span style="font-family:ui-monospace,monospace;font-size:12.5px">rgba(245,243,255,.09)</span>. Radii are concentric: tray 34 → card 28 (hero); tray 30 → card 24 (tiles); tray 32 → card 26 (featured clip). List groups (settings, games, peers) are NOT trayed.</li>
+  <li>Row dividers inside groups: 0.5 pt <span style="font-family:ui-monospace,monospace;font-size:12.5px">rgba(245,243,255,.09)</span>, inset to the content edge. No dividers between groups; use 14 pt gaps.</li>
+</ul>
+<h3 style="margin:20px 0 8px;font-size:16.5px;font-weight:700">6.3 Type (SF Pro, system)</h3>
+<table style="width:100%;border-collapse:collapse;margin:0 0 6px;font-size:12.5px;line-height:1.45">
+  <thead><tr><th style="text-align:left;padding:7px 8px;border-bottom:1.5px solid #CFC9E3;font-weight:700">Role</th><th style="text-align:left;padding:7px 8px;border-bottom:1.5px solid #CFC9E3;font-weight:700">Size / weight</th><th style="text-align:left;padding:7px 8px;border-bottom:1.5px solid #CFC9E3;font-weight:700">Notes</th></tr></thead>
+  <tbody>
+    <tr><td style="padding:6px 8px;border-bottom:1px solid #ECE9F5">Large title</td><td style="padding:6px 8px;border-bottom:1px solid #ECE9F5">34/41 Bold, tracking −0.01em</td><td style="padding:6px 8px;border-bottom:1px solid #ECE9F5">Subtitle under it 13 Regular ink-2</td></tr>
+    <tr><td style="padding:6px 8px;border-bottom:1px solid #ECE9F5">Hero clock</td><td style="padding:6px 8px;border-bottom:1px solid #ECE9F5">42–46 Medium, tabular + lining figures, −0.025em</td><td style="padding:6px 8px;border-bottom:1px solid #ECE9F5">Gold. Rolling digits (§7.2)</td></tr>
+    <tr><td style="padding:6px 8px;border-bottom:1px solid #ECE9F5">Card title</td><td style="padding:6px 8px;border-bottom:1px solid #ECE9F5">17–22 Semibold</td><td style="padding:6px 8px;border-bottom:1px solid #ECE9F5">Game names</td></tr>
+    <tr><td style="padding:6px 8px;border-bottom:1px solid #ECE9F5">Row label / value</td><td style="padding:6px 8px;border-bottom:1px solid #ECE9F5">16 Regular / 14 Regular ink-3</td><td style="padding:6px 8px;border-bottom:1px solid #ECE9F5">Row height 50 (settings), 58 (peers)</td></tr>
+    <tr><td style="padding:6px 8px;border-bottom:1px solid #ECE9F5">Eyebrow</td><td style="padding:6px 8px;border-bottom:1px solid #ECE9F5">11 Semibold, uppercase, tracking 0.16em</td><td style="padding:6px 8px;border-bottom:1px solid #ECE9F5">Section labels, tile labels, chips like REC</td></tr>
+    <tr><td style="padding:6px 8px;border-bottom:1px solid #ECE9F5">Mono</td><td style="padding:6px 8px;border-bottom:1px solid #ECE9F5">SF Mono 12</td><td style="padding:6px 8px;border-bottom:1px solid #ECE9F5">Exe names, paths. Truncate middle.</td></tr>
+    <tr><td style="padding:6px 8px;border-bottom:1px solid #ECE9F5">Minimum</td><td style="padding:6px 8px;border-bottom:1px solid #ECE9F5">10 Semibold (tab labels only); 12 elsewhere</td><td style="padding:6px 8px;border-bottom:1px solid #ECE9F5">Supports Dynamic Type up to AX1; above that, tiles stack to one column</td></tr>
+  </tbody>
+</table>
+<h3 style="margin:20px 0 8px;font-size:16.5px;font-weight:700">6.4 Geometry and controls</h3>
+<ul style="margin:0 0 10px;padding-left:20px">
+  <li>Screen side margin 14 pt for trays/groups (content edge 20 pt); large title at y = 92 from the top of the safe area’s container on a 402×874 pt device; content starts at y = 150–164.</li>
+  <li>Tab bar: floating pill, 21 pt from each side, 28 pt above the bottom edge, height 62, radius 31, 4 equal columns, 26 pt line icons (1.5 pt stroke) over a 10 pt label. Active: icon violet, label ink; inactive: both ink-3. Scrollable content gets 110 pt bottom inset so nothing ends under the bar.</li>
+  <li>Segmented control: track <span style="font-family:ui-monospace,monospace;font-size:12.5px">rgba(10,8,18,.55)</span> with hairline, height 32–36, 2 pt padding; selected segment <span style="font-family:ui-monospace,monospace;font-size:12.5px">rgba(139,124,246,.24)</span> with inner hairline <span style="font-family:ui-monospace,monospace;font-size:12.5px">rgba(185,174,249,.35)</span>; 12–13 Semibold labels. Selection slides (§7.1).</li>
+  <li>Primary action (“Stream to this phone”, “It’s a game — …”): pill height 56, violet tint fill <span style="font-family:ui-monospace,monospace;font-size:12.5px">rgba(139,124,246,.20)</span> + 1 pt <span style="font-family:ui-monospace,monospace;font-size:12.5px">rgba(139,124,246,.55)</span> ring, label left, a 44 pt trailing circle holding the icon (button-in-button). Never a solid violet fill.</li>
+  <li>Hit targets ≥ 44×44 pt everywhere, including chips and stepper buttons (pad the hit area if the visual is smaller).</li>
+  <li>Icons: line style, 1.5–1.8 pt stroke, round caps. Use SF Symbols where an equivalent exists (<span style="font-family:ui-monospace,monospace;font-size:12.5px">record.circle, film.stack, play.tv, gamecontroller, slider.horizontal.3, square.and.arrow.up, arrow.down.to.line, scissors, trash, folder, clock.arrow.circlepath, keyboard, icloud, externaldrive, paintpalette, bell, arrow.triangle.2.circlepath</span>) at weight .light; otherwise match the mockup paths.</li>
+</ul>
+
+<h2 style="margin:32px 0 10px;font-size:22px;line-height:1.25;font-weight:700;letter-spacing:-.01em">7. Motion</h2>
+<h3 style="margin:20px 0 8px;font-size:16.5px;font-weight:700">7.1 Curves</h3>
+<p style="margin:0 0 10px">All UI transitions use a spring equivalent to <span style="font-family:ui-monospace,monospace;font-size:12.5px">cubic-bezier(.32,.72,0,1)</span>: SwiftUI <span style="font-family:ui-monospace,monospace;font-size:12.5px">.spring(response: 0.45, dampingFraction: 0.86)</span>. Durations: segment/selection 0.35 s, chips 0.4 s, card insert/remove 0.5 s. Press state: scale 0.98 over 0.15 s. No linear or ease-in-out curves in UI.</p>
+<h3 style="margin:20px 0 8px;font-size:16.5px;font-weight:700">7.2 Rolling clock</h3>
+<p style="margin:0 0 10px">Each digit is a vertical strip 0–9 clipped to one line; on change, the strip translates to the new digit over 0.6 s with the spring above. Colons don’t move. Format <span style="font-family:ui-monospace,monospace;font-size:12.5px">HH:MM:SS</span> with leading zero hours in the hero (e.g. <span style="font-family:ui-monospace,monospace;font-size:12.5px">01:12:04</span>). The clock freezes while paused and is ink-2 (not gold) while paused.</p>
+<h3 style="margin:20px 0 8px;font-size:16.5px;font-weight:700">7.3 Reduce Motion and Still</h3>
+<p style="margin:0 0 10px">If iOS Reduce Motion is on <b>or</b> <span style="font-family:ui-monospace,monospace;font-size:12.5px">PhonePrefs.motion == "still"</span>: backgrounds render one frame (t = 20 s) and stop; the clock updates without rolling (cross-fade 0.15 s); springs become 0.2 s fades; live meters update without width animation. The background still re-renders when the user changes it.</p>
+
+<h2 style="margin:32px 0 10px;font-size:22px;line-height:1.25;font-weight:700;letter-spacing:-.01em">8. Global states</h2>
+<p style="margin:0 0 10px">These override normal content. Evaluate top to bottom; the first that matches wins.</p>
+<table style="width:100%;border-collapse:collapse;margin:0 0 6px;font-size:12.5px;line-height:1.45">
+  <thead><tr><th style="text-align:left;padding:7px 8px;border-bottom:1.5px solid #CFC9E3;font-weight:700">State</th><th style="text-align:left;padding:7px 8px;border-bottom:1.5px solid #CFC9E3;font-weight:700">Condition</th><th style="text-align:left;padding:7px 8px;border-bottom:1.5px solid #CFC9E3;font-weight:700">What the user sees</th></tr></thead>
+  <tbody>
+    <tr><td style="padding:6px 8px;border-bottom:1px solid #ECE9F5;font-weight:600">Unpaired</td><td style="padding:6px 8px;border-bottom:1px solid #ECE9F5">No deviceToken</td><td style="padding:6px 8px;border-bottom:1px solid #ECE9F5">First-run: background, wordmark, “Pair with your PC”, explainer line, “Scan code” primary button. No tab bar.</td></tr>
+    <tr><td style="padding:6px 8px;border-bottom:1px solid #ECE9F5;font-weight:600">Connecting</td><td style="padding:6px 8px;border-bottom:1px solid #ECE9F5">Socket not yet open, &lt; 3 s</td><td style="padding:6px 8px;border-bottom:1px solid #ECE9F5">Last known state, dimmed to 70%, no banner (avoid flicker)</td></tr>
+    <tr><td style="padding:6px 8px;border-bottom:1px solid #ECE9F5;font-weight:600">PC offline</td><td style="padding:6px 8px;border-bottom:1px solid #ECE9F5">Not connected ≥ 3 s</td><td style="padding:6px 8px;border-bottom:1px solid #ECE9F5">Glass banner under the large title: grey dot, “Studio PC is offline”, “Last seen 8:12 pm”. Controls that need the PC are disabled at 45% opacity. Cached clips list still browsable; playback disabled.</td></tr>
+    <tr><td style="padding:6px 8px;border-bottom:1px solid #ECE9F5;font-weight:600">OBS disconnected</td><td style="padding:6px 8px;border-bottom:1px solid #ECE9F5">Connected, <span style="font-family:ui-monospace,monospace">obs.connected == false</span></td><td style="padding:6px 8px;border-bottom:1px solid #ECE9F5">Coral-tinted banner: “OBS isn’t connected on Studio PC”. Start/Pause/Stop disabled. Clips, Games, Settings work.</td></tr>
+    <tr><td style="padding:6px 8px;border-bottom:1px solid #ECE9F5;font-weight:600">Normal</td><td style="padding:6px 8px;border-bottom:1px solid #ECE9F5">—</td><td style="padding:6px 8px;border-bottom:1px solid #ECE9F5">As specified per screen</td></tr>
+  </tbody>
+</table>
+<p style="margin:10px 0 10px">Recording state machine (driven only by <span style="font-family:ui-monospace,monospace;font-size:12.5px">session.state</span> from the PC; the phone never infers it):</p>
+<pre style="break-inside:avoid;margin:0 0 6px;padding:14px 16px;border-radius:8px;background:#F6F5FA;border:1px solid #E4E0EE;font-family:ui-monospace,'SF Mono',Menlo,monospace;font-size:11.5px;line-height:1.55;white-space:pre-wrap">idle ──game launches (capture=record|both) or session.start──▶ recording
+idle ──game launches (capture=buffer)────────────────────────▶ bufferOnly
+recording ──session.pause or idle timeout──▶ paused ──session.resume or input──▶ recording
+recording | paused ──session.stop or game exits──▶ idle   (clip finalised; if duration &lt; discardUnder it is deleted and no clip.added is sent)
+bufferOnly ──replay.save──▶ bufferOnly (clip.added kind=replay)
+bufferOnly ──game exits──▶ idle</pre>
+<p style="margin:0 0 10px;font-size:12.5px;color:#5A5470">Figure 2 — session states. “Playing” in the UI means state ∈ {recording, paused, bufferOnly}.</p>
+
+<h2 style="margin:32px 0 10px;font-size:22px;line-height:1.25;font-weight:700;letter-spacing:-.01em">9. Screens</h2>
+<p style="margin:0 0 10px">Positions are for a 402×874 pt device (iPhone 17 / Pro); on other sizes keep margins and spacings and let the content column flow. Everything below the large title is a single vertical stack inside a ScrollView — the mockups position things absolutely only because they are static.</p>
+
+<h3 style="margin:22px 0 8px;font-size:16.5px;font-weight:700">9.1 Now — playing (mockup 2f, default layout)</h3>
+<ol style="margin:0 0 10px;padding-left:20px">
+  <li><b>Large title</b> “Now” + sliders button.</li>
+  <li><b>Hero tray</b> (glass card). Row 1: REC chip (gold dot + “REC”; “PAUSED” in ink-2 with a hollow dot when paused; “BUFFER” in violet when bufferOnly) left; “1080p60 · NVENC” right, from <span style="font-family:ui-monospace,monospace;font-size:12.5px">session.output</span>. Row 2: game name 17 Semibold above the rolling clock (gold, 42) on the left; Pause/Resume (48 pt glass circle) and Stop (48 pt solid coral circle, ink-dark square glyph) on the right. In bufferOnly the clock is replaced with “Replay buffer · 30 s” and the buttons become “Save replay” (violet outlined) and Stop.</li>
+  <li><b>Tile row</b> (2 columns, 12 pt gap). <i>Storage</i>: 52 pt ring (violet arc = used %), “212 GB”, “≈ 4 days” from <span style="font-family:ui-monospace,monospace;font-size:12.5px">estimatedRemaining</span>. <i>Encoder</i>: eyebrow “ENCODER”, right-aligned “0 drops” in teal (amber “3 drops” if &gt; 0, coral if &gt; 1% of frames); “48.2 Mb/s”; 28-sample sparkline with a violet area fill.</li>
+  <li><b>“Recent clips”</b> header with “See all” (switches to Clips tab).</li>
+  <li><b>Clip stack</b>: the 3 newest clips as physically stacked cards, front card full width at 180 pt tall, the two behind scaled 0.92 / 0.84 and faded to 72% / 45%, offset 22 pt / 48 pt up. Front card: still, bottom gradient, duration chip top right, title “&lt;Game&gt; · &lt;label&gt;”, and an icon row (location in teal, resolution, “N marks”). Tap front → Clip detail. Swipe the front card left/right to cycle the stack (spring); the order wraps.</li>
+</ol>
+<p style="margin:0 0 10px"><b>Alternative layouts</b> (Settings → Appearance → “Now layout”): <i>Game-aware</i> (2g) replaces Encoder with a Game tile (live fps bars, GPU °C), adds a full-width Highlights strip with a moving gold playhead, and shows clips as a two-up row; the hero carries the game’s cover art masked from the right at 50% opacity. <i>Clips-led</i> (2h) uses a single-row hero strip (REC · GAME, clock 38, two round buttons), tiles Highlights (count + dots) and Audio (game/mic/chat meters, 4 Hz), and a larger stack.</p>
+
+<h3 style="margin:22px 0 8px;font-size:16.5px;font-weight:700">9.2 Now — not playing</h3>
+<ul style="margin:0 0 10px;padding-left:20px">
+  <li>Hero becomes the <b>last-session card</b>: “IDLE” chip (ink-3 dot), “Studio PC online” in teal right; eyebrow “LAST SESSION · 8:12 PM”; “Sifu · 1:12:04” (duration in ink-3); “3 highlights · 8.4 GB · on nas-vault”; and a coral-tinted <b>Start recording</b> pill (height 46, trailing 38 pt solid coral circle with a dot). Start sends <span style="font-family:ui-monospace,monospace;font-size:12.5px">session.start</span>; if the PC replies <span style="font-family:ui-monospace,monospace;font-size:12.5px">noGame</span>, show toast “No game in the foreground on Studio PC”.</li>
+  <li>Encoder tile becomes <b>Offload</b>: “To nas-vault”, amber progress bar, percentage, “2 clips · 3.4 GB left”. When nothing is pending: “All synced” in teal with no bar.</li>
+  <li>2g idle: hero shows “LAST PLAYED · 2 h ago”, game name 30, an achievement-style line if the PC provides one, and two buttons “Record” and “Launch on PC” (launch is a v1.1 command — show it disabled with “Coming soon” if unsupported). Game tile becomes “This week” (total hours + 7 day bars, today in gold). The highlights strip shows last session with no playhead.</li>
+  <li>2h idle: last-session card; the Audio tile becomes Library (“212 GB free”, “All synced to nas-vault”).</li>
+  <li>The Live Activity ends when the state returns to idle.</li>
+  <li>No session ever recorded: the hero says “Ready when you are” / “Nebula starts recording when a game launches on Studio PC.”; the tiles and stack are hidden.</li>
+</ul>
+
+<h3 style="margin:22px 0 8px;font-size:16.5px;font-weight:700">9.3 Clips (3a)</h3>
+<ol style="margin:0 0 10px;padding-left:20px">
+  <li>Large title “Clips”, subtitle “141 clips · 214 GB · 9 games” (totals across all games). Sliders button.</li>
+  <li><b>Search field</b> (glass, 44 tall, placeholder “Search clips”): filters by game name, file name and highlight labels; debounced 250 ms; server-side via <span style="font-family:ui-monospace,monospace;font-size:12.5px">clips.list {query}</span>.</li>
+  <li><b>Game chips</b>, horizontally scrollable: “All” first, then games by most recent clip. Single select. Selected: violet tint + light ring.</li>
+  <li><b>Latest</b>: the newest clip matching the filter in a tray (176 tall), with a gold “LATEST” chip; while that clip is still being written, the chip reads “WRITING” in violet and duration/size show “—”.</li>
+  <li><b>By game</b> grid (2 columns, 118 tall cover tiles, radius 24): cover art (Steam capsule if available, else the newest clip’s still), name, “38 clips · 64 GB”. Tap → the same Clips screen pushed with that game’s chip pre-selected and the grid replaced by a list of that game’s clips (rows: 64×36 still radius 8, title, status icon: amber up-arrow offloading, teal check on NAS, violet dot writing).</li>
+  <li>“Sort” offers Newest, Largest, Longest, Most highlights.</li>
+  <li>Empty: tray with a film icon, “No clips yet”, “When a game starts, Nebula records it in OBS and files the clip in that game’s own folder.”</li>
+</ol>
+
+<h3 style="margin:22px 0 8px;font-size:16.5px;font-weight:700">9.4 Clip detail (3b)</h3>
+<ul style="margin:0 0 10px;padding-left:20px">
+  <li>Top 360 pt: the clip, full-bleed under the status bar, fading into the ground over its lower 45%. Glass back (left) and more (right) buttons at y = 62. Centre play button 68 pt glass. Playback streams from <span style="font-family:ui-monospace,monospace;font-size:12.5px">/files/clip/&lt;id&gt;</span> with AVPlayer (HTTP range); full screen on rotate or double-tap.</li>
+  <li>Title 28 Bold “&lt;Game&gt; · &lt;label or time&gt;”; line “Today, 8:12 pm · 18:42 · Gameplay scene”.</li>
+  <li><b>Scrubber</b>: 6 pt track, violet gradient fill to the playhead, 20 pt ink thumb, gold 4×18 pt ticks at each highlight (tap a tick to jump), times below (current · “N highlights” · total). Drag scrubs with haptic ticks at highlights.</li>
+  <li><b>Facts tray</b> (reading surface): Quality, Size, Stored (teal dot + “nas-vault + Studio PC”; amber “Offloading 42%” while in progress), Folder (mono).</li>
+  <li><b>Actions</b> (4 round 56 pt buttons): Share (downloads to a temp file with progress, then the system share sheet), Save (to Photos; asks permission once), Trim (opens a trim sheet with two handles; “Save as new clip” sends <span style="font-family:ui-monospace,monospace;font-size:12.5px">clip.trim</span>), Delete (coral; confirmation dialog “Delete this clip from Studio PC and nas-vault?” with destructive “Delete”).</li>
+  <li>More menu: Rename label, Open on PC (reveals in Explorer), Copy file path.</li>
+</ul>
+
+<h3 style="margin:22px 0 8px;font-size:16.5px;font-weight:700">9.5 Games (3c)</h3>
+<ol style="margin:0 0 10px;padding-left:20px">
+  <li>Large title “Games”, subtitle “When a game launches: Record” (live from <span style="font-family:ui-monospace,monospace;font-size:12.5px">settings.launchCapture</span>; tapping it opens Settings › Recording). “+” button: add a game by exe name or from the PC’s running processes list.</li>
+  <li><b>Pending card</b> (one per pending app, newest first, max 3 visible then “+N more”): violet-tinted tray, “?” badge with violet halo, eyebrow “NEW APP ON STUDIO PC”, “Is this a game?”, exe in mono, buttons “It’s a game” (violet outlined) and “Not a game” (ghost). Answering sends <span style="font-family:ui-monospace,monospace;font-size:12.5px">app.classify</span> with <span style="font-family:ui-monospace,monospace;font-size:12.5px">capture: "default"</span>; the card collapses (0.5 s spring) into a 44 pt glass confirmation “Clair Obscur added — it’ll record” / “… marked not a game” with <b>Undo</b> for 8 s (sends <span style="font-family:ui-monospace,monospace;font-size:12.5px">app.reclassify</span>).</li>
+  <li><b>Games · capture</b> group (reading surface): one row per game, sorted by last played. Row = name (16 Semibold) + source right (“Steam”, “Added by you”, “Added just now” in violet) above a 4-segment control <b>Default · Record · Buffer · Both</b>. Default means “follow launchCapture”. Changing sends <span style="font-family:ui-monospace,monospace;font-size:12.5px">game.setCapture</span>. Swipe a row left → “Not a game” (moves it to the list below).</li>
+  <li><b>Not games · never recorded</b>: wrap of chips with display names. Long-press a chip → “Mark as game”.</li>
+  <li>Eyebrow copy right of the games header: “Steam auto-classifies”.</li>
+</ol>
+
+<h3 style="margin:22px 0 8px;font-size:16.5px;font-weight:700">9.6 “Is this a game?” sheet and notification (3d)</h3>
+<ul style="margin:0 0 10px;padding-left:20px">
+  <li><b>Trigger</b>: <span style="font-family:ui-monospace,monospace;font-size:12.5px">app.pending</span>. If the app is foregrounded, present the sheet immediately unless the user is in Clip detail playback or the Trim sheet — then show the Games tab badge only. If backgrounded, the relay sends a push: title “Is this a game?”, body “Sandfall-Win64-Shipping.exe just went fullscreen on Studio PC.”, category with actions <b>It’s a game</b> / <b>Not a game</b> (answer from the notification without opening the app; uses default capture). Tapping the notification opens the sheet.</li>
+  <li><b>Sheet layout</b>: grabber; 56 pt “?” badge with halo; eyebrow “NEW APP ON STUDIO PC · 12 S AGO” (relative, live); title 30 Bold “Is this a game?”; facts group — Process (mono, middle-truncated), Window (“Fullscreen · 2560 × 1440”), Steam (“Not in library” in amber / “In library” in teal); eyebrow “IF IT’S A GAME” + 3-segment <b>Record · Buffer · Both</b> (pre-selected from launchCapture); primary “It’s a game — record it” (verb follows the segment: “record it” / “buffer it” / “record + buffer”) with a trailing check circle; ghost “Not a game”; footnote “Asked once, remembered forever. Change any call in Games.”</li>
+  <li>Answering dismisses the sheet with a success haptic. If several apps are pending, the sheet advances to the next one with a horizontal slide instead of dismissing.</li>
+  <li>If <span style="font-family:ui-monospace,monospace;font-size:12.5px">app.resolved</span> arrives for the shown app (answered on the PC), dismiss without haptic.</li>
+</ul>
+
+<h3 style="margin:22px 0 8px;font-size:16.5px;font-weight:700">9.7 Remote (3e)</h3>
+<ul style="margin:0 0 10px;padding-left:20px">
+  <li>Large title “Remote”, subtitle “Moonlight · Tailscale”.</li>
+  <li><b>Host tray</b> (glass): 76 pt round host image (user-set photo or the default night-city still, with a violet inner glow), “Studio PC”, status line (teal “Online on Tailscale” / ink-3 “Offline”), “Moonlight not running” / “Streaming to iPhone”. Primary “Stream to this phone” → sends <span style="font-family:ui-monospace,monospace;font-size:12.5px">remote.stream</span>, then opens <span style="font-family:ui-monospace,monospace;font-size:12.5px">moonlight://</span>. If Moonlight isn’t installed, the button reads “Get Moonlight” and opens the App Store page.</li>
+  <li><b>Tiles</b>: Stream (“1080p · 60”, “Matches this screen”) and Controller (“On screen” / paired pad name).</li>
+  <li><b>Tailscale peers</b>: rows with a device glyph, name, “Online”/“Offline”, and a teal/grey dot. Labels only — no IPs, no ping (deliberate, matches desktop).</li>
+</ul>
+
+<h3 style="margin:22px 0 8px;font-size:16.5px;font-weight:700">9.8 Settings (3f)</h3>
+<ul style="margin:0 0 10px;padding-left:20px">
+  <li>Sheet with large title “Settings” and “Done”.</li>
+  <li><b>PC tray</b>: Nebula mark in a violet badge, “Studio PC”, teal “Paired · OBS connected” (coral “OBS disconnected” when applicable), chevron → PC page (rename on phone, Pair another PC, Unpair).</li>
+  <li><b>Group 1</b> (violet icons): Recording → “Record” · Instant replay → “30 s” · Games &amp; detection → “13 games” · Hotkey → “`” (read-only page explaining it’s set on the PC).</li>
+  <li><b>Group 2</b> (teal icons): Game list sync → “OneDrive” · Offload to NAS → “nas-vault” · Remote streaming → “Tailscale”.</li>
+  <li><b>Group 3</b> (amber icons): Appearance → current background name · Notifications → “On” · Updates → “v2.4.1” (“Update available” in violet when the PC reports one; the phone can trigger the PC update but asks first).</li>
+  <li>Row icons sit in 30 pt rounded squares (radius 9) with a 16–18% tint of the group colour.</li>
+</ul>
+
+<h3 style="margin:22px 0 8px;font-size:16.5px;font-weight:700">9.9 Settings › Recording (3h)</h3>
+<ul style="margin:0 0 10px;padding-left:20px">
+  <li>Nav bar: back “Settings”, title “Recording”, a transient teal “Saved” at right for 1.5 s after each successful write.</li>
+  <li><b>When a game launches</b>: Record · Buffer · Both, with a one-line explanation under it that changes with the selection (copy in mockup 3h). Writes <span style="font-family:ui-monospace,monospace;font-size:12.5px">launchCapture</span>.</li>
+  <li><b>Instant replay length</b>: 15 s · 30 s · 60 s · 2 min. Writes <span style="font-family:ui-monospace,monospace;font-size:12.5px">replaySeconds</span>.</li>
+  <li><b>Auto-pause &amp; cleanup</b>: “Pause when idle” stepper 1–60 s (step 1); “Discard clips under” stepper 0–120 s (step 5; 0 shows “Off”); “Keep recording while these play audio” chips (teal, mono) + “+ Add app” (picks from the PC’s running audio sessions). Steppers write on release with a 600 ms debounce.</li>
+  <li><b>Recording folder</b>: read-only mono path + “set on PC”.</li>
+  <li>Phone-writable keys are exactly: <span style="font-family:ui-monospace,monospace;font-size:12.5px">launchCapture, replaySeconds, idleTimeout, discardUnder, keepAliveApps, offload.auto, gameListSync.provider</span>. Everything else is read-only on the phone.</li>
+</ul>
+
+<h3 style="margin:22px 0 8px;font-size:16.5px;font-weight:700">9.10 Settings › Appearance (3g)</h3>
+<ul style="margin:0 0 10px;padding-left:20px">
+  <li>Eyebrow “BACKGROUND · LIVE BEHIND EVERY TAB”; a 3×3 grid of live tiles (150 tall, radius 20) — Earth, Random, Moonrise, Solar live, Dot bloom, Pixel orbit, Galaxy, Ringed, Dither — each cropped to where its art lives (planets/galaxy/ringed: bottom; others: centre). Selected tile: 2 pt violet ring + glow + check badge. Tap applies immediately to every screen (cross-fade 0.4 s).</li>
+  <li>Rows: Motion (Live · Still), Random planet (Reroll + generated name chip; rerolling selects Random), Surfaces (Glass · Lively · Solid), Now layout (Bento · Game-aware · Clips-led).</li>
+  <li>Only the selected tile animates continuously; the others refresh one per frame in rotation (≈ 2 fps each).</li>
+</ul>
+
+<h3 style="margin:22px 0 8px;font-size:16.5px;font-weight:700">9.11 Live Activity and Lock Screen</h3>
+<ul style="margin:0 0 10px;padding-left:20px">
+  <li>Starts on <span style="font-family:ui-monospace,monospace;font-size:12.5px">recording</span>/<span style="font-family:ui-monospace,monospace;font-size:12.5px">bufferOnly</span>, ends on idle. Uses <span style="font-family:ui-monospace,monospace;font-size:12.5px">Text(timerInterval:)</span> so the clock ticks without updates.</li>
+  <li>Lock Screen: solid card <span style="font-family:ui-monospace,monospace;font-size:12.5px">#2A2442</span> (no live backgrounds on the Lock Screen), Nebula mark, “Nebula is recording”, gold REC chip, gold clock 58, “Sifu · 1080p60”, Pause and Stop buttons (App Intents).</li>
+  <li>Dynamic Island compact: Nebula mark left, gold clock right. Expanded: game, clock, REC size line, Pause/Stop.</li>
+</ul>
+
+<h2 style="margin:32px 0 10px;font-size:22px;line-height:1.25;font-weight:700;letter-spacing:-.01em">10. Backgrounds engine</h2>
+<p style="margin:0 0 10px">Reference implementation: <span style="font-family:ui-monospace,monospace;font-size:12.5px">nm-space.js</span> (Canvas 2D). Port to Metal (MTKView) or SpriteKit; the algorithms and constants are the spec. One renderer instance draws one background into one shared texture per frame; every visible screen composites that same texture full-screen behind its content (never one renderer per screen).</p>
+<ul style="margin:0 0 10px;padding-left:20px">
+  <li><b>Coordinate space</b>: all constants assume a 402×874 logical canvas. Scale uniformly by screen width; anchor bottom-aligned art (planets, galaxy, ringed) to the bottom edge.</li>
+  <li><b>Frame budget</b>: target 20 fps for backgrounds (UI stays 120 Hz), ≤ 4 ms GPU per frame on A17. Pause rendering when the app is backgrounded, when a full-screen video plays, in Low Power Mode (render one still frame), and above 40 °C thermal state <i>serious</i>.</li>
+  <li><b>Space backdrop</b> (shared by planet, solar, ring, galaxy, saturn): fill #06050C; diagonal galactic band — a radial gradient rotated −0.9 rad, squashed to 0.2, violet .34 → magenta .05 → 0, with a faint warm core; 190 seeded stars (seed 11) drifting horizontally at 0.3–1.3 pt/s, twinkling, the brightest few with a 4-point glint.</li>
+  <li><b>Earth</b>: per-pixel lit sphere, radius 560, cap 236 pt visible, axial tilt 1.15 rad, light vector normalised (0.62, 0.5, −0.18) — sun behind the upper right, so most of the disc is night. Day texture × diffuse; city-lights texture on the night side tinted (255,205,140) × (1 − day)²; clouds rotate 1.25× surface speed; atmosphere fresnel (1 − n·z)^2.6 tinted (110,140,255); ocean specular. One rotation per 240 s. Textures: NASA Blue Marble / Black Marble equirectangular, 2048×1024, bundled in the app.</li>
+  <li><b>Random planet</b>: equirectangular texture generated once per seed from 3D fBm on the sphere (no seam). 60% gas giant (latitude bands warped by noise, 1–3 storms) / 40% rocky (6-octave height ramp + polar ice). Palettes are the five gas and four rock palettes in <span style="font-family:ui-monospace,monospace;font-size:12.5px">PAL_GAS</span> / <span style="font-family:ui-monospace,monospace;font-size:12.5px">PAL_ROCK</span>. Name = two syllables + suffix from the seeded RNG. Cache generated textures by seed.</li>
+  <li><b>Moonrise</b>: radius 420, cap 250, light (0.78, 0.5, 0.05) — side-lit, no clouds, faint atmosphere. Lunar albedo texture.</li>
+  <li><b>Solar live</b>: real heliocentric longitudes for <i>now</i> from mean orbital elements (J2000 mean longitude + daily rate, table in <span style="font-family:ui-monospace,monospace;font-size:12.5px">PL</span>); circular orbits; display radius 26 + 58·√a; ellipses squashed 0.34; camera yaw drifts 0.012 rad/s. Depth-sort planets around the Sun. Earth ringed in pulsing gold and labelled “EARTH · YOU”. Date stamp “LIVE · 18 NOV 2026” bottom left. Recompute longitudes once a minute.</li>
+  <li><b>Dot bloom</b>: 8 pt dot grid on #100D1C; four superellipse (p = 3) metaball cores wandering on sinusoidal paths (periods 17–29 s); dot radius 0.75 + 2.75·e, colour violet → magenta → ink with amber where field &gt; 1.1; a ring pulse radiates from (201, 300) every 7 s.</li>
+  <li><b>Pixel orbit</b>: 4 pt cells; two tilted rings (axis −20°, squash 0.36) centred (250, 330): outer R 236 × 9 rows “trail” pattern at 14°/s; inner R 170 × 6 rows “blocks” at −7°/s, 80% intensity. Depth shading by angle.</li>
+  <li><b>Galaxy</b>: 4 pt cells, centre (210, 700), tilt −24°, squash 0.42; two log-spiral arms rotating 0.05 rad/s; core gold-white; alpha = smoothstep(0.06, 0.7, density). Cell dropout uses a <i>static</i> per-cell hash (time-varying hashes cause visible jitter — do not).</li>
+  <li><b>Ringed</b>: 4 pt cells; planet R 92 at (250, 712) with eight Nebula-palette bands drifting; ring 124–214 with a gap at 168–177, rotating 9°/s; drawn back-half ring → planet → front-half ring.</li>
+  <li><b>Dither</b>: 4 pt cells on #0B0916; domain-warped fBm clouds quantised to six palette steps with a 4×4 Bayer matrix; drift 0.05 units/s.</li>
+  <li>The hero card and the top 450 pt of every screen must stay readable on all nine — art that matters lives in the lower third or behind glass. Verify each background with every screen (§14).</li>
+</ul>
+
+<h2 style="margin:32px 0 10px;font-size:22px;line-height:1.25;font-weight:700;letter-spacing:-.01em">11. Copy rules</h2>
+<ul style="margin:0 0 10px;padding-left:20px">
+  <li>Sentence case everywhere except eyebrows (uppercase via styling, not in the string).</li>
+  <li>The PC is always called by its name (“Studio PC”), never “your computer” or “the host”.</li>
+  <li>Never show a value the PC hasn’t sent: unknown durations/sizes are “—”. Never show IPs or ping.</li>
+  <li>Times: “8:12 pm” (locale short), relative under an hour (“12 s ago”, “2 h ago”). Sizes: one decimal under 10 GB (“8.4 GB”), none above (“212 GB”).</li>
+  <li>Use the curly apostrophe (’) in all strings.</li>
+</ul>
+
+<h2 style="margin:32px 0 10px;font-size:22px;line-height:1.25;font-weight:700;letter-spacing:-.01em">12. Accessibility</h2>
+<ul style="margin:0 0 10px;padding-left:20px">
+  <li>VoiceOver labels: the clock reads “Recording, 1 hour 12 minutes 4 seconds” and updates at most every 10 s; Stop is “Stop recording”; tiles read as one element (“Storage, 62 percent used, 212 gigabytes free, about 4 days left”).</li>
+  <li>Backgrounds are decorative: <span style="font-family:ui-monospace,monospace;font-size:12.5px">accessibilityHidden(true)</span>.</li>
+  <li>Reduce Transparency: all glass and glass reading surfaces become opaque #1C1730 / #100D1C.</li>
+  <li>Increase Contrast: hairlines go to .2 alpha; ink-3 becomes ink-2.</li>
+  <li>Colour is never the only signal: offload state, online state and drops also carry text.</li>
+</ul>
+
+<h2 style="margin:32px 0 10px;font-size:22px;line-height:1.25;font-weight:700;letter-spacing:-.01em">13. Edge cases</h2>
+<ul style="margin:0 0 10px;padding-left:20px">
+  <li>Recording started on the PC while the phone is closed: on open, Now shows playing with the clock already correct (derived from startedAt).</li>
+  <li>Clock skew: compute elapsed as <span style="font-family:ui-monospace,monospace;font-size:12.5px">serverNow − startedAt − pausedTotal</span> using the server time offset measured at <span style="font-family:ui-monospace,monospace;font-size:12.5px">hello</span>.</li>
+  <li>Clip discarded for being short: it never appears; if the phone had optimistically shown it, remove it silently.</li>
+  <li>Two phones paired: both get pending prompts; the first answer wins, the other receives <span style="font-family:ui-monospace,monospace;font-size:12.5px">app.resolved</span>.</li>
+  <li>Game renamed on PC: match by game id, not name.</li>
+  <li>Deleting a clip that is currently offloading: PC cancels offload first; phone shows the confirmation copy with “It’s still being copied to nas-vault.” appended.</li>
+  <li>Trim while offloading or writing: disabled with reason in a footnote.</li>
+
+  <li>Storage below 5%: Storage tile ring and label turn coral; push “Studio PC is almost out of space”.</li>
+  <li>Textures fail to load (corrupt bundle): Earth falls back to Random planet seed 3; Moonrise falls back to the space backdrop only.</li>
+</ul>
+
+<h2 style="margin:32px 0 10px;font-size:22px;line-height:1.25;font-weight:700;letter-spacing:-.01em">14. Acceptance checklist</h2>
+<ol style="margin:0 0 10px;padding-left:20px">
+  <li>All screens match mockups 2f/2g/2h and 3a–3h within 2 pt on a 402×874 simulator, in both Playing and Not-playing states, on all nine backgrounds and all three surface modes.</li>
+  <li>The clock never jumps or stutters across pause/resume, reconnect, or app relaunch.</li>
+  <li>Every command reverts with a toast when the PC is offline or errors.</li>
+  <li>Answering “Is this a game?” from the sheet, the Games card, and the push notification all produce the same PC state, and the other surfaces update within 1 s.</li>
+  <li>No text over glass falls below 4.5:1 contrast on any background (screenshot audit).</li>
+  <li>Background rendering stays within budget for 10 minutes on device with no thermal warning; it pauses when backgrounded.</li>
+  <li>Reduce Motion, Reduce Transparency, Increase Contrast and Dynamic Type AX1 all behave as §12 describes.</li>
+  <li>Nothing scrolls under the tab bar without the 110 pt inset; nothing overlaps at any Dynamic Type size.</li>
+</ol>
+
+<h2 style="margin:32px 0 10px;font-size:22px;line-height:1.25;font-weight:700;letter-spacing:-.01em">15. Build order</h2>
+<ol style="margin:0 0 10px;padding-left:20px">
+  <li><b>PC agent API</b> with a mock mode that replays a scripted session (idle → recording → pause → resume → stop, one pending app, 20 clips). The phone is developed against the mock. <span style="color:#5A5470">— <i>Done when:</i> a test client can run the full scripted session and every command in §4 acks or errors as specified.</span></li>
+  <li><b>Phone shell</b>: AppStore, AgentClient, pairing, global states (§8), tab bar, Settings sheet, empty screens. <span style="color:#5A5470">— <i>Done when:</i> pair/unpair works against the mock, and killing the mock shows PC offline after 3 s and recovers on restart.</span></li>
+  <li><b>Visual system</b>: tokens, surfaces, trays, segmented control, primary pill, rolling clock — as a SwiftUI component gallery screen in a debug build. <span style="color:#5A5470">— <i>Done when:</i> the gallery matches §6–§7 values and the mockups within 2 pt, including press states and Reduce Motion.</span></li>
+  <li><b>Backgrounds</b>: space backdrop + Earth first, then the rest; Appearance screen. <span style="color:#5A5470">— <i>Done when:</i> all nine render within the §10 budget, pause when backgrounded, and switching from Appearance updates every tab.</span></li>
+  <li><b>Now</b> (2f playing + idle), then 2g, 2h. <span style="color:#5A5470">— <i>Done when:</i> every session state in Figure 2 renders correctly in all three layouts, and the clock survives pause, reconnect and relaunch.</span></li>
+  <li><b>Games</b> + pending card + sheet + push actions. <span style="color:#5A5470">— <i>Done when:</i> answering from the card, the sheet and the notification gives the same PC state, and Undo restores it.</span></li>
+  <li><b>Clips</b>, Clip detail, playback, share/save/trim/delete. <span style="color:#5A5470">— <i>Done when:</i> search, filters, sort, playback with highlight ticks, and all four actions work, with their empty and offline states.</span></li>
+  <li><b>Remote</b>, Settings sub-pages, Live Activity. <span style="color:#5A5470">— <i>Done when:</i> only the §9.9 keys are writable, “Saved” confirms each write, and the Live Activity starts and ends with the session.</span></li>
+  <li>Accessibility pass, edge cases (§13), acceptance (§14). <span style="color:#5A5470">— <i>Done when:</i> every item in §14 passes.</span></li>
+</ol>
+
+<h2 style="margin:32px 0 10px;font-size:22px;line-height:1.25;font-weight:700;letter-spacing:-.01em">16. Open questions</h2>
+<ul style="margin:0 0 10px;padding-left:20px">
+  <li>Default Now layout: this spec assumes <b>2f Bento + stack</b>, with 2g and 2h as user options. Confirm, or pick one and drop the others.</li>
+  <li>Default background: this spec assumes <b>Earth at night</b>. Confirm.</li>
+  <li>Push relay hosting (self-hosted vs. a small managed service) and whether the PC can reach it without opening ports.</li>
+  <li>Does “Launch on PC” (start a game remotely) ship in v1? Needs a launcher integration on the PC.</li>
+  <li>Highlights: is auto-marking (“Kill streak”, “Boss phase 2”) a real PC feature, or only manual marks for v1? The mockups show auto labels.</li>
+  <li>Game-aware tiles need fps and GPU temperature from the PC (e.g. PresentMon / NVAPI). Confirm the PC can provide them; otherwise 2g hides those values.</li>
+  <li>Host photo on Remote: user-picked, or always the default still?</li>
+</ul>
+
+</div>
+</doc-page>
+</x-dc>
+</body>
+</html>

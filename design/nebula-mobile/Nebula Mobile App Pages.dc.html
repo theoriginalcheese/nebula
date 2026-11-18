@@ -1,0 +1,471 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<meta name="design_doc_mode" content="canvas">
+<style>
+body { margin:0; background:#08070F; }
+a { color:#B9AEF9; text-decoration:none; }
+a:hover { color:#D6CEFF; }
+</style>
+<script src="./nm-space.js"></script>
+</helmet>
+<section id="r3" style="min-height:100vh;background:#08070F;color:#F5F3FF;font-family:-apple-system,BlinkMacSystemFont,'SF Pro Text',system-ui,sans-serif;-webkit-font-smoothing:antialiased;padding:96px 96px 160px;box-sizing:border-box;width:max-content;display:flex;flex-direction:column;gap:110px">
+
+<header style="display:flex;flex-direction:column;gap:16px;max-width:880px">
+  <span style="align-self:flex-start;height:24px;padding:0 12px;border-radius:12px;display:flex;align-items:center;font-size:11px;font-weight:600;letter-spacing:.2em;text-transform:uppercase;color:#B9AEF9;box-shadow:inset 0 0 0 1px rgba(185,174,249,.25)">Nebula Mobile · App pages</span>
+  <h1 style="margin:0;font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display',system-ui,sans-serif;font-size:56px;line-height:60px;font-weight:600;letter-spacing:-.035em">Beyond Now.</h1>
+  <p style="margin:0;font-size:17px;line-height:26px;color:#9A93C4;text-wrap:pretty;max-width:700px">Clips, Games, the “Is this a game?” prompt, Remote and Settings, in the round 2 language: machined trays, glass for live surfaces, solid rows for reading. The background follows whatever you pick in Settings › Appearance (<a href="#3g">3g</a>). Rows, toggles and the game prompt are tappable.</p>
+</header>
+
+<div style="display:flex;flex-direction:column;gap:40px">
+  <div style="display:flex;flex-direction:column;gap:8px"><span style="font-size:11px;font-weight:600;letter-spacing:.2em;text-transform:uppercase;color:#736BA4">A · Library</span><span style="font-size:28px;font-weight:600;letter-spacing:-.02em">Clips and games</span></div>
+  <div style="display:flex;gap:56px;align-items:flex-start">
+
+    <div id="3a" style="display:flex;flex-direction:column;gap:16px;width:422px">
+      <div style="display:flex;align-items:center;gap:10px"><span style="height:24px;padding:0 9px;border-radius:12px;display:grid;place-items:center;background:#241E3B;font-size:12px;font-weight:700;color:#C4B8FF">3a</span><span style="font-size:17px;font-weight:600">Clips</span></div>
+      <div style="padding:10px;border-radius:66px;background:#0D0B17;box-shadow:inset 0 0 0 1.5px #221D36">
+        <div data-screen-label="3a Clips" style="position:relative;width:402px;height:874px;overflow:hidden;border-radius:56px;background:#06050C">
+          <canvas ref="{{ r.a }}" aria-hidden="true" style="position:absolute;inset:0;width:100%;height:100%"></canvas>
+          <div style="position:absolute;top:0;left:0;right:0;height:54px;display:flex;align-items:center;justify-content:space-between;padding:0 34px 0 52px;box-sizing:border-box;font-size:17px;font-weight:600"><span>9:41</span><span style="width:27px;height:13px;border-radius:4px;box-shadow:inset 0 0 0 1px rgba(245,243,255,.4);padding:2px;box-sizing:border-box;display:flex"><i style="flex:1;border-radius:2px;background:#F5F3FF"></i></span></div>
+          <div style="position:absolute;top:11px;left:50%;transform:translateX(-50%);width:126px;height:37px;border-radius:19px;background:#000"></div>
+          <div style="position:absolute;top:92px;left:20px;right:20px;display:flex;align-items:center;justify-content:space-between"><div style="display:flex;flex-direction:column"><span style="font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display',system-ui,sans-serif;font-size:34px;line-height:41px;font-weight:700;letter-spacing:-.01em">Clips</span><span style="font-size:13px;color:#C9C4E6">141 clips · 214 GB · 9 games</span></div><span style="width:42px;height:42px;border-radius:21px;display:grid;place-items:center;background:rgba(30,26,48,.30);backdrop-filter:blur(14px) saturate(190%);-webkit-backdrop-filter:blur(14px) saturate(190%);box-shadow:inset 0 1px 0 rgba(255,255,255,.26), inset 0 0 0 1px rgba(255,255,255,.08)"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#F5F3FF" stroke-width="1.6" stroke-linecap="round"><path d="M4 7h9M17 7h3M4 17h3M11 17h9M15 5v4M9 15v4"></path></svg></span></div>
+          <div style="position:absolute;top:164px;left:14px;right:14px;display:flex;flex-direction:column;gap:14px">
+            <div style="margin:0 2px;height:44px;border-radius:22px;display:flex;align-items:center;gap:8px;padding:0 14px;background:rgba(30,26,48,.34);backdrop-filter:blur(16px) saturate(180%);-webkit-backdrop-filter:blur(16px) saturate(180%);box-shadow:inset 0 1px 0 rgba(255,255,255,.18), inset 0 0 0 1px rgba(255,255,255,.07)"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#C9C4E6" stroke-width="1.7" stroke-linecap="round"><circle cx="10.5" cy="10.5" r="6.5"></circle><path d="M15.4 15.4 20 20"></path></svg><span style="font-size:17px;color:#C9C4E6">Search clips</span></div>
+            <div style="display:flex;gap:8px;padding:0 2px;overflow:hidden">
+              <sc-for list="{{ chips }}" as="c" hint-placeholder-count="4"><span onClick="{{ c.on }}" style="flex:none;height:34px;padding:0 14px;border-radius:17px;display:flex;align-items:center;font-size:14px;font-weight:600;cursor:pointer;transition:background .4s cubic-bezier(.32,.72,0,1);background:{{ c.bg }};box-shadow:inset 0 0 0 1px {{ c.ring }};color:{{ c.fg }}">{{ c.label }}</span></sc-for>
+            </div>
+            <div style="padding:6px;border-radius:32px;background:rgba(245,243,255,.04);box-shadow:inset 0 0 0 1px rgba(245,243,255,.09)">
+              <div style="position:relative;height:176px;border-radius:26px;overflow:hidden">
+                <img src="https://upload.wikimedia.org/wikipedia/commons/9/92/Kabukicho_red_gate_and_colorful_neon_street_signs_at_night%2C_Shinjuku%2C_Tokyo%2C_Japan.jpg" alt="Sifu clip still" style="width:100%;height:100%;object-fit:cover;display:block">
+                <div style="position:absolute;inset:0;background:linear-gradient(180deg, rgba(7,6,14,.1) 20%, rgba(7,6,14,.92) 100%)"></div>
+                <span style="position:absolute;top:12px;left:12px;height:24px;padding:0 10px;border-radius:12px;display:flex;align-items:center;gap:6px;font-size:11px;font-weight:600;letter-spacing:.16em;color:#FFE8BC;background:rgba(16,13,28,.55);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px)"><i style="width:6px;height:6px;border-radius:50%;background:#FFE8BC"></i>LATEST</span>
+                <span style="position:absolute;top:12px;right:12px;height:24px;padding:0 10px;border-radius:12px;display:flex;align-items:center;font-size:12px;font-weight:600;font-variant-numeric:tabular-nums;background:rgba(16,13,28,.55);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px)">18:42</span>
+                <div style="position:absolute;left:16px;right:16px;bottom:14px;display:flex;flex-direction:column;gap:6px">
+                  <span style="font-size:18px;font-weight:600;letter-spacing:-.01em">Sifu · boss fight</span>
+                  <div style="display:flex;gap:6px"><span style="height:22px;padding:0 8px;border-radius:11px;display:flex;align-items:center;gap:5px;font-size:12px;font-weight:600;color:#3EBEB0;background:rgba(62,190,176,.14)"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5 9.8 17 19 7"></path></svg>nas-vault</span><span style="height:22px;padding:0 8px;border-radius:11px;display:flex;align-items:center;font-size:12px;font-weight:600;color:#E3DFF5;background:rgba(245,243,255,.10)">1080p60</span><span style="height:22px;padding:0 8px;border-radius:11px;display:flex;align-items:center;font-size:12px;font-weight:600;color:#C4B8FF;background:rgba(139,124,246,.16)">2 marks</span></div>
+                </div>
+              </div>
+            </div>
+            <div style="display:flex;align-items:baseline;justify-content:space-between;padding:4px 8px 0"><span style="font-size:20px;font-weight:600;letter-spacing:-.01em">By game</span><span style="font-size:15px;color:#B9AEF9">Sort</span></div>
+            <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px">
+              <sc-for list="{{ gameTiles }}" as="g" hint-placeholder-count="4">
+                <div style="position:relative;height:118px;border-radius:24px;overflow:hidden;box-shadow:inset 0 0 0 1px rgba(245,243,255,.12)">
+                  <img src="{{ g.img }}" alt="" style="width:100%;height:100%;object-fit:cover;display:block">
+                  <div style="position:absolute;inset:0;background:linear-gradient(180deg, rgba(7,6,14,.05) 20%, rgba(7,6,14,.9))"></div>
+                  <div style="position:absolute;left:12px;right:12px;bottom:10px;display:flex;flex-direction:column;gap:2px"><span style="font-size:15px;font-weight:600">{{ g.name }}</span><span style="font-size:12px;color:#C9C4E6;font-variant-numeric:tabular-nums">{{ g.meta }}</span></div>
+                </div>
+              </sc-for>
+            </div>
+          </div>
+          <div style="position:absolute;left:21px;right:21px;bottom:28px;height:62px;border-radius:31px;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));align-items:center;padding:0 6px;box-sizing:border-box;background:rgba(30,26,48,.30);backdrop-filter:blur(14px) saturate(190%) brightness(.92);-webkit-backdrop-filter:blur(14px) saturate(190%) brightness(.92);box-shadow:inset 0 1px 0 rgba(255,255,255,.30), inset 0 0 0 1px rgba(255,255,255,.07), inset 0 0 0 .5px rgba(0,0,0,.65), 0 12px 34px rgba(0,0,0,.5)">
+            <sc-for list="{{ tabs1 }}" as="tb" hint-placeholder-count="4"><div style="display:flex;flex-direction:column;align-items:center;gap:2px;color:{{ tb.ic }}"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="{{ tb.d }}"></path></svg><span style="font-size:10px;font-weight:600;color:{{ tb.lc }}">{{ tb.name }}</span></div></sc-for>
+          </div>
+        </div>
+      </div>
+      <p style="margin:0;font-size:14px;line-height:21px;color:#9A93C4;text-wrap:pretty">The latest clip leads in a tray, with its status chips. Below, every per-game folder becomes a cover tile — the phone version of the desktop’s Recordings library. Game chips filter.</p>
+    </div>
+
+    <div id="3b" style="display:flex;flex-direction:column;gap:16px;width:422px">
+      <div style="display:flex;align-items:center;gap:10px"><span style="height:24px;padding:0 9px;border-radius:12px;display:grid;place-items:center;background:#241E3B;font-size:12px;font-weight:700;color:#C4B8FF">3b</span><span style="font-size:17px;font-weight:600">Clip detail</span></div>
+      <div style="padding:10px;border-radius:66px;background:#0D0B17;box-shadow:inset 0 0 0 1.5px #221D36">
+        <div data-screen-label="3b Clip detail" style="position:relative;width:402px;height:874px;overflow:hidden;border-radius:56px;background:#06050C">
+          <canvas ref="{{ r.b }}" aria-hidden="true" style="position:absolute;inset:0;width:100%;height:100%"></canvas>
+          <div style="position:absolute;top:0;left:0;right:0;height:360px;overflow:hidden">
+            <img src="https://upload.wikimedia.org/wikipedia/commons/9/92/Kabukicho_red_gate_and_colorful_neon_street_signs_at_night%2C_Shinjuku%2C_Tokyo%2C_Japan.jpg" alt="Sifu clip still" style="width:100%;height:100%;object-fit:cover;display:block">
+            <div style="position:absolute;inset:0;background:linear-gradient(180deg, rgba(7,6,14,.45) 0%, rgba(7,6,14,0) 25%, rgba(7,6,14,0) 55%, rgba(6,5,12,1) 100%)"></div>
+            <span style="position:absolute;top:50%;left:50%;margin:-34px 0 0 -34px;width:68px;height:68px;border-radius:34px;display:grid;place-items:center;background:rgba(16,13,28,.4);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);box-shadow:inset 0 1px 0 rgba(255,255,255,.3), inset 0 0 0 1px rgba(255,255,255,.1)"><svg width="22" height="24" viewBox="0 0 14 16"><path d="M2.5 1.5v13l10.5-6.5z" fill="#F5F3FF"></path></svg></span>
+          </div>
+          <div style="position:absolute;top:0;left:0;right:0;height:54px;display:flex;align-items:center;justify-content:space-between;padding:0 34px 0 52px;box-sizing:border-box;font-size:17px;font-weight:600"><span>9:41</span><span style="width:27px;height:13px;border-radius:4px;box-shadow:inset 0 0 0 1px rgba(245,243,255,.4);padding:2px;box-sizing:border-box;display:flex"><i style="flex:1;border-radius:2px;background:#F5F3FF"></i></span></div>
+          <div style="position:absolute;top:11px;left:50%;transform:translateX(-50%);width:126px;height:37px;border-radius:19px;background:#000"></div>
+          <div style="position:absolute;top:62px;left:16px;right:16px;display:flex;justify-content:space-between">
+            <span style="width:42px;height:42px;border-radius:21px;display:grid;place-items:center;background:rgba(16,13,28,.4);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);box-shadow:inset 0 1px 0 rgba(255,255,255,.26), inset 0 0 0 1px rgba(255,255,255,.08)"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#F5F3FF" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"></path></svg></span>
+            <span style="width:42px;height:42px;border-radius:21px;display:grid;place-items:center;background:rgba(16,13,28,.4);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);box-shadow:inset 0 1px 0 rgba(255,255,255,.26), inset 0 0 0 1px rgba(255,255,255,.08)"><svg width="20" height="20" viewBox="0 0 24 24" fill="#F5F3FF"><circle cx="6" cy="12" r="1.6"></circle><circle cx="12" cy="12" r="1.6"></circle><circle cx="18" cy="12" r="1.6"></circle></svg></span>
+          </div>
+          <div style="position:absolute;top:300px;left:16px;right:16px;display:flex;flex-direction:column;gap:14px">
+            <div style="display:flex;flex-direction:column;gap:3px;padding:0 4px"><span style="font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display',system-ui,sans-serif;font-size:28px;line-height:32px;font-weight:700;letter-spacing:-.02em">Sifu · boss fight</span><span style="font-size:14px;color:#C9C4E6">Today, 8:12 pm · 18:42 · Gameplay scene</span></div>
+            <div style="display:flex;flex-direction:column;gap:8px;padding:0 4px">
+              <div style="position:relative;height:30px">
+                <div style="position:absolute;top:12px;left:0;right:0;height:6px;border-radius:3px;background:rgba(245,243,255,.10)"></div>
+                <div style="position:absolute;top:12px;left:0;height:6px;width:{{ playPct }};border-radius:3px;background:linear-gradient(90deg,#8B7CF6,#B9AEF9)"></div>
+                <i style="position:absolute;top:6px;left:22%;width:4px;height:18px;border-radius:2px;background:#E9B872;box-shadow:0 0 8px rgba(233,184,114,.6)"></i>
+                <i style="position:absolute;top:6px;left:71%;width:4px;height:18px;border-radius:2px;background:#E9B872;box-shadow:0 0 8px rgba(233,184,114,.6)"></i>
+                <span style="position:absolute;top:5px;left:{{ playPct }};margin-left:-10px;width:20px;height:20px;border-radius:10px;background:#F5F3FF;box-shadow:0 2px 10px rgba(0,0,0,.5)"></span>
+              </div>
+              <div style="display:flex;justify-content:space-between;font-size:12px;color:#9A93C4;font-variant-numeric:tabular-nums"><span>{{ playTime }}</span><span>2 highlights</span><span>18:42</span></div>
+            </div>
+            <div style="padding:6px;border-radius:30px;background:rgba(245,243,255,.04);box-shadow:inset 0 0 0 1px rgba(245,243,255,.09)">
+              <div style="border-radius:24px;padding:4px 16px;background:{{ surf }};backdrop-filter:blur(18px) saturate(170%);-webkit-backdrop-filter:blur(18px) saturate(170%);box-shadow:inset 0 1px 1px rgba(255,255,255,.08)">
+                <div style="height:46px;display:flex;align-items:center;justify-content:space-between"><span style="font-size:15px;color:#C9C4E6">Quality</span><span style="font-size:15px;font-weight:500">1080p60 · NVENC</span></div>
+                <div style="height:46px;display:flex;align-items:center;justify-content:space-between;border-top:.5px solid rgba(245,243,255,.09)"><span style="font-size:15px;color:#C9C4E6">Size</span><span style="font-size:15px;font-weight:500;font-variant-numeric:tabular-nums">2.1 GB</span></div>
+                <div style="height:46px;display:flex;align-items:center;justify-content:space-between;border-top:.5px solid rgba(245,243,255,.09)"><span style="font-size:15px;color:#C9C4E6">Stored</span><span style="display:flex;align-items:center;gap:6px;font-size:15px;font-weight:500;color:#3EBEB0"><i style="width:7px;height:7px;border-radius:50%;background:#3EBEB0"></i>nas-vault + Studio PC</span></div>
+                <div style="height:46px;display:flex;align-items:center;justify-content:space-between;border-top:.5px solid rgba(245,243,255,.09)"><span style="font-size:15px;color:#C9C4E6">Folder</span><span style="font-family:ui-monospace,'SF Mono',monospace;font-size:13px;color:#E3DFF5">Videos\Nebula\Sifu</span></div>
+              </div>
+            </div>
+            <div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px">
+              <sc-for list="{{ clipActions }}" as="ca" hint-placeholder-count="4">
+                <div style="display:flex;flex-direction:column;align-items:center;gap:8px;cursor:pointer">
+                  <span style="width:56px;height:56px;border-radius:28px;display:grid;place-items:center;background:{{ ca.bg }};box-shadow:inset 0 1px 0 rgba(255,255,255,.14), inset 0 0 0 1px rgba(255,255,255,.06)"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="{{ ca.ink }}" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="{{ ca.d }}"></path></svg></span>
+                  <span style="font-size:12px;font-weight:500;color:{{ ca.lc }}">{{ ca.label }}</span>
+                </div>
+              </sc-for>
+            </div>
+          </div>
+          <div style="position:absolute;left:21px;right:21px;bottom:28px;height:62px;border-radius:31px;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));align-items:center;padding:0 6px;box-sizing:border-box;background:rgba(30,26,48,.30);backdrop-filter:blur(14px) saturate(190%) brightness(.92);-webkit-backdrop-filter:blur(14px) saturate(190%) brightness(.92);box-shadow:inset 0 1px 0 rgba(255,255,255,.30), inset 0 0 0 1px rgba(255,255,255,.07), inset 0 0 0 .5px rgba(0,0,0,.65), 0 12px 34px rgba(0,0,0,.5)">
+            <sc-for list="{{ tabs1 }}" as="tb" hint-placeholder-count="4"><div style="display:flex;flex-direction:column;align-items:center;gap:2px;color:{{ tb.ic }}"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="{{ tb.d }}"></path></svg><span style="font-size:10px;font-weight:600;color:{{ tb.lc }}">{{ tb.name }}</span></div></sc-for>
+          </div>
+        </div>
+      </div>
+      <p style="margin:0;font-size:14px;line-height:21px;color:#9A93C4;text-wrap:pretty">The still bleeds to the top edge and dissolves into the ground. Gold ticks on the scrubber are highlights. Facts sit in one solid tray; Share, Save, Trim and Delete below.</p>
+    </div>
+
+    <div id="3c" style="display:flex;flex-direction:column;gap:16px;width:422px">
+      <div style="display:flex;align-items:center;gap:10px"><span style="height:24px;padding:0 9px;border-radius:12px;display:grid;place-items:center;background:#241E3B;font-size:12px;font-weight:700;color:#C4B8FF">3c</span><span style="font-size:17px;font-weight:600">Games</span></div>
+      <div style="padding:10px;border-radius:66px;background:#0D0B17;box-shadow:inset 0 0 0 1.5px #221D36">
+        <div data-screen-label="3c Games" style="position:relative;width:402px;height:874px;overflow:hidden;border-radius:56px;background:#06050C">
+          <canvas ref="{{ r.c }}" aria-hidden="true" style="position:absolute;inset:0;width:100%;height:100%"></canvas>
+          <div style="position:absolute;top:0;left:0;right:0;height:54px;display:flex;align-items:center;justify-content:space-between;padding:0 34px 0 52px;box-sizing:border-box;font-size:17px;font-weight:600"><span>9:41</span><span style="width:27px;height:13px;border-radius:4px;box-shadow:inset 0 0 0 1px rgba(245,243,255,.4);padding:2px;box-sizing:border-box;display:flex"><i style="flex:1;border-radius:2px;background:#F5F3FF"></i></span></div>
+          <div style="position:absolute;top:11px;left:50%;transform:translateX(-50%);width:126px;height:37px;border-radius:19px;background:#000"></div>
+          <div style="position:absolute;top:92px;left:20px;right:20px;display:flex;align-items:center;justify-content:space-between"><div style="display:flex;flex-direction:column"><span style="font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display',system-ui,sans-serif;font-size:34px;line-height:41px;font-weight:700;letter-spacing:-.01em">Games</span><span style="font-size:13px;color:#C9C4E6">When a game launches: <span style="color:#F5F3FF">{{ launchLabel }}</span></span></div><span style="width:42px;height:42px;border-radius:21px;display:grid;place-items:center;background:rgba(30,26,48,.30);backdrop-filter:blur(14px) saturate(190%);-webkit-backdrop-filter:blur(14px) saturate(190%);box-shadow:inset 0 1px 0 rgba(255,255,255,.26), inset 0 0 0 1px rgba(255,255,255,.08)"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#F5F3FF" stroke-width="1.7" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg></span></div>
+          <div style="position:absolute;top:164px;left:14px;right:14px;display:flex;flex-direction:column;gap:12px">
+            <sc-if value="{{ pending }}" hint-placeholder-val="{{ true }}">
+              <div style="padding:6px;border-radius:32px;background:rgba(139,124,246,.08);box-shadow:inset 0 0 0 1px rgba(139,124,246,.28)">
+                <div style="border-radius:26px;padding:16px;display:flex;flex-direction:column;gap:14px;background:radial-gradient(80% 120% at 0% 0%, rgba(139,124,246,.22), rgba(139,124,246,0) 60%), rgba(16,13,28,.6);backdrop-filter:blur(20px) saturate(170%);-webkit-backdrop-filter:blur(20px) saturate(170%);box-shadow:inset 0 1px 1px rgba(255,255,255,.14)">
+                  <div style="display:flex;align-items:center;gap:12px">
+                    <span style="flex:none;width:40px;height:40px;border-radius:20px;display:grid;place-items:center;background:rgba(139,124,246,.18);box-shadow:0 0 0 5px rgba(139,124,246,.07), 0 0 18px rgba(139,124,246,.35), inset 0 0 0 1px rgba(139,124,246,.3);font-size:19px;font-weight:600;color:#C4B8FF">?</span>
+                    <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:2px"><span style="font-size:11px;font-weight:600;letter-spacing:.16em;text-transform:uppercase;color:#B9AEF9">New app on Studio PC</span><span style="font-size:19px;font-weight:600">Is this a game?</span><span style="font-family:ui-monospace,'SF Mono',monospace;font-size:12px;color:#C9C4E6;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">Sandfall-Win64-Shipping.exe</span></div>
+                  </div>
+                  <div style="display:flex;gap:8px">
+                    <span onClick="{{ yesGame }}" style="flex:1;height:46px;border-radius:23px;display:flex;align-items:center;justify-content:center;font-size:15px;font-weight:600;cursor:pointer;background:rgba(139,124,246,.2);box-shadow:inset 0 0 0 1px rgba(139,124,246,.5)" style-active="transform:scale(.98)">It’s a game</span>
+                    <span onClick="{{ noGame }}" style="flex:1;height:46px;border-radius:23px;display:flex;align-items:center;justify-content:center;font-size:15px;font-weight:600;cursor:pointer;color:#C9C4E6;box-shadow:inset 0 0 0 1px rgba(245,243,255,.14)" style-active="transform:scale(.98)">Not a game</span>
+                  </div>
+                </div>
+              </div>
+            </sc-if>
+            <sc-if value="{{ answered }}" hint-placeholder-val="{{ false }}">
+              <div style="height:44px;border-radius:22px;display:flex;align-items:center;justify-content:space-between;padding:0 8px 0 16px;background:rgba(30,26,48,.34);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);box-shadow:inset 0 0 0 1px rgba(245,243,255,.08)"><span style="font-size:14px;color:#E3DFF5">{{ answerText }}</span><span onClick="{{ undo }}" style="height:30px;padding:0 12px;border-radius:15px;display:flex;align-items:center;font-size:13px;font-weight:600;color:#B9AEF9;cursor:pointer">Undo</span></div>
+            </sc-if>
+            <div style="display:flex;align-items:baseline;justify-content:space-between;padding:2px 8px 0"><span style="font-size:11px;font-weight:600;letter-spacing:.16em;text-transform:uppercase;color:#C9C4E6">Games · capture</span><span style="font-size:12px;color:#9A93C4">Steam auto-classifies</span></div>
+            <div style="background:{{ surf }};backdrop-filter:blur(18px) saturate(170%);-webkit-backdrop-filter:blur(18px) saturate(170%);border-radius:24px;padding:0 14px;box-shadow:inset 0 1px 1px rgba(255,255,255,.08)">
+              <sc-for list="{{ games }}" as="g" hint-placeholder-count="4">
+                <div style="padding:12px 0;display:flex;flex-direction:column;gap:10px;border-top:{{ g.rule }}">
+                  <div style="display:flex;align-items:baseline;justify-content:space-between;gap:10px"><span style="font-size:16px;font-weight:600">{{ g.name }}</span><span style="font-size:12px;color:{{ g.srcInk }}">{{ g.src }}</span></div>
+                  <div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));height:32px;padding:2px;box-sizing:border-box;border-radius:16px;background:rgba(10,8,18,.55);box-shadow:inset 0 0 0 1px rgba(245,243,255,.08);gap:2px">
+                    <sc-for list="{{ g.segs }}" as="s" hint-placeholder-count="4"><span onClick="{{ s.on }}" style="border-radius:14px;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:600;cursor:pointer;transition:background .35s cubic-bezier(.32,.72,0,1);background:{{ s.bg }};box-shadow:{{ s.ring }};color:{{ s.fg }}">{{ s.label }}</span></sc-for>
+                  </div>
+                </div>
+              </sc-for>
+            </div>
+            <div style="display:flex;flex-direction:column;gap:8px;padding:2px 8px 0">
+              <span style="font-size:11px;font-weight:600;letter-spacing:.16em;text-transform:uppercase;color:#C9C4E6">Not games · never recorded</span>
+              <div style="display:flex;flex-wrap:wrap;gap:6px"><sc-for list="{{ nongames }}" as="n" hint-placeholder-count="4"><span style="height:28px;padding:0 12px;border-radius:14px;display:flex;align-items:center;font-size:13px;color:#C9C4E6;background:rgba(245,243,255,.06);box-shadow:inset 0 0 0 1px rgba(245,243,255,.08)">{{ n }}</span></sc-for></div>
+            </div>
+          </div>
+          <div style="position:absolute;left:21px;right:21px;bottom:28px;height:62px;border-radius:31px;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));align-items:center;padding:0 6px;box-sizing:border-box;background:rgba(30,26,48,.30);backdrop-filter:blur(14px) saturate(190%) brightness(.92);-webkit-backdrop-filter:blur(14px) saturate(190%) brightness(.92);box-shadow:inset 0 1px 0 rgba(255,255,255,.30), inset 0 0 0 1px rgba(255,255,255,.07), inset 0 0 0 .5px rgba(0,0,0,.65), 0 12px 34px rgba(0,0,0,.5)">
+            <sc-for list="{{ tabs3 }}" as="tb" hint-placeholder-count="4"><div style="display:flex;flex-direction:column;align-items:center;gap:2px;color:{{ tb.ic }}"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="{{ tb.d }}"></path></svg><span style="font-size:10px;font-weight:600;color:{{ tb.lc }}">{{ tb.name }}</span></div></sc-for>
+          </div>
+        </div>
+      </div>
+      <p style="margin:0;font-size:14px;line-height:21px;color:#9A93C4;text-wrap:pretty">An unknown app waits at the top until you answer. Each game has its own capture choice; Default follows “When a game launches” in Settings. Try answering, then Undo.</p>
+    </div>
+
+    <div id="3d" style="display:flex;flex-direction:column;gap:16px;width:422px">
+      <div style="display:flex;align-items:center;gap:10px"><span style="height:24px;padding:0 9px;border-radius:12px;display:grid;place-items:center;background:#241E3B;font-size:12px;font-weight:700;color:#C4B8FF">3d</span><span style="font-size:17px;font-weight:600">“Is this a game?” sheet</span></div>
+      <div style="padding:10px;border-radius:66px;background:#0D0B17;box-shadow:inset 0 0 0 1.5px #221D36">
+        <div data-screen-label="3d Is this a game sheet" style="position:relative;width:402px;height:874px;overflow:hidden;border-radius:56px;background:#06050C">
+          <canvas ref="{{ r.d }}" aria-hidden="true" style="position:absolute;inset:0;width:100%;height:100%"></canvas>
+          <div style="position:absolute;top:0;left:0;right:0;height:54px;display:flex;align-items:center;justify-content:space-between;padding:0 34px 0 52px;box-sizing:border-box;font-size:17px;font-weight:600"><span>9:41</span><span style="width:27px;height:13px;border-radius:4px;box-shadow:inset 0 0 0 1px rgba(245,243,255,.4);padding:2px;box-sizing:border-box;display:flex"><i style="flex:1;border-radius:2px;background:#F5F3FF"></i></span></div>
+          <div style="position:absolute;top:11px;left:50%;transform:translateX(-50%);width:126px;height:37px;border-radius:19px;background:#000"></div>
+          <span style="position:absolute;top:96px;left:20px;font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display',system-ui,sans-serif;font-size:34px;line-height:41px;font-weight:700;letter-spacing:-.01em;opacity:.5">Now</span>
+          <div style="position:absolute;top:150px;left:14px;right:14px;height:150px;border-radius:34px;background:rgba(245,243,255,.04);box-shadow:inset 0 0 0 1px rgba(245,243,255,.09);opacity:.5"></div>
+          <div style="position:absolute;inset:0;background:rgba(5,4,10,.5)"></div>
+          <div style="position:absolute;left:8px;right:8px;bottom:8px;border-radius:46px;padding:10px 22px 26px;display:flex;flex-direction:column;gap:18px;background:rgba(22,18,38,.72);backdrop-filter:blur(30px) saturate(180%);-webkit-backdrop-filter:blur(30px) saturate(180%);box-shadow:inset 0 1px 0 rgba(255,255,255,.22), inset 0 0 0 1px rgba(255,255,255,.07), 0 -20px 60px rgba(0,0,0,.5)">
+            <span style="align-self:center;width:38px;height:5px;border-radius:3px;background:rgba(245,243,255,.28)"></span>
+            <div style="display:flex;flex-direction:column;align-items:flex-start;gap:12px;padding-top:6px">
+              <span style="width:56px;height:56px;border-radius:28px;display:grid;place-items:center;background:rgba(139,124,246,.18);box-shadow:0 0 0 8px rgba(139,124,246,.06), 0 0 30px rgba(139,124,246,.4), inset 0 0 0 1px rgba(139,124,246,.32);font-size:26px;font-weight:600;color:#C4B8FF">?</span>
+              <div style="display:flex;flex-direction:column;gap:4px"><span style="font-size:11px;font-weight:600;letter-spacing:.16em;text-transform:uppercase;color:#B9AEF9">New app on Studio PC · 12 s ago</span><span style="font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display',system-ui,sans-serif;font-size:30px;line-height:34px;font-weight:700;letter-spacing:-.02em">Is this a game?</span></div>
+            </div>
+            <div style="border-radius:22px;padding:4px 16px;background:{{ surf }};backdrop-filter:blur(18px) saturate(170%);-webkit-backdrop-filter:blur(18px) saturate(170%);box-shadow:inset 0 1px 1px rgba(255,255,255,.08)">
+              <div style="height:44px;display:flex;align-items:center;justify-content:space-between;gap:10px"><span style="font-size:14px;color:#C9C4E6">Process</span><span style="font-family:ui-monospace,'SF Mono',monospace;font-size:12px;color:#F5F3FF;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">Sandfall-Win64-Shipping.exe</span></div>
+              <div style="height:44px;display:flex;align-items:center;justify-content:space-between;border-top:.5px solid rgba(245,243,255,.09)"><span style="font-size:14px;color:#C9C4E6">Window</span><span style="font-size:14px">Fullscreen · 2560 × 1440</span></div>
+              <div style="height:44px;display:flex;align-items:center;justify-content:space-between;border-top:.5px solid rgba(245,243,255,.09)"><span style="font-size:14px;color:#C9C4E6">Steam</span><span style="font-size:14px;color:#E0A85C">Not in library</span></div>
+            </div>
+            <div style="display:flex;flex-direction:column;gap:8px">
+              <span style="font-size:11px;font-weight:600;letter-spacing:.16em;text-transform:uppercase;color:#9A93C4">If it’s a game</span>
+              <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));height:36px;padding:2px;box-sizing:border-box;border-radius:18px;background:rgba(10,8,18,.55);box-shadow:inset 0 0 0 1px rgba(245,243,255,.08);gap:2px">
+                <sc-for list="{{ sheetSegs }}" as="s" hint-placeholder-count="3"><span onClick="{{ s.on }}" style="border-radius:16px;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:600;cursor:pointer;transition:background .35s cubic-bezier(.32,.72,0,1);background:{{ s.bg }};box-shadow:{{ s.ring }};color:{{ s.fg }}">{{ s.label }}</span></sc-for>
+              </div>
+            </div>
+            <div style="display:flex;flex-direction:column;gap:10px">
+              <span style="height:56px;padding:0 6px 0 22px;border-radius:28px;display:flex;align-items:center;justify-content:space-between;font-size:17px;font-weight:600;cursor:pointer;background:rgba(139,124,246,.2);box-shadow:inset 0 0 0 1px rgba(139,124,246,.55)" style-active="transform:scale(.98)"><span>It’s a game — {{ sheetVerb }}</span><span style="width:44px;height:44px;border-radius:22px;display:grid;place-items:center;background:rgba(139,124,246,.3)"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#F5F3FF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5 9.8 17 19 7"></path></svg></span></span>
+              <span style="height:52px;border-radius:26px;display:flex;align-items:center;justify-content:center;font-size:16px;font-weight:600;color:#C9C4E6;cursor:pointer;box-shadow:inset 0 0 0 1px rgba(245,243,255,.14)" style-active="transform:scale(.98)">Not a game</span>
+              <span style="text-align:center;font-size:12px;color:#9A93C4">Asked once, remembered forever. Change any call in Games.</span>
+            </div>
+          </div>
+        </div>
+      </div>
+      <p style="margin:0;font-size:14px;line-height:21px;color:#9A93C4;text-wrap:pretty">When the PC sees an unknown fullscreen app, the phone gets a notification that opens this sheet — the same question the desktop toast asks, with the facts to decide and the capture choice in one go.</p>
+    </div>
+  </div>
+</div>
+
+<div style="display:flex;flex-direction:column;gap:40px">
+  <div style="display:flex;flex-direction:column;gap:8px"><span style="font-size:11px;font-weight:600;letter-spacing:.2em;text-transform:uppercase;color:#736BA4">B · Connect &amp; settings</span><span style="font-size:28px;font-weight:600;letter-spacing:-.02em">Remote, Settings and their sub-pages</span></div>
+  <div style="display:flex;gap:56px;align-items:flex-start">
+
+    <div id="3e" style="display:flex;flex-direction:column;gap:16px;width:422px">
+      <div style="display:flex;align-items:center;gap:10px"><span style="height:24px;padding:0 9px;border-radius:12px;display:grid;place-items:center;background:#241E3B;font-size:12px;font-weight:700;color:#C4B8FF">3e</span><span style="font-size:17px;font-weight:600">Remote</span></div>
+      <div style="padding:10px;border-radius:66px;background:#0D0B17;box-shadow:inset 0 0 0 1.5px #221D36">
+        <div data-screen-label="3e Remote" style="position:relative;width:402px;height:874px;overflow:hidden;border-radius:56px;background:#06050C">
+          <canvas ref="{{ r.e }}" aria-hidden="true" style="position:absolute;inset:0;width:100%;height:100%"></canvas>
+          <div style="position:absolute;top:0;left:0;right:0;height:54px;display:flex;align-items:center;justify-content:space-between;padding:0 34px 0 52px;box-sizing:border-box;font-size:17px;font-weight:600"><span>9:41</span><span style="width:27px;height:13px;border-radius:4px;box-shadow:inset 0 0 0 1px rgba(245,243,255,.4);padding:2px;box-sizing:border-box;display:flex"><i style="flex:1;border-radius:2px;background:#F5F3FF"></i></span></div>
+          <div style="position:absolute;top:11px;left:50%;transform:translateX(-50%);width:126px;height:37px;border-radius:19px;background:#000"></div>
+          <div style="position:absolute;top:92px;left:20px;right:20px;display:flex;align-items:center;justify-content:space-between"><div style="display:flex;flex-direction:column"><span style="font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display',system-ui,sans-serif;font-size:34px;line-height:41px;font-weight:700;letter-spacing:-.01em">Remote</span><span style="font-size:13px;color:#C9C4E6">Moonlight · Tailscale</span></div><span style="width:42px;height:42px;border-radius:21px;display:grid;place-items:center;background:rgba(30,26,48,.30);backdrop-filter:blur(14px) saturate(190%);-webkit-backdrop-filter:blur(14px) saturate(190%);box-shadow:inset 0 1px 0 rgba(255,255,255,.26), inset 0 0 0 1px rgba(255,255,255,.08)"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#F5F3FF" stroke-width="1.6" stroke-linecap="round"><path d="M4 7h9M17 7h3M4 17h3M11 17h9M15 5v4M9 15v4"></path></svg></span></div>
+          <div style="position:absolute;top:164px;left:14px;right:14px;display:flex;flex-direction:column;gap:12px">
+            <div style="padding:6px;border-radius:34px;background:rgba(245,243,255,.04);box-shadow:inset 0 0 0 1px rgba(245,243,255,.09)">
+              <div style="border-radius:28px;padding:20px;display:flex;flex-direction:column;gap:18px;background:rgba(16,13,28,.50);backdrop-filter:blur(20px) saturate(170%);-webkit-backdrop-filter:blur(20px) saturate(170%);box-shadow:inset 0 1px 1px rgba(255,255,255,.14)">
+                <div style="display:flex;align-items:center;gap:16px">
+                  <div style="position:relative;width:76px;height:76px;flex:none;border-radius:38px;overflow:hidden;box-shadow:inset 0 0 0 1px rgba(245,243,255,.16), 0 0 30px rgba(139,124,246,.25)"><img src="https://upload.wikimedia.org/wikipedia/commons/9/9e/Chicago%2C_Illinois_-_city_at_night_in_the_rain-.jpg" alt="" style="width:100%;height:100%;object-fit:cover;display:block"><div style="position:absolute;inset:0;background:radial-gradient(circle at 35% 30%, rgba(185,174,249,.15), rgba(7,6,14,.45))"></div></div>
+                  <div style="display:flex;flex-direction:column;gap:4px;min-width:0"><span style="font-size:22px;font-weight:600;letter-spacing:-.01em">Studio PC</span><span style="display:flex;align-items:center;gap:6px;font-size:13px;color:#3EBEB0"><i style="width:7px;height:7px;border-radius:50%;background:#3EBEB0"></i>Online on Tailscale</span><span style="font-size:13px;color:#C9C4E6">Moonlight not running</span></div>
+                </div>
+                <span style="height:56px;padding:0 6px 0 22px;border-radius:28px;display:flex;align-items:center;justify-content:space-between;font-size:17px;font-weight:600;cursor:pointer;background:rgba(139,124,246,.2);box-shadow:inset 0 0 0 1px rgba(139,124,246,.55)" style-active="transform:scale(.98)">Stream to this phone<span style="width:44px;height:44px;border-radius:22px;display:grid;place-items:center;background:rgba(139,124,246,.3)"><svg width="14" height="16" viewBox="0 0 14 16"><path d="M2.5 1.5v13l10.5-6.5z" fill="#F5F3FF"></path></svg></span></span>
+              </div>
+            </div>
+            <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px">
+              <div style="padding:6px;border-radius:30px;background:rgba(245,243,255,.04);box-shadow:inset 0 0 0 1px rgba(245,243,255,.09)"><div style="border-radius:24px;padding:14px 16px;background:{{ surf }};backdrop-filter:blur(18px) saturate(170%);-webkit-backdrop-filter:blur(18px) saturate(170%);box-shadow:inset 0 1px 1px rgba(255,255,255,.08);display:flex;flex-direction:column;gap:6px"><span style="font-size:11px;font-weight:600;letter-spacing:.16em;text-transform:uppercase;color:#9A93C4">Stream</span><span style="font-size:17px;font-weight:600">1080p · 60</span><span style="font-size:12px;color:#9A93C4">Matches this screen</span></div></div>
+              <div style="padding:6px;border-radius:30px;background:rgba(245,243,255,.04);box-shadow:inset 0 0 0 1px rgba(245,243,255,.09)"><div style="border-radius:24px;padding:14px 16px;background:{{ surf }};backdrop-filter:blur(18px) saturate(170%);-webkit-backdrop-filter:blur(18px) saturate(170%);box-shadow:inset 0 1px 1px rgba(255,255,255,.08);display:flex;flex-direction:column;gap:6px"><span style="font-size:11px;font-weight:600;letter-spacing:.16em;text-transform:uppercase;color:#9A93C4">Controller</span><span style="font-size:17px;font-weight:600">On screen</span><span style="font-size:12px;color:#9A93C4">Or pair a pad</span></div></div>
+            </div>
+            <div style="display:flex;align-items:baseline;justify-content:space-between;padding:4px 8px 0"><span style="font-size:11px;font-weight:600;letter-spacing:.16em;text-transform:uppercase;color:#C9C4E6">Tailscale peers</span><span style="font-size:12px;color:#9A93C4">3 devices</span></div>
+            <div style="background:{{ surf }};backdrop-filter:blur(18px) saturate(170%);-webkit-backdrop-filter:blur(18px) saturate(170%);border-radius:24px;padding:0 16px;box-shadow:inset 0 1px 1px rgba(255,255,255,.08)">
+              <sc-for list="{{ peers }}" as="p" hint-placeholder-count="3">
+                <div style="height:58px;display:flex;align-items:center;gap:12px;border-top:{{ p.rule }}">
+                  <span style="width:34px;height:34px;border-radius:10px;display:grid;place-items:center;background:rgba(245,243,255,.06)"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#C9C4E6" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="{{ p.d }}"></path></svg></span>
+                  <div style="flex:1;display:flex;flex-direction:column;gap:1px"><span style="font-size:16px">{{ p.name }}</span><span style="font-size:12px;color:{{ p.ink }}">{{ p.state }}</span></div>
+                  <i style="width:8px;height:8px;border-radius:50%;background:{{ p.dot }}"></i>
+                </div>
+              </sc-for>
+            </div>
+          </div>
+          <div style="position:absolute;left:21px;right:21px;bottom:28px;height:62px;border-radius:31px;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));align-items:center;padding:0 6px;box-sizing:border-box;background:rgba(30,26,48,.30);backdrop-filter:blur(14px) saturate(190%) brightness(.92);-webkit-backdrop-filter:blur(14px) saturate(190%) brightness(.92);box-shadow:inset 0 1px 0 rgba(255,255,255,.30), inset 0 0 0 1px rgba(255,255,255,.07), inset 0 0 0 .5px rgba(0,0,0,.65), 0 12px 34px rgba(0,0,0,.5)">
+            <sc-for list="{{ tabs2 }}" as="tb" hint-placeholder-count="4"><div style="display:flex;flex-direction:column;align-items:center;gap:2px;color:{{ tb.ic }}"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="{{ tb.d }}"></path></svg><span style="font-size:10px;font-weight:600;color:{{ tb.lc }}">{{ tb.name }}</span></div></sc-for>
+          </div>
+        </div>
+      </div>
+      <p style="margin:0;font-size:14px;line-height:21px;color:#9A93C4;text-wrap:pretty">One host, one action. Peers are labels only — as on desktop, no pings or addresses. Moonlight opens as its own app when you stream.</p>
+    </div>
+
+    <div id="3f" style="display:flex;flex-direction:column;gap:16px;width:422px">
+      <div style="display:flex;align-items:center;gap:10px"><span style="height:24px;padding:0 9px;border-radius:12px;display:grid;place-items:center;background:#241E3B;font-size:12px;font-weight:700;color:#C4B8FF">3f</span><span style="font-size:17px;font-weight:600">Settings</span></div>
+      <div style="padding:10px;border-radius:66px;background:#0D0B17;box-shadow:inset 0 0 0 1.5px #221D36">
+        <div data-screen-label="3f Settings" style="position:relative;width:402px;height:874px;overflow:hidden;border-radius:56px;background:#06050C">
+          <canvas ref="{{ r.f }}" aria-hidden="true" style="position:absolute;inset:0;width:100%;height:100%"></canvas>
+          <div style="position:absolute;top:0;left:0;right:0;height:54px;display:flex;align-items:center;justify-content:space-between;padding:0 34px 0 52px;box-sizing:border-box;font-size:17px;font-weight:600"><span>9:41</span><span style="width:27px;height:13px;border-radius:4px;box-shadow:inset 0 0 0 1px rgba(245,243,255,.4);padding:2px;box-sizing:border-box;display:flex"><i style="flex:1;border-radius:2px;background:#F5F3FF"></i></span></div>
+          <div style="position:absolute;top:11px;left:50%;transform:translateX(-50%);width:126px;height:37px;border-radius:19px;background:#000"></div>
+          <div style="position:absolute;top:92px;left:20px;right:20px;display:flex;align-items:center;justify-content:space-between"><span style="font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display',system-ui,sans-serif;font-size:34px;line-height:41px;font-weight:700;letter-spacing:-.01em">Settings</span><span style="height:36px;padding:0 14px;border-radius:18px;display:flex;align-items:center;font-size:15px;font-weight:600;color:#B9AEF9">Done</span></div>
+          <div style="position:absolute;top:150px;left:14px;right:14px;display:flex;flex-direction:column;gap:14px">
+            <div style="padding:6px;border-radius:30px;background:rgba(245,243,255,.04);box-shadow:inset 0 0 0 1px rgba(245,243,255,.09)">
+              <div style="border-radius:24px;padding:14px 16px;display:flex;align-items:center;gap:14px;background:rgba(16,13,28,.50);backdrop-filter:blur(20px) saturate(170%);-webkit-backdrop-filter:blur(20px) saturate(170%);box-shadow:inset 0 1px 1px rgba(255,255,255,.14)">
+                <span style="width:48px;height:48px;flex:none;border-radius:24px;display:grid;place-items:center;background:rgba(139,124,246,.14);box-shadow:inset 0 0 0 1px rgba(139,124,246,.3)"><svg width="26" height="26" viewBox="-8 -8 80 80"><ellipse cx="32" cy="32" rx="29.44" ry="17.66" fill="none" stroke="#B9AEF9" stroke-width="5" transform="rotate(-22 32 32)"></ellipse><path d="M53.76 32 37.23 37.23 32 53.76 26.77 37.23 10.24 32 26.77 26.77 32 10.24 37.23 26.77Z" fill="#F5F3FF"></path></svg></span>
+                <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:2px"><span style="font-size:17px;font-weight:600">Studio PC</span><span style="display:flex;align-items:center;gap:6px;font-size:13px;color:#3EBEB0"><i style="width:6px;height:6px;border-radius:50%;background:#3EBEB0"></i>Paired · OBS connected</span></div>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#9A93C4" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5l7 7-7 7"></path></svg>
+              </div>
+            </div>
+            <sc-for list="{{ setGroups }}" as="grp" hint-placeholder-count="3">
+              <div style="background:{{ surf }};backdrop-filter:blur(18px) saturate(170%);-webkit-backdrop-filter:blur(18px) saturate(170%);border-radius:22px;padding:0 14px;box-shadow:inset 0 1px 1px rgba(255,255,255,.08)">
+                <sc-for list="{{ grp.rows }}" as="row" hint-placeholder-count="3">
+                  <div style="height:50px;display:flex;align-items:center;gap:12px;border-top:{{ row.rule }}">
+                    <span style="width:30px;height:30px;flex:none;border-radius:9px;display:grid;place-items:center;background:{{ row.tint }}"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="{{ row.ink }}" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="{{ row.d }}"></path></svg></span>
+                    <span style="flex:1;font-size:16px">{{ row.label }}</span>
+                    <span style="font-size:14px;color:#9A93C4;white-space:nowrap">{{ row.value }}</span>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#736BA4" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5l7 7-7 7"></path></svg>
+                  </div>
+                </sc-for>
+              </div>
+            </sc-for>
+          </div>
+        </div>
+      </div>
+      <p style="margin:0;font-size:14px;line-height:21px;color:#9A93C4;text-wrap:pretty">Opened from the sliders button on any tab. The paired PC leads; groups mirror the desktop’s config.json sections, with each current value inline. No tab bar — it’s a sheet.</p>
+    </div>
+
+    <div id="3g" style="display:flex;flex-direction:column;gap:16px;width:422px">
+      <div style="display:flex;align-items:center;gap:10px"><span style="height:24px;padding:0 9px;border-radius:12px;display:grid;place-items:center;background:#241E3B;font-size:12px;font-weight:700;color:#C4B8FF">3g</span><span style="font-size:17px;font-weight:600">Settings › Appearance</span></div>
+      <div style="padding:10px;border-radius:66px;background:#0D0B17;box-shadow:inset 0 0 0 1.5px #221D36">
+        <div data-screen-label="3g Appearance" style="position:relative;width:402px;height:874px;overflow:hidden;border-radius:56px;background:#06050C">
+          <canvas ref="{{ r.g }}" aria-hidden="true" style="position:absolute;inset:0;width:100%;height:100%"></canvas>
+          <div style="position:absolute;top:0;left:0;right:0;height:54px;display:flex;align-items:center;justify-content:space-between;padding:0 34px 0 52px;box-sizing:border-box;font-size:17px;font-weight:600"><span>9:41</span><span style="width:27px;height:13px;border-radius:4px;box-shadow:inset 0 0 0 1px rgba(245,243,255,.4);padding:2px;box-sizing:border-box;display:flex"><i style="flex:1;border-radius:2px;background:#F5F3FF"></i></span></div>
+          <div style="position:absolute;top:11px;left:50%;transform:translateX(-50%);width:126px;height:37px;border-radius:19px;background:#000"></div>
+          <div style="position:absolute;top:58px;left:12px;right:12px;height:44px;display:flex;align-items:center;justify-content:space-between"><span style="display:flex;align-items:center;gap:2px;font-size:17px;color:#B9AEF9"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#B9AEF9" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"></path></svg>Settings</span><span style="font-size:17px;font-weight:600">Appearance</span><span style="width:80px"></span></div>
+          <div style="position:absolute;top:116px;left:14px;right:14px;display:flex;flex-direction:column;gap:14px">
+            <span style="padding:0 8px;font-size:11px;font-weight:600;letter-spacing:.16em;text-transform:uppercase;color:#C9C4E6">Background · live behind every tab</span>
+            <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px">
+              <sc-for list="{{ tiles }}" as="tl" hint-placeholder-count="9">
+                <div onClick="{{ tl.on }}" style="display:flex;flex-direction:column;gap:6px;cursor:pointer">
+                  <div style="position:relative;height:150px;border-radius:20px;overflow:hidden;background:#06050C;box-shadow:{{ tl.ring }};transition:box-shadow .4s cubic-bezier(.32,.72,0,1)">
+                    <canvas ref="{{ tl.ref }}" aria-hidden="true" style="position:absolute;inset:0;width:100%;height:100%"></canvas>
+                    <sc-if value="{{ tl.sel }}" hint-placeholder-val="{{ false }}"><span style="position:absolute;top:8px;right:8px;width:22px;height:22px;border-radius:11px;display:grid;place-items:center;background:#8B7CF6"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#100D1C" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5 9.8 17 19 7"></path></svg></span></sc-if>
+                  </div>
+                  <span style="padding:0 4px;font-size:12px;font-weight:600;color:{{ tl.fg }}">{{ tl.name }}</span>
+                </div>
+              </sc-for>
+            </div>
+            <div style="background:{{ surf }};backdrop-filter:blur(18px) saturate(170%);-webkit-backdrop-filter:blur(18px) saturate(170%);border-radius:22px;padding:0 14px;box-shadow:inset 0 1px 1px rgba(255,255,255,.08)">
+              <div style="height:50px;display:flex;align-items:center;justify-content:space-between"><span style="font-size:16px">Motion</span><div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));width:170px;height:32px;padding:2px;box-sizing:border-box;border-radius:16px;background:rgba(10,8,18,.55);box-shadow:inset 0 0 0 1px rgba(245,243,255,.08);gap:2px"><sc-for list="{{ motionSegs }}" as="s" hint-placeholder-count="2"><span onClick="{{ s.on }}" style="border-radius:14px;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:600;cursor:pointer;background:{{ s.bg }};box-shadow:{{ s.ring }};color:{{ s.fg }}">{{ s.label }}</span></sc-for></div></div>
+              <div style="height:50px;display:flex;align-items:center;justify-content:space-between;border-top:.5px solid rgba(245,243,255,.09)"><span style="font-size:16px">Random planet</span><span onClick="{{ reroll }}" style="height:32px;padding:0 4px 0 12px;border-radius:16px;display:flex;align-items:center;gap:8px;font-size:13px;font-weight:600;cursor:pointer;background:rgba(245,243,255,.06)">Reroll<span style="height:24px;padding:0 9px;border-radius:12px;display:flex;align-items:center;font-size:12px;color:#C4B8FF;background:rgba(139,124,246,.16)">{{ planetName }}</span></span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <p style="margin:0;font-size:14px;line-height:21px;color:#9A93C4;text-wrap:pretty">All nine grounds from round 2, live in their tiles. Tap one and every phone on this page switches to it. Motion respects Reduce Motion and can be forced still.</p>
+    </div>
+
+    <div id="3h" style="display:flex;flex-direction:column;gap:16px;width:422px">
+      <div style="display:flex;align-items:center;gap:10px"><span style="height:24px;padding:0 9px;border-radius:12px;display:grid;place-items:center;background:#241E3B;font-size:12px;font-weight:700;color:#C4B8FF">3h</span><span style="font-size:17px;font-weight:600">Settings › Recording</span></div>
+      <div style="padding:10px;border-radius:66px;background:#0D0B17;box-shadow:inset 0 0 0 1.5px #221D36">
+        <div data-screen-label="3h Recording settings" style="position:relative;width:402px;height:874px;overflow:hidden;border-radius:56px;background:#06050C">
+          <canvas ref="{{ r.h }}" aria-hidden="true" style="position:absolute;inset:0;width:100%;height:100%"></canvas>
+          <div style="position:absolute;top:0;left:0;right:0;height:54px;display:flex;align-items:center;justify-content:space-between;padding:0 34px 0 52px;box-sizing:border-box;font-size:17px;font-weight:600"><span>9:41</span><span style="width:27px;height:13px;border-radius:4px;box-shadow:inset 0 0 0 1px rgba(245,243,255,.4);padding:2px;box-sizing:border-box;display:flex"><i style="flex:1;border-radius:2px;background:#F5F3FF"></i></span></div>
+          <div style="position:absolute;top:11px;left:50%;transform:translateX(-50%);width:126px;height:37px;border-radius:19px;background:#000"></div>
+          <div style="position:absolute;top:58px;left:12px;right:12px;height:44px;display:flex;align-items:center;justify-content:space-between"><span style="display:flex;align-items:center;gap:2px;font-size:17px;color:#B9AEF9"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#B9AEF9" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"></path></svg>Settings</span><span style="font-size:17px;font-weight:600">Recording</span><span style="width:80px;display:flex;justify-content:flex-end;padding-right:8px;font-size:13px;color:#3EBEB0">Saved</span></div>
+          <div style="position:absolute;top:116px;left:14px;right:14px;display:flex;flex-direction:column;gap:10px">
+            <span style="padding:0 8px;font-size:11px;font-weight:600;letter-spacing:.16em;text-transform:uppercase;color:#C9C4E6">When a game launches</span>
+            <div style="background:{{ surf }};backdrop-filter:blur(18px) saturate(170%);-webkit-backdrop-filter:blur(18px) saturate(170%);border-radius:22px;padding:14px;box-shadow:inset 0 1px 1px rgba(255,255,255,.08);display:flex;flex-direction:column;gap:10px">
+              <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));height:36px;padding:2px;box-sizing:border-box;border-radius:18px;background:rgba(10,8,18,.55);box-shadow:inset 0 0 0 1px rgba(245,243,255,.08);gap:2px"><sc-for list="{{ launchSegs }}" as="s" hint-placeholder-count="3"><span onClick="{{ s.on }}" style="border-radius:16px;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:600;cursor:pointer;transition:background .35s cubic-bezier(.32,.72,0,1);background:{{ s.bg }};box-shadow:{{ s.ring }};color:{{ s.fg }}">{{ s.label }}</span></sc-for></div>
+              <span style="font-size:13px;line-height:18px;color:#9A93C4;text-wrap:pretty">{{ launchHint }}</span>
+            </div>
+            <span style="padding:6px 8px 0;font-size:11px;font-weight:600;letter-spacing:.16em;text-transform:uppercase;color:#C9C4E6">Instant replay length</span>
+            <div style="background:{{ surf }};backdrop-filter:blur(18px) saturate(170%);-webkit-backdrop-filter:blur(18px) saturate(170%);border-radius:22px;padding:14px;box-shadow:inset 0 1px 1px rgba(255,255,255,.08)">
+              <div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));height:36px;padding:2px;box-sizing:border-box;border-radius:18px;background:rgba(10,8,18,.55);box-shadow:inset 0 0 0 1px rgba(245,243,255,.08);gap:2px"><sc-for list="{{ replaySegs }}" as="s" hint-placeholder-count="4"><span onClick="{{ s.on }}" style="border-radius:16px;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:600;cursor:pointer;transition:background .35s cubic-bezier(.32,.72,0,1);background:{{ s.bg }};box-shadow:{{ s.ring }};color:{{ s.fg }}">{{ s.label }}</span></sc-for></div>
+            </div>
+            <span style="padding:6px 8px 0;font-size:11px;font-weight:600;letter-spacing:.16em;text-transform:uppercase;color:#C9C4E6">Auto-pause &amp; cleanup</span>
+            <div style="background:{{ surf }};backdrop-filter:blur(18px) saturate(170%);-webkit-backdrop-filter:blur(18px) saturate(170%);border-radius:22px;padding:0 14px;box-shadow:inset 0 1px 1px rgba(255,255,255,.08)">
+              <div style="height:60px;display:flex;align-items:center;justify-content:space-between;gap:12px"><div style="display:flex;flex-direction:column;gap:2px"><span style="font-size:16px">Pause when idle</span><span style="font-size:12px;color:#9A93C4">No input for this long</span></div>
+                <div style="display:flex;align-items:center;gap:4px;height:34px;padding:2px;border-radius:17px;background:rgba(10,8,18,.55);box-shadow:inset 0 0 0 1px rgba(245,243,255,.08)"><span onClick="{{ idleDown }}" style="width:30px;height:30px;border-radius:15px;display:grid;place-items:center;font-size:18px;cursor:pointer;background:rgba(245,243,255,.06)">−</span><span style="width:44px;text-align:center;font-size:15px;font-weight:600;font-variant-numeric:tabular-nums">{{ idleLabel }}</span><span onClick="{{ idleUp }}" style="width:30px;height:30px;border-radius:15px;display:grid;place-items:center;font-size:18px;cursor:pointer;background:rgba(245,243,255,.06)">+</span></div></div>
+              <div style="height:60px;display:flex;align-items:center;justify-content:space-between;gap:12px;border-top:.5px solid rgba(245,243,255,.09)"><div style="display:flex;flex-direction:column;gap:2px"><span style="font-size:16px">Discard clips under</span><span style="font-size:12px;color:#9A93C4">Deletes accidental flickers</span></div>
+                <div style="display:flex;align-items:center;gap:4px;height:34px;padding:2px;border-radius:17px;background:rgba(10,8,18,.55);box-shadow:inset 0 0 0 1px rgba(245,243,255,.08)"><span onClick="{{ discDown }}" style="width:30px;height:30px;border-radius:15px;display:grid;place-items:center;font-size:18px;cursor:pointer;background:rgba(245,243,255,.06)">−</span><span style="width:44px;text-align:center;font-size:15px;font-weight:600;font-variant-numeric:tabular-nums">{{ discLabel }}</span><span onClick="{{ discUp }}" style="width:30px;height:30px;border-radius:15px;display:grid;place-items:center;font-size:18px;cursor:pointer;background:rgba(245,243,255,.06)">+</span></div></div>
+              <div style="padding:12px 0 14px;display:flex;flex-direction:column;gap:8px;border-top:.5px solid rgba(245,243,255,.09)"><div style="display:flex;flex-direction:column;gap:2px"><span style="font-size:16px">Keep recording while these play audio</span><span style="font-size:12px;color:#9A93C4">Idle pause waits while they’re making sound</span></div>
+                <div style="display:flex;flex-wrap:wrap;gap:6px"><span style="height:28px;padding:0 12px;border-radius:14px;display:flex;align-items:center;font-family:ui-monospace,'SF Mono',monospace;font-size:12px;color:#9FE3D6;background:rgba(62,190,176,.12);box-shadow:inset 0 0 0 1px rgba(62,190,176,.3)">Discord.exe</span><span style="height:28px;padding:0 12px;border-radius:14px;display:flex;align-items:center;font-size:13px;color:#B9AEF9;box-shadow:inset 0 0 0 1px rgba(139,124,246,.35)">+ Add app</span></div></div>
+            </div>
+            <div style="background:{{ surf }};backdrop-filter:blur(18px) saturate(170%);-webkit-backdrop-filter:blur(18px) saturate(170%);border-radius:22px;padding:0 14px;box-shadow:inset 0 1px 1px rgba(255,255,255,.08)">
+              <div style="height:54px;display:flex;align-items:center;justify-content:space-between;gap:12px"><span style="font-size:16px">Recording folder</span><span style="font-family:ui-monospace,'SF Mono',monospace;font-size:12px;color:#9A93C4">Videos\Nebula · set on PC</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <p style="margin:0;font-size:14px;line-height:21px;color:#9A93C4;text-wrap:pretty">The phone edits what makes sense away from the desk — capture choice, replay length, idle and cleanup — and writes straight to the PC’s config. Paths stay read-only here.</p>
+    </div>
+  </div>
+</div>
+</section>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;background&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;earth&quot;,&quot;proc&quot;,&quot;moon&quot;,&quot;solar&quot;,&quot;dots&quot;,&quot;ring&quot;,&quot;galaxy&quot;,&quot;saturn&quot;,&quot;dither&quot;],&quot;default&quot;:&quot;earth&quot;,&quot;tsType&quot;:&quot;string&quot;},&quot;surfaces&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;glass&quot;,&quot;lively&quot;,&quot;solid&quot;],&quot;default&quot;:&quot;glass&quot;,&quot;tsType&quot;:&quot;string&quot;}}">
+class Component extends DCLogic {
+  state = { t: 0, bg: null, seed: 7, chip: 0, pending: true, answer: null, sheetCap: 0, launch: 0, replay: 1, idle: 4, disc: 10, still: false,
+    caps: { 'Sifu': 0, 'Helldivers 2': 2, 'Hades II': 3, 'Balatro': 1 } };
+  r = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'].reduce((o, k) => (o[k] = React.createRef(), o), {});
+  KINDS = [['earth', 'Earth'], ['proc', 'Random'], ['moon', 'Moonrise'], ['solar', 'Solar live'], ['dots', 'Dot bloom'], ['ring', 'Pixel orbit'], ['galaxy', 'Galaxy'], ['saturn', 'Ringed'], ['dither', 'Dither']].map(k => ({ key: k[0], name: k[1], ref: React.createRef() }));
+  componentDidMount() {
+    const mq = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)');
+    this.rm = !!(mq && mq.matches);
+    const go = () => {
+      if (!window.NMSpace) { this.wt = setTimeout(go, 100); return; }
+      window.NMSpace.ready.then(() => { this.forceUpdate(); this.frame(20, true); });
+      let last = 0, ti = 0;
+      const loop = now => {
+        if (now - last > 50) { last = now; const still = this.rm || this.state.still; this.frame(still ? 20 : now / 1000, false, ti++); }
+        this.raf = requestAnimationFrame(loop);
+      };
+      this.raf = requestAnimationFrame(loop);
+    };
+    go();
+    this.iv = setInterval(() => this.setState(s => ({ t: s.t + 1 })), 1000);
+  }
+  componentWillUnmount() { clearInterval(this.iv); clearTimeout(this.wt); cancelAnimationFrame(this.raf); if (this.io) this.io.disconnect(); }
+  vis(c) {
+    if (!c) return false;
+    if (!this.io) { this.seen = new WeakMap(); this.io = new IntersectionObserver(es => es.forEach(e => this.seen.set(e.target, e.isIntersecting)), { rootMargin: '200px' }); }
+    if (!c.__obs) { c.__obs = 1; this.io.observe(c); this.seen.set(c, true); }
+    return this.seen.get(c);
+  }
+  render1(kind, t) {
+    if (!this.off) this.off = {};
+    let o = this.off[kind];
+    if (!o) { const cv = document.createElement('canvas'); cv.width = 603; cv.height = 1311; o = this.off[kind] = { cv, x: cv.getContext('2d'), t: -1, seed: -1 }; }
+    if (o.t !== t || o.seed !== this.state.seed) { o.t = t; o.seed = this.state.seed; o.x.setTransform(1.5, 0, 0, 1.5, 0, 0); o.x.globalAlpha = 1; o.x.globalCompositeOperation = 'source-over'; window.NMSpace.draw(kind, o.x, t, this.state.seed); }
+
+    return o.cv;
+  }
+  frame(t, all, ti) {
+    const kind = this.bgKey(), src = this.render1(kind, t);
+    for (const k of Object.keys(this.r)) {
+      const c = this.r[k].current; if (!c || (!all && !this.vis(c))) continue;
+      if (c.width !== 603) { c.width = 603; c.height = 1311; }
+      c.getContext('2d').drawImage(src, 0, 0);
+    }
+    const g = this.r.g.current; if (!all && !this.vis(g)) return;
+    this.KINDS.forEach((k, i) => {
+      if (!all && k.key !== kind && (ti % this.KINDS.length) !== i) return;
+      const c = k.ref.current; if (!c) return;
+      const cv = k.key === kind ? src : this.render1(k.key, t);
+      if (c.width !== 216) { c.width = 216; c.height = 300; }
+      const x = c.getContext('2d'); const sy = { earth: 474, proc: 474, moon: 474, galaxy: 474, saturn: 474, solar: 90, ring: 120, dots: 240, dither: 300 }[k.key] || 0; x.drawImage(cv, 0, sy, 603, 837, 0, 0, 216, 300);
+    });
+  }
+  bgKey() { return this.state.bg || this.props.background || 'earth'; }
+  seg(labels, cur, set, accent) {
+    return labels.map((l, i) => ({ label: l, bg: i === cur ? (accent ? 'rgba(139,124,246,.24)' : '#2A2442') : 'transparent', ring: i === cur ? 'inset 0 0 0 1px rgba(185,174,249,.35)' : 'none', fg: i === cur ? '#F5F3FF' : '#9A93C4', on: () => set(i) }));
+  }
+  renderVals() {
+    const s = this.state, t = s.t, p = n => String(n).padStart(2, '0');
+    const D = ['M12 3.4a8.6 8.6 0 1 1 0 17.2a8.6 8.6 0 1 1 0-17.2M12 9.2a2.8 2.8 0 1 1 0 5.6a2.8 2.8 0 1 1 0-5.6', 'M6.1 5h11.8a2.6 2.6 0 0 1 2.6 2.6v8.8a2.6 2.6 0 0 1-2.6 2.6H6.1a2.6 2.6 0 0 1-2.6-2.6V7.6A2.6 2.6 0 0 1 6.1 5M7.6 5v14M16.4 5v14', 'M5.2 4.2h13.6a2.4 2.4 0 0 1 2.4 2.4v7.8a2.4 2.4 0 0 1-2.4 2.4H5.2a2.4 2.4 0 0 1-2.4-2.4V6.6a2.4 2.4 0 0 1 2.4-2.4M9 20.2h6M12 16.8v3.4M10.6 8.4v4.4l3.8-2.2z', 'M7.6 7.4h8.8c2.5 0 4.1 1.9 4.5 4.4l.6 4.2c.3 1.8-1.6 3-3 2L16.3 16.4a2.4 2.4 0 0 0-1.4-.5H9.1a2.4 2.4 0 0 0-1.4.5L5.5 18c-1.4 1-3.3-.2-3-2l.6-4.2c.4-2.5 2-4.4 4.5-4.4zM7.6 10.2v3.2M6 11.8h3.2'];
+    const tabs = a => ['Now', 'Clips', 'Remote', 'Games'].map((n, i) => ({ name: n, d: D[i], ic: i === a ? '#8B7CF6' : '#9A93C4', lc: i === a ? '#F5F3FF' : '#9A93C4' }));
+    const chipNames = ['All', 'Sifu', 'Helldivers 2', 'Hades II', 'Balatro'];
+    const chips = chipNames.map((l, i) => ({ label: l, bg: i === s.chip ? 'rgba(139,124,246,.22)' : 'rgba(30,26,48,.34)', ring: i === s.chip ? 'rgba(185,174,249,.45)' : 'rgba(245,243,255,.08)', fg: i === s.chip ? '#F5F3FF' : '#C9C4E6', on: () => this.setState({ chip: i }) }));
+    const IM = { k: 'https://upload.wikimedia.org/wikipedia/commons/9/92/Kabukicho_red_gate_and_colorful_neon_street_signs_at_night%2C_Shinjuku%2C_Tokyo%2C_Japan.jpg', n: 'https://upload.wikimedia.org/wikipedia/commons/9/9e/Neon-street-in-Tokyo-Japan.jpg', tr: 'https://upload.wikimedia.org/wikipedia/commons/8/89/Tropical_City_Streets_at_Night.jpg', c: 'https://upload.wikimedia.org/wikipedia/commons/9/9e/Chicago%2C_Illinois_-_city_at_night_in_the_rain-.jpg' };
+    const gameTiles = [['Sifu', IM.k, '38 clips · 64 GB'], ['Helldivers 2', IM.n, '52 clips · 81 GB'], ['Hades II', IM.tr, '29 clips · 41 GB'], ['Balatro', IM.c, '22 clips · 28 GB']].map(g => ({ name: g[0], img: g[1], meta: g[2] }));
+    const pct = ((t % 90) / 90) * 100, sec = Math.round(1122 * pct / 100);
+    const clipActions = [['Share', 'M12 15V4M7.5 8.5 12 4l4.5 4.5M5 13v5.5A1.5 1.5 0 0 0 6.5 20h11a1.5 1.5 0 0 0 1.5-1.5V13'], ['Save', 'M12 4v11M7.5 10.5 12 15l4.5-4.5M5 19.5h14'], ['Trim', 'M6 5a2 2 0 1 1 0 4a2 2 0 1 1 0-4M6 15a2 2 0 1 1 0 4a2 2 0 1 1 0-4M7.8 8.2 19 17M7.8 15.8 19 7'], ['Delete', 'M5 7h14M10 7V5h4v2M7 7l1 12h8l1-12']].map((a, i) => ({ label: a[0], d: a[1], bg: i === 3 ? 'rgba(255,92,122,.14)' : 'rgba(30,26,48,.4)', ink: i === 3 ? '#FF8FA3' : '#F5F3FF', lc: i === 3 ? '#FF8FA3' : '#C9C4E6' }));
+    const CAP = ['Default', 'Record', 'Buffer', 'Both'];
+    const gameList = [['Sifu', 'Steam'], ['Helldivers 2', 'Steam'], ['Hades II', 'Steam'], ['Balatro', 'Added by you']];
+    if (s.answer === 'yes') gameList.unshift(['Clair Obscur', 'Added just now']);
+    const games = gameList.map((g, i) => ({ name: g[0], src: g[1], srcInk: g[1] === 'Added just now' ? '#B9AEF9' : '#9A93C4', rule: i ? '.5px solid rgba(245,243,255,.09)' : 'none', segs: this.seg(CAP, s.caps[g[0]] ?? 0, v => this.setState(st => ({ caps: { ...st.caps, [g[0]]: v } })), true) })).slice(0, 4);
+    const nongames = ['Discord', 'Spotify', 'VS Code', 'Firefox'].concat(s.answer === 'no' ? ['Sandfall-Win64…'] : []);
+    const LAUNCH = ['Record', 'Buffer', 'Both'];
+    const launchHints = ['Starts a full recording into the game’s folder as soon as it’s detected.', 'Keeps a rolling instant-replay buffer; save the last moments with the hotkey.', 'Records in full and keeps the replay buffer running alongside.'];
+    const peers = [['gaming-pc', 'Online', '#3EBEB0', '#3EBEB0'], ['living-room-pc', 'Online', '#3EBEB0', '#3EBEB0'], ['laptop', 'Offline', '#736BA4', '#9A93C4']].map((q, i) => ({ name: q[0], state: q[1], dot: q[2], ink: q[3], d: i === 2 ? 'M5 6.5h14v9H5zM3 18.5h18' : 'M4 5h16v11H4zM9 20h6M12 16v4', rule: i ? '.5px solid rgba(245,243,255,.09)' : 'none' }));
+    const kindName = (this.KINDS.find(k => k.key === this.bgKey()) || {}).name || 'Earth';
+    const V = 'rgba(139,124,246,.18)', VI = '#C4B8FF', T = 'rgba(62,190,176,.16)', TI = '#9FE3D6', A = 'rgba(224,168,92,.16)', AI = '#F2D2A4';
+    const row = (d, tint, ink, label, value, i) => ({ d, tint, ink, label, value, rule: i ? '.5px solid rgba(245,243,255,.09)' : 'none' });
+    const setGroups = [
+      { rows: [row('M3.5 7.5a2 2 0 0 1 2-2h4l2 2h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z', V, VI, 'Recording', LAUNCH[s.launch], 0), row('M4 12a8 8 0 1 0 2.3-5.6M4 4v4h4M12 8v4l3 2', V, VI, 'Instant replay', ['15 s', '30 s', '60 s', '2 min'][s.replay], 1), row(D[3], V, VI, 'Games & detection', '13 games', 2), row('M4 7h16v10H4zM7.5 10.5h1M11.5 10.5h1M15.5 10.5h1M8 14h8', V, VI, 'Hotkey', '`', 3)] },
+      { rows: [row('M7 18a4 4 0 0 1-.6-8A5.5 5.5 0 0 1 17 9a4.5 4.5 0 0 1 .5 9z', T, TI, 'Game list sync', 'OneDrive', 0), row('M4 6h16v9H4zM12 15v4M8 19h8', T, TI, 'Offload to NAS', 'nas-vault', 1), row(D[2], T, TI, 'Remote streaming', 'Tailscale', 2)] },
+      { rows: [row('M12 6a6 6 0 1 1 0 12a6 6 0 1 1 0-12M3 15c3.5 1.8 14.5-.2 18-6', A, AI, 'Appearance', kindName, 0), row('M6 16V11a6 6 0 0 1 12 0v5l1.5 2h-15zM10 20.5h4', A, AI, 'Notifications', 'On', 1), row('M20 12a8 8 0 1 1-2.3-5.6M20 4v4h-4', A, AI, 'Updates', 'v2.4.1', 2)] }
+    ];
+    const tiles = this.KINDS.map(k => { const sel = k.key === this.bgKey(); return { ...k, sel, ring: sel ? 'inset 0 0 0 2px #8B7CF6, 0 0 22px rgba(139,124,246,.35)' : 'inset 0 0 0 1px rgba(245,243,255,.10)', fg: sel ? '#F5F3FF' : '#9A93C4', on: () => this.setState({ bg: k.key }) }; });
+    return {
+      surf: ({ glass: 'linear-gradient(150deg, rgba(185,174,249,.16), rgba(185,174,249,0) 46%), rgba(22,18,40,.40)', lively: 'radial-gradient(90% 70% at 0% 0%, rgba(139,124,246,.30), rgba(139,124,246,0) 65%), radial-gradient(80% 90% at 100% 100%, rgba(212,113,224,.18), rgba(212,113,224,0) 60%), linear-gradient(160deg, #241C44, #17122C)', solid: '#1C1730' })[this.props.surfaces || 'glass'],
+      r: this.r, tabs1: tabs(1), tabs2: tabs(2), tabs3: tabs(3), chips, gameTiles, clipActions,
+      playPct: pct.toFixed(1) + '%', playTime: `${Math.floor(sec / 60)}:${p(sec % 60)}`,
+      pending: s.pending, answered: !s.pending, answerText: s.answer === 'yes' ? 'Clair Obscur added — it’ll record' : 'Sandfall-Win64… marked not a game',
+      yesGame: () => this.setState({ pending: false, answer: 'yes' }), noGame: () => this.setState({ pending: false, answer: 'no' }), undo: () => this.setState({ pending: true, answer: null }),
+      games, nongames, launchLabel: LAUNCH[s.launch],
+      sheetSegs: this.seg(['Record', 'Buffer', 'Both'], s.sheetCap, v => this.setState({ sheetCap: v }), true), sheetVerb: ['record it', 'buffer it', 'record + buffer'][s.sheetCap],
+      peers, setGroups, tiles,
+      motionSegs: this.seg(['Live', 'Still'], s.still ? 1 : 0, v => this.setState({ still: v === 1 })),
+      reroll: () => this.setState(st => ({ seed: st.seed + 1, bg: 'proc' })), planetName: window.NMSpace ? window.NMSpace.name(s.seed) : '…',
+      launchSegs: this.seg(LAUNCH, s.launch, v => this.setState({ launch: v }), true), launchHint: launchHints[s.launch],
+      replaySegs: this.seg(['15 s', '30 s', '60 s', '2 min'], s.replay, v => this.setState({ replay: v }), true),
+      idleLabel: s.idle + ' s', idleUp: () => this.setState(st => ({ idle: Math.min(60, st.idle + 1) })), idleDown: () => this.setState(st => ({ idle: Math.max(1, st.idle - 1) })),
+      discLabel: s.disc + ' s', discUp: () => this.setState(st => ({ disc: Math.min(120, st.disc + 5) })), discDown: () => this.setState(st => ({ disc: Math.max(0, st.disc - 5) }))
+    };
+  }
+}
+</script>
+</body>
+</html>

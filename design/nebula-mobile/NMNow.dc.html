@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+@keyframes nmDust { from { transform:translate(0,0); opacity:var(--a0); } to { transform:translate(var(--dx),var(--dy)); opacity:var(--a1); } }
+@keyframes nmSpin { to { transform:rotate(360deg); } }
+</style>
+</helmet>
+<div data-screen-label="Now" style="position:relative;width:402px;height:874px;overflow:hidden;border-radius:56px;background:#100D1C;font-family:-apple-system,BlinkMacSystemFont,'SF Pro Text',system-ui,sans-serif;color:#F5F3FF;-webkit-font-smoothing:antialiased">
+  <div aria-hidden="true" style="position:absolute;inset:0;pointer-events:none;background:radial-gradient(420px 300px at 14% -4%, rgba(139,124,246,.15), transparent 70%), radial-gradient(320px 260px at 104% 18%, rgba(90,182,232,.06), transparent 70%)"></div>
+
+  <div style="position:absolute;top:54px;left:16px;right:16px;height:52px;display:flex;align-items:center;justify-content:space-between">
+    <div style="display:flex;align-items:center;gap:10px">
+      <sc-if value="{{ online }}" hint-placeholder-val="{{ true }}">
+        <svg width="30" height="30" viewBox="-8 -8 80 80"><ellipse cx="32" cy="32" rx="26" ry="10.5" fill="none" stroke="#8B7CF6" stroke-width="2.8" opacity=".6" transform="rotate(48 32 32)"></ellipse><ellipse cx="32" cy="32" rx="29.44" ry="17.66" fill="none" stroke="#C4B8FF" stroke-width="4.4" transform="rotate(-22 32 32)"></ellipse><path d="M53.76 32 37.23 37.23 32 53.76 26.77 37.23 10.24 32 26.77 26.77 32 10.24 37.23 26.77Z" fill="#F5F3FF"></path></svg>
+      </sc-if>
+      <sc-if value="{{ offline }}" hint-placeholder-val="{{ false }}">
+        <svg width="30" height="30" viewBox="-8 -8 80 80"><ellipse cx="32" cy="32" rx="26" ry="10.5" fill="none" stroke="#4A4466" stroke-width="2.8" transform="rotate(48 32 32)"></ellipse><ellipse cx="32" cy="32" rx="29.44" ry="17.66" fill="none" stroke="#5E5878" stroke-width="4.4" transform="rotate(-22 32 32)"></ellipse><path d="M53.76 32 37.23 37.23 32 53.76 26.77 37.23 10.24 32 26.77 26.77 32 10.24 37.23 26.77Z" fill="#736BA4" opacity=".55"></path></svg>
+      </sc-if>
+      <div style="display:flex;flex-direction:column;gap:1px">
+        <span style="font-size:17px;font-weight:600;letter-spacing:-.01em;line-height:20px">Nebula</span>
+        <span style="display:flex;align-items:center;gap:6px;font-size:13px;line-height:16px;color:{{ subColor }}"><i style="width:6px;height:6px;border-radius:50%;background:{{ dotColor }}"></i>{{ subtitle }}</span>
+      </div>
+    </div>
+    <div style="width:44px;height:44px;border-radius:22px;display:grid;place-items:center;background:{{ g.bg }};backdrop-filter:{{ g.bf }};-webkit-backdrop-filter:{{ g.bf }};box-shadow:inset 0 1px 0 rgba(255,255,255,.30), inset 0 0 0 1px rgba(255,255,255,.07), inset 0 0 0 .5px rgba(0,0,0,.65), inset 0 -1px 1px rgba(0,0,0,.35);cursor:pointer;transition:transform .35s cubic-bezier(.32,.72,0,1)" style-active="transform:scale(.94)">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#F5F3FF" stroke-width="1.5" stroke-linecap="round"><path d="M3.5 6.5h17M3.5 12h17M3.5 17.5h17"></path><circle cx="15" cy="6.5" r="2.1" fill="#100D1C"></circle><circle cx="8.5" cy="12" r="2.1" fill="#100D1C"></circle><circle cx="13" cy="17.5" r="2.1" fill="#100D1C"></circle></svg>
+    </div>
+  </div>
+
+  <sc-if value="{{ online }}" hint-placeholder-val="{{ true }}">
+    <div style="position:absolute;top:118px;left:16px;right:16px;display:flex;flex-direction:column;gap:24px">
+      <div style="background:#181428;border-radius:26px;box-shadow:inset 0 1px 0 rgba(245,243,255,.08);padding:20px;display:flex;flex-direction:column;gap:16px">
+        <div style="display:flex;align-items:center;justify-content:space-between">
+          <sc-if value="{{ isRec }}" hint-placeholder-val="{{ true }}">
+            <span style="position:relative;display:inline-flex;align-items:center;gap:7px;height:26px;padding:0 11px;border-radius:13px;background:rgba(255,232,188,.10);box-shadow:inset 0 0 0 .5px rgba(255,232,188,.32);overflow:hidden">
+              {{ chipDust }}
+              <i style="position:relative;width:7px;height:7px;border-radius:50%;background:#FFE8BC"></i>
+              <span style="position:relative;font-size:11px;font-weight:600;letter-spacing:.16em;color:#FFE8BC">REC</span>
+            </span>
+          </sc-if>
+          <sc-if value="{{ isPaused }}" hint-placeholder-val="{{ false }}">
+            <span style="display:inline-flex;align-items:center;gap:7px;height:26px;padding:0 11px;border-radius:13px;background:rgba(245,243,255,.06);box-shadow:inset 0 0 0 .5px rgba(245,243,255,.14)">
+              <svg width="9" height="10" viewBox="0 0 9 10"><rect x="0" y="0" width="3" height="10" rx="1" fill="#9A93C4"></rect><rect x="6" y="0" width="3" height="10" rx="1" fill="#9A93C4"></rect></svg>
+              <span style="font-size:11px;font-weight:600;letter-spacing:.16em;color:#9A93C4">PAUSED</span>
+            </span>
+          </sc-if>
+          <sc-if value="{{ isIdle }}" hint-placeholder-val="{{ false }}">
+            <span style="display:inline-flex;align-items:center;gap:7px;height:26px;padding:0 11px;border-radius:13px;background:rgba(245,243,255,.06);box-shadow:inset 0 0 0 .5px rgba(245,243,255,.14)">
+              <i style="width:7px;height:7px;border-radius:50%;box-shadow:inset 0 0 0 1.5px #9A93C4"></i>
+              <span style="font-size:11px;font-weight:600;letter-spacing:.16em;color:#9A93C4">READY</span>
+            </span>
+          </sc-if>
+          <span style="font-size:13px;color:#9A93C4;font-variant-numeric:tabular-nums lining-nums">1080p60 · NVENC</span>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:2px">
+          <span style="font-size:22px;font-weight:600;letter-spacing:-.015em">{{ game }}</span>
+          <span style="font-size:15px;color:#9A93C4">{{ scene }}</span>
+        </div>
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:12px">
+          <span style="font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display',system-ui,sans-serif;font-size:56px;line-height:60px;font-weight:500;letter-spacing:-.02em;font-variant-numeric:tabular-nums lining-nums;color:{{ clockColor }}">{{ clock }}</span>
+          {{ arc }}
+        </div>
+        <div style="display:flex;flex-wrap:wrap;column-gap:16px;row-gap:4px;font-size:13px;font-variant-numeric:tabular-nums lining-nums">
+          <span style="display:flex;gap:5px"><span style="color:#9A93C4">File</span><span>{{ file }}</span></span>
+          <span style="display:flex;gap:5px"><span style="color:#9A93C4">Bitrate</span><span>{{ bitrate }}</span></span>
+          <span style="display:flex;gap:5px"><span style="color:#9A93C4">Disk</span><span>4d left</span></span>
+        </div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:8px">
+        <span style="padding:0 16px;font-size:11px;font-weight:600;letter-spacing:.16em;text-transform:uppercase;color:#736BA4">Activity</span>
+        <div style="background:#181428;border-radius:26px;box-shadow:inset 0 1px 0 rgba(245,243,255,.08);padding:0 16px">
+          <sc-for list="{{ activity }}" as="r" hint-placeholder-count="4">
+            <div style="height:47px;display:flex;align-items:center;justify-content:space-between;gap:12px;border-top:{{ r.sep }}">
+              <span style="font-size:15px;color:{{ r.color }};white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ r.t }}</span>
+              <span style="font-size:13px;color:#9A93C4;font-variant-numeric:tabular-nums lining-nums">{{ r.time }}</span>
+            </div>
+          </sc-for>
+        </div>
+      </div>
+    </div>
+
+    <div style="position:absolute;left:0;right:0;bottom:114px;display:flex;justify-content:center;align-items:flex-end;gap:44px">
+      <sc-if value="{{ isRec }}" hint-placeholder-val="{{ true }}">
+        <div style="display:flex;flex-direction:column;align-items:center;gap:8px">
+          <div style="width:56px;height:56px;border-radius:28px;display:grid;place-items:center;background:#241E3B;box-shadow:inset 0 1px 0 rgba(245,243,255,.10);cursor:pointer;transition:transform .35s cubic-bezier(.32,.72,0,1)" style-active="transform:scale(.94)">
+            <svg width="18" height="20" viewBox="0 0 18 20"><rect x="2" y="1" width="4.6" height="18" rx="1.6" fill="#F5F3FF"></rect><rect x="11.4" y="1" width="4.6" height="18" rx="1.6" fill="#F5F3FF"></rect></svg>
+          </div>
+          <span style="font-size:12px;font-weight:500;color:#9A93C4">Pause</span>
+        </div>
+      </sc-if>
+      <sc-if value="{{ isPaused }}" hint-placeholder-val="{{ false }}">
+        <div style="display:flex;flex-direction:column;align-items:center;gap:8px">
+          <div style="width:56px;height:56px;border-radius:28px;display:grid;place-items:center;background:#241E3B;box-shadow:inset 0 1px 0 rgba(245,243,255,.10);cursor:pointer;transition:transform .35s cubic-bezier(.32,.72,0,1)" style-active="transform:scale(.94)">
+            <svg width="20" height="22" viewBox="0 0 20 22"><path d="M4 2.6v16.8a1.2 1.2 0 0 0 1.8 1l13-8.4a1.2 1.2 0 0 0 0-2L5.8 1.6A1.2 1.2 0 0 0 4 2.6z" fill="#F5F3FF"></path></svg>
+          </div>
+          <span style="font-size:12px;font-weight:500;color:#9A93C4">Resume</span>
+        </div>
+      </sc-if>
+      <sc-if value="{{ hasStop }}" hint-placeholder-val="{{ true }}">
+        <div style="display:flex;flex-direction:column;align-items:center;gap:8px">
+          <div style="width:64px;height:64px;border-radius:32px;display:grid;place-items:center;background:#FF5C7A;box-shadow:inset 0 1px 0 rgba(255,255,255,.22);cursor:pointer;transition:transform .35s cubic-bezier(.32,.72,0,1)" style-active="transform:scale(.94)">
+            <span style="width:20px;height:20px;border-radius:5px;background:#100D1C"></span>
+          </div>
+          <span style="font-size:12px;font-weight:500;color:#9A93C4">Stop</span>
+        </div>
+      </sc-if>
+      <sc-if value="{{ isIdle }}" hint-placeholder-val="{{ false }}">
+        <div style="display:flex;flex-direction:column;align-items:center;gap:8px">
+          <div style="width:72px;height:72px;border-radius:36px;display:grid;place-items:center;background:#181428;box-shadow:inset 0 0 0 1.5px rgba(255,232,188,.55), inset 0 1px 0 rgba(245,243,255,.08);cursor:pointer;transition:transform .35s cubic-bezier(.32,.72,0,1)" style-active="transform:scale(.94)">
+            <span style="width:30px;height:30px;border-radius:15px;background:#FFE8BC"></span>
+          </div>
+          <span style="font-size:12px;font-weight:500;color:#9A93C4">Record</span>
+        </div>
+      </sc-if>
+    </div>
+  </sc-if>
+
+  <sc-if value="{{ offline }}" hint-placeholder-val="{{ false }}">
+    <div style="position:absolute;top:134px;left:16px;right:16px;display:flex;flex-direction:column;gap:28px">
+      <div style="display:flex;flex-direction:column;align-items:flex-start;gap:14px;padding:0 4px">
+        <span style="font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display',system-ui,sans-serif;font-size:28px;line-height:32px;font-weight:700;letter-spacing:-.01em;text-wrap:balance">Can't reach Studio PC</span>
+        <span style="display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 12px;border-radius:14px;background:#181428;box-shadow:inset 0 1px 0 rgba(245,243,255,.08);font-size:13px;color:#9A93C4"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#9A93C4" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="9"></circle><path d="M12 7v5l3 2"></path></svg>Last seen <span style="color:#F5F3FF">—</span></span>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:10px">
+        <div style="height:50px;border-radius:25px;display:flex;align-items:center;justify-content:center;gap:8px;background:rgba(139,124,246,.18);box-shadow:inset 0 0 0 1px rgba(139,124,246,.42);font-size:17px;font-weight:600;cursor:pointer;transition:transform .35s cubic-bezier(.32,.72,0,1)" style-active="transform:scale(.97)">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#8B7CF6" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M19.5 12a7.5 7.5 0 1 1-2.2-5.3"></path><path d="M19.6 4.2v3.6H16"></path></svg>Try again
+        </div>
+        <div style="height:50px;border-radius:25px;display:flex;align-items:center;justify-content:center;gap:8px;background:#181428;box-shadow:inset 0 1px 0 rgba(245,243,255,.08);font-size:17px;font-weight:500;cursor:pointer;transition:transform .35s cubic-bezier(.32,.72,0,1)" style-active="transform:scale(.97)">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#F5F3FF" stroke-width="1.6" stroke-linecap="round"><path d="M12 3.5v8"></path><path d="M7 6.4a7.5 7.5 0 1 0 10 0"></path></svg>Wake over LAN
+        </div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:8px">
+        <span style="padding:0 16px;font-size:11px;font-weight:600;letter-spacing:.16em;text-transform:uppercase;color:#736BA4">Activity</span>
+        <div style="background:#181428;border-radius:26px;box-shadow:inset 0 1px 0 rgba(245,243,255,.08);padding:0 16px">
+          <sc-for list="{{ activity }}" as="r" hint-placeholder-count="4">
+            <div style="height:47px;display:flex;align-items:center;justify-content:space-between;gap:12px;border-top:{{ r.sep }}">
+              <span style="font-size:15px;color:{{ r.color }};white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ r.t }}</span>
+              <span style="font-size:13px;color:#9A93C4;font-variant-numeric:tabular-nums lining-nums">{{ r.time }}</span>
+            </div>
+          </sc-for>
+        </div>
+      </div>
+    </div>
+  </sc-if>
+
+  <dc-import name="NMChrome" tab="now" glass="{{ glass }}" dim="{{ dim }}" style="position:absolute;inset:0" hint-size="402px,874px"></dc-import>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:402,&quot;height&quot;:874},&quot;state&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;recording&quot;,&quot;paused&quot;,&quot;idle&quot;,&quot;offline&quot;],&quot;default&quot;:&quot;recording&quot;,&quot;tsType&quot;:&quot;string&quot;},&quot;glass&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;regular&quot;,&quot;tinted&quot;,&quot;reduced&quot;],&quot;default&quot;:&quot;regular&quot;,&quot;tsType&quot;:&quot;string&quot;},&quot;dim&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:false,&quot;tsType&quot;:&quot;boolean&quot;},&quot;motion&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:true,&quot;tsType&quot;:&quot;boolean&quot;}}">
+class Component extends DCLogic {
+  state = { rm: false };
+  componentDidMount() {
+    const mq = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)');
+    if (mq) { this.setState({ rm: mq.matches }); mq.addEventListener && mq.addEventListener('change', e => this.setState({ rm: e.matches })); }
+  }
+  dust(color, run) {
+    const h = React.createElement;
+    const pts = [[14, 30, 3, -2, 2.2], [26, 70, -2, 2, 1.6], [40, 22, 2, 3, 2], [55, 64, -3, -2, 1.4], [68, 36, 2, -3, 1.8], [80, 72, -2, -1, 1.5], [90, 28, -3, 2, 2]];
+    return h('span', { 'aria-hidden': true, style: { position: 'absolute', inset: 0, pointerEvents: 'none' } },
+      pts.map((p, i) => h('i', { key: i, style: { position: 'absolute', left: p[0] + '%', top: p[1] + '%', width: p[4], height: p[4], borderRadius: '50%', background: color, '--dx': p[2] + 'px', '--dy': p[3] + 'px', '--a0': .25, '--a1': .7, animation: `nmDust ${3.2 + i * .45}s cubic-bezier(.32,.72,0,1) ${-i * .7}s infinite alternate`, animationPlayState: run ? 'running' : 'paused' } })));
+  }
+  renderVals() {
+    const h = React.createElement;
+    const st = this.props.state ?? 'recording';
+    const motion = (this.props.motion ?? true) && !this.state.rm;
+    const isRec = st === 'recording', isPaused = st === 'paused', isIdle = st === 'idle', offline = st === 'offline';
+    const glass = this.props.glass ?? 'regular';
+    const G = { regular: { bg: 'rgba(30,26,48,.30)', bf: 'blur(14px) saturate(190%) brightness(.92)' }, tinted: { bg: 'rgba(20,17,34,.88)', bf: 'blur(14px) saturate(190%) brightness(.92)' }, reduced: { bg: '#1F1A33', bf: 'none' } };
+    const sep = '.5px solid rgba(245,243,255,.09)';
+    const rows = {
+      recording: [['Recording started · Sifu', '8:29'], ['Scene set to Gameplay', '8:29'], ['Sifu clip sent to nas-vault', '—'], ['Linked to Studio PC', '—']],
+      paused: [['Paused · Sifu', '9:41'], ['Recording started · Sifu', '8:29'], ['Scene set to Gameplay', '8:29'], ['Linked to Studio PC', '—']],
+      idle: [['Recording saved · Sifu', '9:41'], ['Recording started · Sifu', '8:29'], ['Sifu clip sent to nas-vault', '—'], ['Linked to Studio PC', '—']],
+      offline: [['Studio PC unreachable', '9:41'], ['Recording saved · Sifu', '—'], ['Sifu clip sent to nas-vault', '—'], ['Linked to Studio PC', '—']]
+    }[st];
+    const arcColor = isRec ? '#FFE8BC' : '#736BA4';
+    const arc = h('span', { style: { width: 48, height: 48, flex: 'none', display: 'grid', placeItems: 'center' } },
+      h('svg', { width: 48, height: 48, viewBox: '0 0 48 48' },
+        h('circle', { cx: 24, cy: 24, r: 21, fill: 'none', stroke: 'rgba(245,243,255,.08)', strokeWidth: 1.5 }),
+        h('g', { style: { transformOrigin: '24px 24px', animation: 'nmSpin 3.6s linear infinite', animationPlayState: isRec && motion ? 'running' : 'paused' } },
+          h('circle', { cx: 24, cy: 24, r: 21, fill: 'none', stroke: arcColor, strokeWidth: 1.5, strokeLinecap: 'round', strokeDasharray: '30 102', transform: 'rotate(-90 24 24)' }))));
+    return {
+      isRec, isPaused, isIdle, offline, online: !offline, hasStop: isRec || isPaused,
+      glass, dim: !!this.props.dim, g: G[glass] || G.regular,
+      subtitle: offline ? 'No route' : 'Studio PC',
+      subColor: offline ? '#FF5C7A' : '#9A93C4',
+      dotColor: offline ? '#FF5C7A' : isRec ? '#FFE8BC' : '#8B7CF6',
+      game: isIdle ? '—' : 'Sifu', scene: isIdle ? 'No scene live' : 'Gameplay',
+      clock: isIdle ? '00:00:00' : '01:12:04',
+      clockColor: isRec ? '#FFE8BC' : '#F5F3FF',
+      file: isIdle ? '—' : '8.4 GB', bitrate: isRec ? '42 Mb/s' : '—',
+      activity: rows.map((r, i) => ({ t: r[0], time: r[1], sep: i ? sep : 'none', color: offline && i === 0 ? '#FF5C7A' : '#F5F3FF' })),
+      chipDust: this.dust('#FFE8BC', motion), arc
+    };
+  }
+}
+</script>
+</body>
+</html>
