@@ -32,6 +32,8 @@ PRIORITY_EXES = ("cs2.exe",)
 CREATE_NO_WINDOW = 0x08000000
 CREATE_BREAKAWAY_FROM_JOB = 0x01000000
 SYNCHRONIZE = 0x00100000
+ERROR_FILE_NOT_FOUND = 2
+ERROR_ACCESS_DENIED = 5
 TH32CS_SNAPPROCESS = 0x00000002
 INVALID_HANDLE = wintypes.HANDLE(-1).value
 
@@ -132,10 +134,16 @@ def nebula_running(name=MUTEX_NAME):
 
     Open, don't create. Creating it here would make this process the owner
     and the real app would think it was already running.
+
+    An elevated Nebula owns a mutex a normal process cannot open: that is
+    ERROR_ACCESS_DENIED with a null handle, and it still means "running".
+    Reading that as "not running" relaunched Nebula every cooldown. Only a
+    missing mutex (or any other failure) is "not running". The error is read
+    straight after the call, before anything else can overwrite it.
     """
     handle = _kernel32.OpenMutexW(SYNCHRONIZE, False, name)
     if not handle:
-        return False
+        return ctypes.get_last_error() == ERROR_ACCESS_DENIED
     _kernel32.CloseHandle(handle)
     return True
 

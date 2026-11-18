@@ -536,6 +536,93 @@ def test_toast_stays_above_the_dial():
         nw_mod._set_window_pos = old
 
 
+def test_reposition_places_physically_on_primary():
+    """Toast placement is _place_physical at _corner_physical, never move()."""
+    host = StubHost()
+    ctl = nw_mod.ToastController(host)
+    win = FakeWindow("Nebula Toast")
+    moved = []
+    win.move = lambda x, y: moved.append((x, y))
+    ctl._window = win
+    corners, placed = [], []
+    old_corner, old_place = nw_mod._corner_physical, nw_mod._place_physical
+    old_on, old_clamp = nw_mod._window_on_virtual_screen, nw_mod._clamp_to_primary
+    nw_mod._corner_physical = lambda w, h, lift=0: corners.append((w, h, lift)) or (100, 200)
+    nw_mod._place_physical = lambda window, x, y, host=None: placed.append((x, y))
+    nw_mod._window_on_virtual_screen = lambda window: True
+    try:
+        ctl._prompt = False
+        ctl._reposition()
+        ctl._prompt = True
+        ctl._reposition()
+        check("reposition never uses logical move()", moved == [], moved)
+        check("status then prompt corner sizes",
+              corners == [(nw_mod.TOAST_W, nw_mod.TOAST_H, 0),
+                          (nw_mod.TOAST_PROMPT_W, nw_mod.TOAST_PROMPT_H, 0)],
+              corners)
+        check("placed at the physical corner", placed == [(100, 200)] * 2, placed)
+
+        placed.clear()
+        nw_mod._window_on_virtual_screen = lambda window: False
+        nw_mod._clamp_to_primary = lambda x, y, w, h: (5, 6)
+        ctl._reposition()
+        check("off-screen is logged", any("off-screen" in m for m in host.log),
+              host.log[-1:])
+        check("off-screen clamps to the primary", placed == [(100, 200), (5, 6)],
+              placed)
+    finally:
+        nw_mod._corner_physical, nw_mod._place_physical = old_corner, old_place
+        nw_mod._window_on_virtual_screen = old_on
+        nw_mod._clamp_to_primary = old_clamp
+
+
+def test_hidden_sleep_is_generation_stamped():
+    """A sleep the page receives late must not freeze a newer toast."""
+    host = StubHost()
+    ctl = nw_mod.ToastController(host)
+    win = FakeWindow("Nebula Toast")
+    ctl._window = win
+    ctl._generation = 7
+    ctl._suspend_if_hidden_gui()
+    time.sleep(0.1)
+    sleeps = [j for j in win.js if "setAsleep(true)" in j]
+    check("hidden toast asks to sleep", len(sleeps) == 1, win.js)
+    check("sleep carries its generation",
+          bool(sleeps) and "toastSleepOk(7)" in sleeps[0], sleeps)
+
+    ctl2 = nw_mod.ToastController(host)
+    win2 = FakeWindow("Nebula Toast")
+    ctl2._window = win2
+    ctl2._showing = True
+    ctl2._suspend_if_hidden_gui()
+    ctl2._showing = False
+    ctl2._fade_dir = 1
+    ctl2._suspend_if_hidden_gui()
+    time.sleep(0.1)
+    check("a showing or appearing toast is never slept",
+          not any("setAsleep(true)" in j for j in win2.js), win2.js)
+
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    js = open(os.path.join(root, "spike", "web", "toast.js"), encoding="utf-8").read()
+    check("page refuses an older sleep", "window.toastSleepOk" in js
+          and "state.gen = content.gen" in js)
+
+
+def test_tray_overflow_matcher():
+    from obsauto.tray_app import is_nebula_entry
+    own = r"C:\Python312\pythonw.exe"
+    check("pythonw with Nebula tooltip is ours",
+          is_nebula_entry(r"C:\Python312\pythonw.exe", "Nebula", own))
+    check("pythonw with another tooltip is not",
+          not is_nebula_entry(r"C:\Python312\pythonw.exe", "Some tool", own))
+    check("python.exe entry is not ours when we are pythonw",
+          not is_nebula_entry(r"C:\Python312\python.exe", "Nebula", own))
+    check("Nebula.exe matches by name when frozen",
+          is_nebula_entry(r"D:\dist\Nebula.exe", "", r"D:\dist\Nebula.exe"))
+    check("no tooltip, no Nebula name: untouched",
+          not is_nebula_entry(r"C:\Python312\pythonw.exe", None, own))
+
+
 if __name__ == "__main__":
     test_replace_one_slot()
     test_pending_before_ready()
@@ -551,6 +638,9 @@ if __name__ == "__main__":
     test_toast_stays_above_other_windows()
     test_place_stays_topmost()
     test_toast_stays_above_the_dial()
+    test_reposition_places_physically_on_primary()
+    test_hidden_sleep_is_generation_stamped()
+    test_tray_overflow_matcher()
     print("\n%d passed, %d failed" % (len(PASS), len(FAIL)))
     if FAIL:
         print("FAILED:", ", ".join(FAIL))

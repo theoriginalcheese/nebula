@@ -141,6 +141,11 @@ def _run(host):
                 if mapped and not was_mapped:
                     shown_at = now
                 was_mapped = mapped
+                # No button of ours on the bar: idle. The name match below
+                # would otherwise orbit on another python app's button.
+                if getattr(host, "_no_taskbar_button", False):
+                    time.sleep(idle_ms)
+                    continue
                 if not mapped:
                     if hovering:
                         hovering = False

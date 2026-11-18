@@ -10,7 +10,7 @@ const DEFAULT_CFG = {
   prompt_h: 60,
   drain_h: 2,
   life_ms: 4000,
-  prompt_life_ms: 30000,
+  prompt_life_ms: 15000,
   in_ms: 420,
   in_rise: 28,
   out_ms: 320,
@@ -28,12 +28,33 @@ const state = {
   dustStyle: "drift",
   prompt: false,
   actions: [],
+  pulseRaf: 0,
+  gen: 0,
 };
 
 function setAsleep(on) {
   document.documentElement.classList.toggle("asleep", !!on);
+  if (!on) return;
+  if (state.tickHandle) clearTimeout(state.tickHandle);
+  state.tickHandle = null;
+  state.ticking = false;
+  if (state.pulseRaf) {
+    cancelAnimationFrame(state.pulseRaf);
+    state.pulseRaf = 0;
+    const toast = $("toast");
+    if (toast) {
+      toast.style.opacity = "";
+      toast.classList.remove("is-swap");
+    }
+  }
 }
 window.setAsleep = setAsleep;
+/* Python's sleep script runs on a worker thread and can land after the next
+   toastReplace. A sleep stamped with an older generation would stop the
+   tick chain under a live toast, so it is refused. */
+window.toastSleepOk = function (gen) {
+  return typeof gen !== "number" || gen >= state.gen;
+};
 
 function waitApi(timeoutMs) {
   const limit = typeof timeoutMs === "number" ? timeoutMs : 8000;
@@ -205,8 +226,10 @@ function swapPulse() {
   const toast = $("toast");
   toast.classList.add("is-swap");
   toast.style.opacity = "0.72";
-  requestAnimationFrame(() => {
-    requestAnimationFrame(() => {
+  if (state.pulseRaf) cancelAnimationFrame(state.pulseRaf);
+  state.pulseRaf = requestAnimationFrame(() => {
+    state.pulseRaf = requestAnimationFrame(() => {
+      state.pulseRaf = 0;
       toast.style.opacity = "";
       toast.classList.remove("is-swap");
       toast.classList.add("is-visible");
@@ -269,8 +292,12 @@ function lifeFor(content) {
 
 /* Called from Python via evaluate_js — the replace path. */
 window.toastReplace = function (content) {
+  // Python resumes the renderer before this call. Drop .asleep here too,
+  // so a late setAsleep(true) cannot freeze the entrance under the pill.
+  setAsleep(false);
   ensureCfg(state.cfg);
   content = content || {};
+  if (typeof content.gen === "number") state.gen = content.gen;
   const wasDismissing = state.dismissing;
   if (state.dismissing) cancelDismiss();
   paint(content);

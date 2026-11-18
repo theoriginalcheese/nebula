@@ -21,12 +21,20 @@ Everything here runs on pystray's own thread, so every callback marshals back
 onto the Tk thread with `root.after(0, ...)` rather than touching widgets.
 """
 
+import os
+import sys
 import threading
+import time
 
 try:
     import pystray
 except ImportError:
     pystray = None
+
+# Win11 keeps one subkey per tray icon it has ever seen. IsPromoted 0 = the
+# overflow (the arrow by the clock), 1 = the visible row.
+_NOTIFY_SETTINGS = r"Control Panel\NotifyIconSettings"
+_TRAY_TOOLTIP = "Nebula"
 
 
 def _art():
@@ -106,6 +114,91 @@ def _start_recording_arc(icon, icons):
             i += 1
 
     threading.Thread(target=run, daemon=True, name="nebula-tray-arc").start()
+
+
+def is_nebula_entry(exe_path, tooltip, own_exe):
+    """True when a NotifyIconSettings entry is this app's icon.
+
+    Same executable name as us, and something that says Nebula: the
+    tooltip pystray registered, or an exe that is itself named Nebula.
+    A bare pythonw.exe entry with some other tooltip is another app.
+    """
+    exe = os.path.basename(str(exe_path or "")).lower()
+    own = os.path.basename(str(own_exe or "")).lower()
+    if not exe or exe != own:
+        return False
+    tip = str(tooltip or "").strip().lower()
+    return tip.startswith(_TRAY_TOOLTIP.lower()) or exe.startswith("nebula")
+
+
+def demote_to_overflow(own_exe=None, log=None):
+    """Move this app's tray icon into the overflow. Returns keys changed.
+
+    Never hides it (that is a different setting) and never restarts
+    Explorer. Only keys :func:`is_nebula_entry` accepts are written.
+    """
+    if os.name != "nt":
+        return 0
+    import winreg
+    own_exe = own_exe or sys.executable
+    changed = 0
+    try:
+        root = winreg.OpenKey(winreg.HKEY_CURRENT_USER, _NOTIFY_SETTINGS)
+    except OSError:
+        return 0
+    with root:
+        i = 0
+        while True:
+            try:
+                name = winreg.EnumKey(root, i)
+            except OSError:
+                break
+            i += 1
+            try:
+                key = winreg.OpenKey(
+                    root, name, 0,
+                    winreg.KEY_QUERY_VALUE | winreg.KEY_SET_VALUE)
+            except OSError:
+                continue
+            with key:
+                values = {}
+                for value_name in ("ExecutablePath", "InitialTooltip",
+                                   "IsPromoted"):
+                    try:
+                        values[value_name] = winreg.QueryValueEx(
+                            key, value_name)[0]
+                    except OSError:
+                        values[value_name] = None
+                if not is_nebula_entry(values["ExecutablePath"],
+                                       values["InitialTooltip"], own_exe):
+                    continue
+                if values["IsPromoted"] == 0:
+                    changed += 1
+                    continue
+                try:
+                    winreg.SetValueEx(key, "IsPromoted", 0,
+                                      winreg.REG_DWORD, 0)
+                    changed += 1
+                except OSError as exc:
+                    if log:
+                        log(f"[Tray] Couldn't move the icon to the overflow: {exc}")
+    return changed
+
+
+def _demote_soon(log, tries=10, delay_s=1.0):
+    """Explorer writes the key a moment after the icon registers. Retry."""
+    def run():
+        for _ in range(tries):
+            try:
+                if demote_to_overflow(log=log):
+                    return
+            except Exception as exc:
+                if log:
+                    log(f"[Tray] Overflow demotion failed: {exc}")
+                return
+            time.sleep(delay_s)
+
+    threading.Thread(target=run, daemon=True, name="nebula-tray-demote").start()
 
 
 def build_tray_icon(app_window, icon_path):
@@ -196,7 +289,7 @@ def build_tray_icon(app_window, icon_path):
         pystray.MenuItem("Quit Nebula", _quit),
     )
 
-    icon = pystray.Icon("nebula", icons["idle"], "Nebula", menu)
+    icon = pystray.Icon("nebula", icons["idle"], _TRAY_TOOLTIP, menu)
     icon._nebula_icons = icons          # so gui.py can swap without regenerating
 
     def _log(message):
@@ -212,8 +305,11 @@ def build_tray_icon(app_window, icon_path):
         # goes into the hidden overflow by default, so "no menu" and "no icon
         # I could find" look exactly the same. Say so in the log.
         tray.visible = True
-        _log("[Tray] Icon registered. If you can't see it, check the "
-             "overflow arrow next to the clock and drag Nebula onto the bar.")
+        _log("[Tray] Icon registered. It lives in the overflow arrow next "
+             "to the clock.")
+        # The tray icon is Nebula's only taskbar presence, and it belongs in
+        # the overflow rather than the visible row.
+        _demote_soon(_log)
 
     def _run():
         try:

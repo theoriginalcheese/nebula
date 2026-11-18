@@ -355,6 +355,15 @@ def run():
         })
         check("auto: LAN when Tailscale remote is missing",
               off_fb.root == os.path.normpath(lan_dir), off_fb.root)
+        ts_mod.peer_cur_addr = lambda host, st=None: "8.8.8.8:41641"
+        off_away, _ = new_offloader({
+            "nas_offload_root": "",
+            "nas_offload_auto_lan": True,
+            "nas_offload_root_lan": lan_dir,
+            "nas_offload_root_remote": os.path.join(work, "missing-remote-away"),
+        })
+        check("auto: LAN when away but the Tailscale share is dead",
+              off_away.root == os.path.normpath(lan_dir), off_away.root)
         ts_mod.peer_cur_addr = real_cur
 
         off_manual, _ = new_offloader({

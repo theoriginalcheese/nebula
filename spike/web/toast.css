@@ -391,6 +391,12 @@ html.asleep .toast-dust span {
 html.asleep .toast-drain {
   will-change: auto;
 }
+/* Hidden warm slot only: every loop stops and no layer stays promoted. */
+html.asleep,
+html.asleep * {
+  animation-play-state: paused !important;  /* lint-allow: hidden toast slot must freeze every loop; :root.asleep is the GPU off-switch */
+  will-change: auto !important;  /* lint-allow: hidden slot drops every promoted layer */
+}
 
 .toast-copy {
   flex: 1;

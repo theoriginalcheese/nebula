@@ -61,6 +61,8 @@ and `RESOURCE_DIR` (`sys._MEIPASS` when frozen) only for bundled read-only asset
 | `obsauto/phone_state.py` | `DiskSnapshot`, `SCAN_TTL_S` | Builds an `Api.snapshot()`-shaped payload from files so the phone works headless (no Nebula, no login); strictly read-only, never opens a recording |
 | `tools/serve_phone_app.py` | `Handler`, `main()` | Serves the exported phone app (`mobile/dist`) on the tailnet and proxies `/v1/*` to the agent, so the bundle carries no token; iOS installs it via Add to Home Screen |
 | `tools/install_phone_app_task.ps1` | - | Registers the `NebulaPhoneApp` boot-time task (SYSTEM, at startup) that runs the phone-app server; `-Uninstall` removes it. Needs an elevated shell |
+| `tools/nebula_on_game.py` | `nebula_running()`, `matching_game()`, `launch_nebula()` | Always-on lightweight watcher (`pythonw`, 2s process snapshot, no WebView/OBS): starts hidden Nebula when a `games.json` exe appears. Probes `Nebula.SingleInstance` open-only; access denied = elevated Nebula = running. Never creates the mutex, never quits Nebula, no `--show`; logs to `logs/nebula-on-game.log` |
+| `tools/install_nebula_on_game_task.ps1` | - | Registers the user-logon task that runs the watcher (needs a desktop session); not run by agents |
 | `obsauto/teracopy.py` | `find_exe()`, `copy_into()` | TeraCopy CLI helper for bulk NAS transfer (soft optional); Nebula still SHA-256 verifies both ends afterwards |
 | `obsauto/audio_detect.py` | `AudioKeepAlive` | Detect whether a watched app (e.g. Discord) is producing audio |
 | `obsauto/discord_detect.py` | `discord_voice_active()` | Detect an *active* Discord voice/video call (not merely Discord.exe open) - holds a recording across game switches |

@@ -346,6 +346,26 @@ FIELDS = (
 BY_KEY = {field.key: field for field in FIELDS}
 
 
+# The name a Settings field edits, and the scan code that actually binds.
+# register() prefers the scan code, so a leftover pin keeps swallowing the
+# old physical key after the name has changed. Tilde stayed on scan 41
+# after the toggle name was edited to something else.
+_HOTKEY_SCAN = {
+    "toggle_hotkey": "toggle_hotkey_scancode",
+    "replay_hotkey": "replay_hotkey_scancode",
+}
+
+
+def drop_pinned_scancode(cfg, key):
+    """Clear the physical pin when its hotkey name is edited. Returns True
+    when a pin was dropped."""
+    scan_key = _HOTKEY_SCAN.get(key)
+    if not scan_key or cfg.get(scan_key) is None:
+        return False
+    cfg[scan_key] = None
+    return True
+
+
 def fields_in(group):
     return [field for field in FIELDS if field.group == group]
 

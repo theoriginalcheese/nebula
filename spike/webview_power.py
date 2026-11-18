@@ -9,8 +9,11 @@ is not the default and must not be shipped as one.
 """
 from __future__ import annotations
 
+import inspect
 import os
 import sys
+import textwrap
+import threading
 
 LOW_POWER_ARGS = "--force-low-power-gpu"
 HIGH_POWER_ARGS = "--force-high-performance-gpu"
@@ -169,3 +172,184 @@ def apply_webview_power(window, suspend, log=None, prefix="[Window]"):
             log("%s suspend marshal failed: %s" % (prefix, exc))
         return False
     return bool(result["ok"])
+
+
+class SleepGate:
+    """Orders a page's sleep script against TrySuspend / Resume.
+
+    ``ExecuteScript`` resumes a suspended renderer, so a ``setAsleep(true)``
+    landing after TrySuspend undid it and the flag stayed True with nothing
+    to retry. Sleep runs the script first and suspends after; wake resumes
+    first, since a suspended page never answers the script. ``gen`` lets a
+    newer call (or ``cancel()``) void a suspend that is still in flight.
+    """
+
+    def __init__(self):
+        self.asleep = False
+        self.gen = 0
+        self._lock = threading.Lock()
+
+    def cancel(self):
+        with self._lock:
+            self.gen += 1
+            self.asleep = False
+
+    def set(self, window, asleep, script=None, log=None, prefix="[Window]",
+            off_gui=None, run_on_gui=None, power=True):
+        asleep = bool(asleep)
+        if window is None or asleep == self.asleep:
+            return
+        with self._lock:
+            self.gen += 1
+            gen = self.gen
+            self.asleep = asleep
+        # power=False is the toast: hide() already took the HWND off screen,
+        # and TrySuspend makes the next evaluate_js never return, so the
+        # capsule stays at opacity 0 and the user sees nothing.
+        if not asleep and power:
+            apply_webview_power(window, False, log=log, prefix=prefix)
+
+        def suspend_on_gui():
+            if gen != self.gen:
+                return
+            apply_webview_power(window, True, log=log, prefix=prefix)
+
+        def worker():
+            if gen != self.gen:
+                return
+            if script:
+                if gen != self.gen:
+                    return
+                try:
+                    window.evaluate_js(script)
+                except Exception as exc:
+                    error = exc
+                    if log:
+                        log("%s %s failed: %s" % (prefix, script, error))
+            if asleep and power and gen == self.gen:
+                if run_on_gui is not None:
+                    run_on_gui(suspend_on_gui)
+                else:
+                    suspend_on_gui()
+
+        if off_gui is not None:
+            off_gui(worker)
+        else:
+            threading.Thread(target=worker, daemon=True).start()
+
+
+# One CoreWebView2Environment for every control in the process. pywebview
+# already points them all at one user-data folder; this makes the later ones
+# join the first environment explicitly instead of each asking for one.
+_SHARED = {"env": None, "hooked": None, "prepared": False}
+_SHARED_LOCK = threading.Lock()
+_ENSURE_NONE = "self.webview.EnsureCoreWebView2Async(None)"
+
+
+def _merge_args(*parts):
+    seen = []
+    for part in parts:
+        for arg in (part or "").split():
+            if arg not in seen:
+                seen.append(arg)
+    return " ".join(seen)
+
+
+def _nebula_ensure_core(chrome):
+    wv = chrome.webview
+    env = _SHARED["env"]
+    if env is not None:
+        props = None
+        try:
+            props = wv.CreationProperties
+        except Exception:
+            pass
+        try:
+            # With CreationProperties set, WinForms ignores the environment.
+            wv.CreationProperties = None
+            wv.EnsureCoreWebView2Async(env)
+            return
+        except Exception:
+            if props is not None:
+                try:
+                    wv.CreationProperties = props
+                except Exception:
+                    pass
+    # The env var replaces the props' arguments when both are set, so carry
+    # pywebview's own switches into it rather than losing them.
+    try:
+        props = wv.CreationProperties
+        if props is not None:
+            merged = _merge_args(
+                props.AdditionalBrowserArguments,
+                os.environ.get("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", ""))
+            props.AdditionalBrowserArguments = merged
+            os.environ["WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS"] = merged
+    except Exception:
+        pass
+    wv.EnsureCoreWebView2Async(None)
+
+
+def _install_shared_environment():
+    try:
+        from webview.platforms import edgechromium
+    except Exception:
+        return False
+    cls = edgechromium.EdgeChrome
+    if getattr(cls, "_nebula_shared_env", False):
+        return True
+    try:
+        source = textwrap.dedent(inspect.getsource(cls.__init__))
+    except (OSError, TypeError):
+        return False
+    if _ENSURE_NONE not in source:
+        return False
+    source = source.replace(_ENSURE_NONE, "_nebula_ensure_core(self)", 1)
+    scope = dict(vars(edgechromium))
+    scope["_nebula_ensure_core"] = _nebula_ensure_core
+    try:
+        exec(compile(source, inspect.getsourcefile(cls) or "<edgechromium>",
+                     "exec"), scope)
+    except Exception:
+        return False
+    patched_init = scope.get("__init__")
+    if patched_init is None:
+        return False
+    original_ready = cls.on_webview_ready
+
+    def on_webview_ready(self, sender, args):
+        try:
+            original_ready(self, sender, args)
+        finally:
+            if _SHARED["env"] is None:
+                try:
+                    if args.IsSuccess:
+                        _SHARED["env"] = sender.CoreWebView2.Environment
+                except Exception:
+                    pass
+
+    patched_init.__qualname__ = cls.__init__.__qualname__
+    cls.__init__ = patched_init
+    cls.on_webview_ready = on_webview_ready
+    cls._nebula_shared_env = True
+    return True
+
+
+def prepare_webview_process():
+    """Run once before the first ``webview.create_window``.
+
+    Puts the low-power + VRAM-cap switches in place before the browser
+    process exists, and makes every later WebView2 join the first one's
+    environment. Returns whether the environment hook is installed.
+    """
+    with _SHARED_LOCK:
+        if not _SHARED["prepared"]:
+            _SHARED["prepared"] = True
+            apply_browser_arguments()
+            pin_exe_gpu_preference()
+        if _SHARED["hooked"] is None:
+            try:
+                _SHARED["hooked"] = bool(_install_shared_environment())
+            except Exception:
+                _SHARED["hooked"] = False
+        return _SHARED["hooked"]

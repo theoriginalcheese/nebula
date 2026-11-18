@@ -197,8 +197,13 @@ class Offloader:
         if chosen and not isdir_within(chosen):
             manual_ok = manual if (manual and isdir_within(manual)) else ""
             if away:
+                # CurAddr said another site, but a dead Tailscale UNC must
+                # not skip a LAN share that actually answers. isdir is the
+                # proof; a miss costs one bounded probe.
                 if remote and isdir_within(remote):
                     chosen, reason = remote, "remote"
+                elif lan and isdir_within(lan):
+                    chosen, reason = lan, "lan_fallback"
                 elif manual_ok:
                     chosen, reason = manual_ok, "manual_fallback"
             elif reason == "remote":
@@ -343,8 +348,23 @@ class Offloader:
             return None
         return ts.diagnose(self.root)
 
+    def _configured(self):
+        """A destination is set. Does not touch the network."""
+        if self._normalize_root(self._config.get("nas_offload_root")):
+            return True
+        if not self._auto_lan_enabled():
+            return False
+        return bool(
+            self._normalize_root(self._config.get("nas_offload_root_lan"))
+            or self._normalize_root(self._config.get("nas_offload_root_remote")))
+
     def status_snapshot(self):
-        """Honest fields for Settings → Offload. No fabricated counters."""
+        """Honest fields for Settings → Offload. No fabricated counters.
+
+        Cache only. Probing SMB or the Tailscale CLI here used to stall the
+        snapshot, so the Remote page and this footer never painted a status.
+        The worker refreshes the cache.
+        """
         with self._lock:
             pending = len(self._queue)
             reach = self._reachability
@@ -352,27 +372,48 @@ class Offloader:
             last_ok = self._last_success_at
             message = self._last_message
             busy = self._scan_busy
-        if reach is None and self.enabled:
-            reach = ts.diagnose(self.root)
-            self._set_reachability(reach)
-        peer = ts.peer_for_path(self.root) if self.enabled else None
-        peer_online = ts.peer_online(peer) if peer else None
+            chosen, reason, _at = self._path_choice
+        configured = self._configured()
+        root = chosen or self.cached_root() or self._normalize_root(
+            self._config.get("nas_offload_root"))
+        peer = ts.peer_for_path(root) if configured else None
+        peer_online = None
+        if peer:
+            try:
+                peer_online = ts.peer_online(peer)
+            except Exception:
+                peer_online = None
         interval = self.interval_hours
         now = time.time()
         next_in = None
-        if self.enabled and interval > 0 and last_scan > 0:
+        if configured and interval > 0 and last_scan > 0:
             next_in = max(0, int(last_scan + interval * 3600 - now))
-        elif self.enabled and interval > 0 and last_scan <= 0:
+        elif configured and interval > 0 and last_scan <= 0:
             next_in = 0
+        if not configured:
+            reach_out = "off"
+            reach_label = ""
+        elif not reach:
+            reach_out = ""
+            reach_label = "Checking connection"
+        else:
+            reach_out = reach
+            reach_label = ts.diagnose_label(reach)
+        if self._auto_lan_enabled() and configured:
+            path_mode = reason or "resolving"
+        elif configured:
+            path_mode = "manual"
+        else:
+            path_mode = "off"
         return {
-            "enabled": self.enabled,
+            "enabled": configured,
             "pending": pending,
-            "reachability": reach or ("off" if not self.enabled else ""),
-            "reach_label": ts.diagnose_label(reach) if reach else "",
+            "reachability": reach_out,
+            "reach_label": reach_label,
             "peer": peer or "",
             "peer_online": peer_online,
-            "mode": self.mode if self.enabled else "",
-            "root": self.root,
+            "mode": self.mode if configured else "",
+            "root": root,
             "interval_hours": interval,
             "last_scan_at": last_scan or None,
             "last_success_at": last_ok or None,
@@ -381,9 +422,9 @@ class Offloader:
             "next_scan_in_s": next_in,
             "message": message,
             "busy": busy,
-            "can_sync": self.enabled,
+            "can_sync": configured,
             "transfer": "TeraCopy" if self._use_teracopy() else "built-in",
-            "path_mode": self.path_mode() if self.enabled else "off",
+            "path_mode": path_mode,
             "auto_lan": self._auto_lan_enabled(),
         }
 
@@ -690,10 +731,14 @@ class Offloader:
         KNOW the path is back, that 'still dead' verdict must not keep the
         retry loop blind - an outage shorter than the TTL otherwise leaves
         us unable to see recovery at all."""
-        up = os.path.isdir(self.root) if self.root else False
-        if up:
-            _fsprobe_forget(self.root)
-        return up
+        root = self.root
+        if not root:
+            return False
+        # Drop the negative memo, then probe with a bound. A bare isdir on a
+        # dead UNC holds this worker for the whole redirector timeout, so the
+        # UI never hears that the share came back.
+        _fsprobe_forget(root)
+        return isdir_within(root, timeout=4.0)
 
     def _auto_scan_due(self):
         hours = self.interval_hours

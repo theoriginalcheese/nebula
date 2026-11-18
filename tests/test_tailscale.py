@@ -203,6 +203,8 @@ def run():
               ts.diagnose(missing) == "nas_down")
         check("diagnose: drive letter down, no peer check",
               ts.diagnose("Z:/nope") == "nas_down")
+        check("diagnose label: share unreachable",
+              ts.diagnose_label("nas_down") == "Share unreachable")
     finally:
         ts.status = real_status
         ts.available = real_available

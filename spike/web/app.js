@@ -873,40 +873,44 @@ function bakeAurora(aurora, wisps, W, H, bg) {
 let backdropState = { bg: null, seed: 0, starMult: 1 };
 
 function bakeStarLayers(bg, W, H, mult) {
-  const STAR_RGB = "198 190 255";
+  const STAR_RGB = "198, 190, 255";
   const density = Math.max(8, Math.round((bg.star_density || 80) * mult));
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
   const mkLayer = (el, count, sizeRange, alphaRange, bright) => {
     if (!el) return;
-    const shadows = [];
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(W * dpr));
+    canvas.height = Math.max(1, Math.round(H * 2 * dpr));
+    const ctx = canvas.getContext("2d");
+    ctx.scale(dpr, dpr);
+    const dot = (x, y, blur, alpha) => {
+      ctx.save();
+      ctx.fillStyle = `rgba(${STAR_RGB}, ${alpha})`;
+      ctx.shadowColor = ctx.fillStyle;
+      ctx.shadowBlur = blur;
+      ctx.fillRect(x, y, 1, 1);
+      ctx.restore();
+    };
     for (let i = 0; i < count; i++) {
       const x = rand(0, W);
       const y = rand(0, H);
       const s = rand(sizeRange[0], sizeRange[1]);
       const isBright = bright && i % bg.star_bright_every === 0;
       const a = isBright ? bg.star_bright_alpha : rand(alphaRange[0], alphaRange[1]);
-      shadows.push(`${x.toFixed(0)}px ${y.toFixed(0)}px 0 ${(s / 2).toFixed(2)}px rgb(${STAR_RGB} / ${a.toFixed(2)})`);
-      shadows.push(`${x.toFixed(0)}px ${(y + H).toFixed(0)}px 0 ${(s / 2).toFixed(2)}px rgb(${STAR_RGB} / ${a.toFixed(2)})`);
+      const blur = s / 2;
+      dot(x, y, blur, a);
+      dot(x, y + H, blur, a);
       if (isBright) {
-        const g = bg.star_glint_px, ga = (bg.star_glint_alpha * a).toFixed(3);
+        const g = bg.star_glint_px;
+        const ga = bg.star_glint_alpha * a;
         for (const [dx, dy] of [[g, 0], [-g, 0], [0, g], [0, -g]]) {
-          shadows.push(`${(x + dx).toFixed(0)}px ${(y + dy).toFixed(0)}px 0 0 rgb(${STAR_RGB} / ${ga})`);
-          shadows.push(`${(x + dx).toFixed(0)}px ${(y + dy + H).toFixed(0)}px 0 0 rgb(${STAR_RGB} / ${ga})`);
+          dot(x + dx, y + dy, 0, ga);
+          dot(x + dx, y + H + dy, 0, ga);
         }
       }
     }
-    const dot = document.createElement("div");
-    dot.className = "star";
-    // lint-allow: one 1x1 anchor node built once per layer at boot, then never
-    // touched. The whole star field is its box-shadow, so there is nothing here
-    // to re-lay out - this is construction, not animation.
-    dot.style.width = "1px";
-    dot.style.height = "1px";
-    dot.style.left = "0";
-    dot.style.top = "0";
-    dot.style.background = "transparent";
-    dot.style.boxShadow = shadows.join(", ");
-    el.innerHTML = "";
-    el.appendChild(dot);
+    el.replaceChildren();
+    el.style.backgroundImage = `url(${canvas.toDataURL("image/png")})`;
   };
 
   mkLayer($("stars-near"), density,
@@ -923,6 +927,7 @@ function rebakeStars() {
   const W = core.clientWidth || 1268;
   const H = core.clientHeight || 796;
   bakeStarLayers(bg, W, H, starMult);
+  if (backdropHeld) holdBackdropGpu(true);
 }
 
 function buildBackdrop(bg, seed) {
@@ -939,6 +944,10 @@ function buildBackdrop(bg, seed) {
   bakeAurora($("aurora"), $("wisps"), W, H, bg);
   backdropState = { bg, seed, starMult: backdropState.starMult || 1 };
   bakeStarLayers(bg, W, H, backdropState.starMult);
+  // A hidden boot must not keep the bitmaps it just decoded.
+  if (document.documentElement.classList.contains("asleep") || backdropHeld) {
+    holdBackdropGpu(true);
+  }
 }
 
 /* --- pointer spotlight + window lean ----------------------------------- */
@@ -3362,14 +3371,52 @@ function startHud() {
    full-screen composited tiles the GPU keeps alive for no viewer. The
    .asleep class already pauses their animations; display:none goes further
    and drops them from the render tree entirely, releasing the tiles. They
-   come back untouched on wake — everything is baked, nothing re-renders. */
+   come back untouched on wake — everything is baked, nothing re-renders.
+   display:none alone still keeps the decoded aurora and star PNGs alive,
+   so those are parked here and written back verbatim on wake. Never
+   rebake on wake: that restarts the drift and changes the picture. */
 let backdropHeld = false;
+let backdropHolding = false;
+let backdropStash = [];
+function stashBackdropBitmaps(bd) {
+  backdropStash = backdropStash.filter((entry) => entry[0].isConnected);
+  const park = (el, prop) => {
+    const value = el.style[prop];
+    if (!value || value === "none") return;
+    const at = backdropStash.findIndex((entry) => entry[0] === el && entry[1] === prop);
+    if (at >= 0) backdropStash[at][2] = value;
+    else backdropStash.push([el, prop, value]);
+    el.style[prop] = "none";
+  };
+  bd.querySelectorAll(".aurora-sheet, .stars").forEach((el) => {
+    park(el, "backgroundImage");
+  });
+}
 function holdBackdropGpu(hold) {
-  if (hold === backdropHeld) return;
-  backdropHeld = hold;
+  if (backdropHolding) return;
   const bd = document.querySelector(".backdrop");
-  if (!bd) return;
-  bd.style.display = hold ? "none" : "";
+  if (hold === backdropHeld) {
+    // A bake that ran while held left fresh bitmaps; park those too.
+    if (hold && bd) stashBackdropBitmaps(bd);
+    return;
+  }
+  backdropHolding = true;
+  try {
+    backdropHeld = hold;
+    if (!bd) return;
+    if (hold) {
+      stashBackdropBitmaps(bd);
+      bd.style.display = "none";
+    } else {
+      for (const [el, prop, value] of backdropStash) {
+        if (el.isConnected) el.style[prop] = value;
+      }
+      backdropStash = [];
+      bd.style.display = "";
+    }
+  } finally {
+    backdropHolding = false;
+  }
 }
 
 function setAwake(on) {

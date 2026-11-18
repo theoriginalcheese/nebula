@@ -72,6 +72,44 @@ def main():
         check("missing file still watches cs2",
               watch.load_game_exes(os.path.join(tmp, "nope.json")) == {"cs2.exe"})
 
+    # nebula_running: no real Nebula needed, kernel32 and the last error are faked.
+    class FakeKernel:
+        def __init__(self, handle):
+            self.handle = handle
+            self.closed = []
+            self.opened = []
+
+        def OpenMutexW(self, access, inherit, name):
+            self.opened.append((access, inherit, name))
+            return self.handle
+
+        def CloseHandle(self, handle):
+            self.closed.append(handle)
+            return 1
+
+    def probe(handle, error):
+        real_kernel, real_error = watch._kernel32, watch.ctypes.get_last_error
+        fake = FakeKernel(handle)
+        watch._kernel32 = fake
+        watch.ctypes.get_last_error = lambda: error
+        try:
+            return watch.nebula_running(), fake
+        finally:
+            watch._kernel32, watch.ctypes.get_last_error = real_kernel, real_error
+
+    up, fake = probe(None, watch.ERROR_ACCESS_DENIED)
+    check("access denied means Nebula is running", up is True)
+    check("access denied has no handle to close", fake.closed == [])
+    check("open is read-only, not inheritable, by name",
+          fake.opened == [(watch.SYNCHRONIZE, False, "Nebula.SingleInstance")])
+    up, fake = probe(None, watch.ERROR_FILE_NOT_FOUND)
+    check("missing mutex means not running", up is False)
+    up, fake = probe(None, 0)
+    check("unknown failure means not running", up is False)
+    up, fake = probe(0x1234, 0)
+    check("successful open means running", up is True)
+    check("successful open closes its handle", fake.closed == [0x1234])
+
     live = watch.running_exes()
     me = os.path.basename(sys.executable).lower()
     check("process snapshot sees this interpreter", me in live, me)

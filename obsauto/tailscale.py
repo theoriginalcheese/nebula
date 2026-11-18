@@ -392,8 +392,8 @@ def diagnose_label(code):
     """Human clause for Settings / logs. Empty string when nothing to say."""
     return {
         "nas_up": "Tailscale up",
-        "nas_reachable": "",
-        "nas_down": "",
+        "nas_reachable": "Share reachable",
+        "nas_down": "Share unreachable",
         "nas_down_tailscale_down": "Tailscale down",
         "nas_down_peer_offline": "Tailscale peer offline",
         "nas_down_tailscale_missing": "",

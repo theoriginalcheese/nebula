@@ -432,6 +432,32 @@ def test_set_setting_never_logs_secrets():
         app_module.save_config = real_save
 
 
+def test_renaming_toggle_hotkey_drops_the_old_scancode():
+    """The scan code is what the hook swallows. A new name must not leave
+    the previous physical key pinned — that is how tilde stayed bound."""
+    import spike.app as app_module
+    work = tempfile.mkdtemp(prefix="nebula-snap-")
+    api = _stub_api(work, os.path.join(work, "rec"))
+    api._settings_saved_at = None
+    api.cfg["toggle_hotkey"] = "`"
+    api.cfg["toggle_hotkey_scancode"] = 41
+    api.cfg["replay_hotkey"] = "f9"
+    api.cfg["replay_hotkey_scancode"] = 67
+    real_save = app_module.save_config
+    app_module.save_config = lambda cfg, *a, **k: None
+    try:
+        out = api.set_setting("toggle_hotkey", "*")
+        check("rename accepted", out.get("ok") is True, out)
+        check("tilde scan code dropped", api.cfg.get("toggle_hotkey_scancode") is None,
+              api.cfg.get("toggle_hotkey_scancode"))
+        check("replay scan code left alone", api.cfg.get("replay_hotkey_scancode") == 67)
+        out = api.set_setting("toggle_hotkey_scancode", "55")
+        check("an explicit scan code still sticks",
+              out.get("ok") is True and api.cfg.get("toggle_hotkey_scancode") == 55, out)
+    finally:
+        app_module.save_config = real_save
+
+
 def test_swr_serves_last_real_value_while_refreshing():
     """A slow probe (NAS path, tailscale, git) runs off the bridge thread
     once there is a real answer to serve."""
@@ -579,6 +605,7 @@ if __name__ == "__main__":
     test_hero_survives_host_without_preview()
     test_start_menu_shortcut_is_not_dev()
     test_set_setting_never_logs_secrets()
+    test_renaming_toggle_hotkey_drops_the_old_scancode()
     test_swr_serves_last_real_value_while_refreshing()
     test_swr_mutation_beats_stale_refresh()
     test_settings_and_remote_use_cached_offload_status()

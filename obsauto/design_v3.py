@@ -437,7 +437,7 @@ TOAST_TINTS = {
     "pause": ACCENT, "resume": ACCENT,
     "prompt": ACCENT,
 }
-TOAST_PROMPT_LIFE_MS = 30000
+TOAST_PROMPT_LIFE_MS = 15000
 # Soft dust near the icon chip - (dx, dy, radius_px, base_alpha) relative to
 # the chip centre. Animated on the toast surface only (own toplevel; free).
 # Specks from Nebula Toast Row. (dx, dy, radius, alpha). The row places

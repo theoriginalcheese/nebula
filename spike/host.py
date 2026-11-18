@@ -26,7 +26,7 @@ from spike.dial import (
     DELETE_CONFIRM, DELETE_ROW, ROW_LABELS, DialKnob, background_for_open,
     pause_label, row_action, status_word,
 )
-from spike.windows import NebulaWindows
+from spike.windows import NebulaWindows, _run_on_gui
 from obsauto import tray_app
 from obsauto.app_log import log_to_file
 from obsauto.monitor import Monitor, ensure_obs_running, is_obs_running
@@ -310,6 +310,68 @@ def _stop_taskbar_flash(user32, hwnd):
     user32.FlashWindowEx(ctypes.byref(info))
 
 
+_TASKBAR_LISTS = {}
+
+
+def drop_taskbar_tab(hwnd, log=None):
+    """Take ``hwnd``'s taskbar button away with ITaskbarList::DeleteTab.
+
+    The tray icon is Nebula's only taskbar presence. ``Form.ShowInTaskbar``
+    would do this, but its setter recreates the HWND once the handle exists
+    (pywebview creates it in the form's constructor), and the WebView2 child
+    goes with it. Style bits need SWP_FRAMECHANGED, which blanks WebView2 on
+    this frameless form. DeleteTab touches neither, but the shell re-adds the
+    button on the next show, so callers re-apply after every show.
+
+    Call on the GUI thread: the COM object is apartment-bound and cached per
+    thread.
+    """
+    if os.name != "nt" or not hwnd:
+        return False
+    try:
+        tid = ctypes.windll.kernel32.GetCurrentThreadId()
+        ptr = _TASKBAR_LISTS.get(tid)
+        if ptr is None:
+            ole32 = ctypes.windll.ole32
+            clsid = (ctypes.c_byte * 16)()
+            iid = (ctypes.c_byte * 16)()
+            ole32.CLSIDFromString(
+                "{56FDF344-FD6D-11d0-958A-006097C9A090}", ctypes.byref(clsid))
+            ole32.CLSIDFromString(
+                "{56FDF342-FD6D-11d0-958A-006097C9A090}", ctypes.byref(iid))
+            out = ctypes.c_void_p()
+            create = ole32.CoCreateInstance
+            create.restype = ctypes.c_long
+            hr = create(ctypes.byref(clsid), None, 1,       # INPROC_SERVER
+                        ctypes.byref(iid), ctypes.byref(out))
+            if hr == -2147221008:                           # CO_E_NOTINITIALIZED
+                ole32.CoInitializeEx(None, 2)               # APARTMENTTHREADED
+                hr = create(ctypes.byref(clsid), None, 1,
+                            ctypes.byref(iid), ctypes.byref(out))
+            if hr < 0 or not out.value:
+                if log:
+                    log("[Window] Taskbar list unavailable (0x%08X)."
+                        % (hr & 0xFFFFFFFF))
+                return False
+            vtbl = ctypes.cast(
+                out, ctypes.POINTER(ctypes.POINTER(ctypes.c_void_p)))[0]
+            hr_init = ctypes.WINFUNCTYPE(ctypes.c_long, ctypes.c_void_p)(vtbl[3])
+            if hr_init(out) < 0:
+                return False
+            ptr = out.value
+            _TASKBAR_LISTS[tid] = ptr
+        vtbl = ctypes.cast(
+            ctypes.c_void_p(ptr),
+            ctypes.POINTER(ctypes.POINTER(ctypes.c_void_p)))[0]
+        delete_tab = ctypes.WINFUNCTYPE(
+            ctypes.c_long, ctypes.c_void_p, ctypes.c_void_p)(vtbl[5])
+        return delete_tab(ctypes.c_void_p(ptr), ctypes.c_void_p(int(hwnd))) >= 0
+    except Exception as exc:
+        if log:
+            log("[Window] Taskbar button removal failed: %s" % exc)
+        return False
+
+
 class NebulaHost:
     """What the tray, the hotkeys and the window lifecycle all talk to."""
 
@@ -329,6 +391,9 @@ class NebulaHost:
         self._gpu_push_lock = threading.Lock()
         self._gpu_gen = 0
         self._suspended = False
+        # A sleep push is between its script and its TrySuspend. The 1s
+        # watcher must not suspend under it: the script would resume it.
+        self._suspend_queued = False
         self._suspend_seen = set()
         # Defer WebView TrySuspend until first paint has had a chance.
         # A false "off screen" at boot freezes the HTML placeholders.
@@ -376,6 +441,9 @@ class NebulaHost:
         self._taskbar_icon_stop = threading.Event()
         self._taskbar_icon_thread = None
         self._taskbar_icon_handles = []  # keep HICONs alive
+        # drop_taskbar_button removes the main window's button, so the hover
+        # orbit has nothing of ours to hit-test.
+        self._no_taskbar_button = True
         self._preview_still_seq = 0
         self._preview_uri = ""
         self._preview_last_fetch = 0.0
@@ -620,9 +688,28 @@ class NebulaHost:
             if not self._raise_existing():
                 self.window.show()
                 self.window.restore()
+                self.drop_taskbar_button()
             self._sleep(True)
         except Exception as exc:
             self._log("[Window] Show failed: %s" % exc)
+
+    def drop_taskbar_button(self):
+        """No taskbar button for the main window, hidden or shown.
+
+        Posted to the GUI thread and safe to repeat. See drop_taskbar_tab.
+        """
+        if not self.window:
+            return
+
+        def go():
+            hwnd = self._main_hwnd(ctypes.windll.user32)
+            if hwnd:
+                drop_taskbar_tab(hwnd, self._log)
+
+        try:
+            _run_on_gui(self, go, wait=False)
+        except Exception as exc:
+            self._log("[Window] Taskbar button removal failed: %s" % exc)
 
     def _raise_existing(self):
         """Show this window and bring it forward without a taskbar blink.
@@ -668,6 +755,8 @@ class NebulaHost:
                 if attached:
                     user32.AttachThreadInput(int(fg_thread), int(our), False)
             _stop_taskbar_flash(user32, hwnd)
+            # Show puts the button back; the tray is the only presence.
+            drop_taskbar_tab(hwnd, self._log)
 
         try:
             if getattr(native, "InvokeRequired", False):
@@ -804,9 +893,16 @@ class NebulaHost:
         # leave the page wearing .asleep - backdrop frozen, animations
         # stopped - over a window that was visible and focused. Serialise
         # them, and let a push that has been overtaken drop itself.
+        #
+        # ExecuteScript resumes a suspended renderer, so the script and the
+        # suspend share one worker: sleep scripts first and suspends after,
+        # wake resumes first because a suspended page never answers. The
+        # suspend/resume runs on the GUI thread, never under the push lock.
+        suspend = st["suspend"]
         with self._gpu_push_lock:
             self._gpu_gen += 1
             gen = self._gpu_gen
+            self._suspend_queued = bool(suspend)
         self._awake = st["awake"]
         self._quiet = st["quiet"]
         if self.window:
@@ -816,17 +912,40 @@ class NebulaHost:
             )
             window = self.window
 
-            def push_js():
+            def run_js():
                 with self._gpu_push_lock:
                     if gen != self._gpu_gen:
-                        return          # a newer state already went out
+                        return False    # a newer state already went out
                     try:
                         window.evaluate_js(js)
                     except Exception as exc:
-                        self._log("[Window] setAwake/setQuiet failed: %s" % exc)
+                        error = exc
+                        self._log("[Window] setAwake/setQuiet failed: %s" % error)
+                return True
 
-            threading.Thread(target=push_js, daemon=True).start()
-        self._suspend_webview(st["suspend"])
+            def power_on_gui():
+                if gen == self._gpu_gen:
+                    self._suspend_webview(suspend)
+
+            def push():
+                try:
+                    if suspend:
+                        if run_js() and gen == self._gpu_gen:
+                            _run_on_gui(self, power_on_gui)
+                    else:
+                        if gen != self._gpu_gen:
+                            return
+                        _run_on_gui(self, power_on_gui)
+                        run_js()
+                finally:
+                    if suspend:
+                        with self._gpu_push_lock:
+                            if gen == self._gpu_gen:
+                                self._suspend_queued = False
+
+            threading.Thread(target=push, daemon=True).start()
+        else:
+            self._suspend_queued = False
         try:
             self._windows.sleep_aux(st["suspend"])
         except Exception:
@@ -931,7 +1050,11 @@ class NebulaHost:
                         self._apply_page_gpu(on_screen, focused)
                         if prev_screen is None or on_screen != prev_screen:
                             self._overlay_follow(on_screen)
-                    elif not on_screen and not self._suspended:
+                            if on_screen:
+                                # A restore that bypassed show() re-adds it.
+                                self.drop_taskbar_button()
+                    elif (not on_screen and not self._suspended
+                          and not self._suspend_queued):
                         # First TrySuspend can miss (CoreWebView2 not ready).
                         # Do not wait for another visibility edge.
                         self._suspend_webview(True)
@@ -1953,7 +2076,7 @@ class NebulaHost:
         self._dial_hook = hotkey_mod.hook(
             self._on_dial_event, suppress=True, on_log=self._log)
         if self._dial_hook:
-            self._log("[Dial] watching numpad Ins (Num Lock off), "
+            self._log("[Dial] watching numpad 0 (Num Lock either way), "
                       "numpad 8/2 to move, 6 to run, 3 to close, "
                       "VK_VOLUME_UP 0xAF, VK_VOLUME_DOWN 0xAE, "
                       "VK_VOLUME_MUTE 0xAD")
@@ -2029,6 +2152,18 @@ class NebulaHost:
                 self._dial.note_closed(token)
                 return
             windows.dial_close(token)
+
+    def dial_point(self, index):
+        """Highlight the row under the pointer. Does not run it."""
+        action = self._dial.point(index)
+        if action:
+            self._dial_perform(action)
+
+    def dial_choose(self, index):
+        """Run the row that was clicked, including the delete confirm."""
+        action = self._dial.choose(index)
+        if action:
+            self._dial_perform(action)
 
     def _dial_row_name(self, index):
         status = self.dial_status()

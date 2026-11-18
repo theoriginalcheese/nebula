@@ -146,6 +146,9 @@ function sizeCanvas(cv) {
 
 function dialOpen(payload) {
   payload = payload || {};
+  // A sleep class left over from the hidden slot would freeze the rings
+  // on one dark frame. Opening means the plate is on screen.
+  document.documentElement.classList.remove("asleep");
   applyChrome(payload);
   holdBackground(payload.bg);
   t = Number.isFinite(payload.t) ? payload.t : Math.random() * 18;
@@ -153,12 +156,13 @@ function dialOpen(payload) {
   if (cv) {
     sizeCanvas(cv);
     cv.dataset.bg = bgKey;
+    paint(cv, t);
   }
-  if (reduced()) {
+  if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
     stopLoop();
-    if (cv) paint(cv, t);
     drewStill = true;
   } else {
+    drewStill = false;
     startLoop();
   }
 }
@@ -194,6 +198,46 @@ function dialPreview(mode) {
   }
 }
 window.dialPreview = dialPreview;
+
+function rowIndex(row) {
+  const i = Number(row && row.getAttribute("data-i"));
+  return Number.isFinite(i) ? i : 0;
+}
+
+function bindRows() {
+  document.querySelectorAll(".row").forEach((row) => {
+    row.addEventListener("pointerenter", () => {
+      const i = rowIndex(row);
+      highlight(i, false);
+      const api = window.pywebview && window.pywebview.api;
+      if (api && api.point) api.point(i);
+    });
+    row.addEventListener("click", (ev) => {
+      ev.preventDefault();
+      const i = rowIndex(row);
+      highlight(i, false);
+      const api = window.pywebview && window.pywebview.api;
+      if (api && api.choose) api.choose(i);
+    });
+  });
+}
+
+function bootPaint() {
+  const cv = $("bg");
+  if (!cv) return;
+  holdBackground(bgKey);
+  sizeCanvas(cv);
+  cv.dataset.bg = bgKey;
+  paint(cv, t || 1.2);
+  if (!reduced()) startLoop();
+}
+
+bindRows();
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", bootPaint);
+} else {
+  bootPaint();
+}
 
 waitApi().then(() => {
   const api = window.pywebview.api;

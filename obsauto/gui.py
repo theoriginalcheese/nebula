@@ -3774,6 +3774,7 @@ class AppWindow:
         if value == old:
             return
         self.config[key] = value
+        settings_spec.drop_pinned_scancode(self.config, key)
         self._save_settings()
         self._log(f"[Manual] {key} = {settings_spec.log_value(field, value)}")
         self._settings_apply_live(key, value)

@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import atexit
 import ctypes
+import ctypes.wintypes
 import json
 import os
 import random
@@ -41,9 +42,10 @@ from obsauto import design_v3 as dv
 from obsauto.config import save_config
 from spike.dial import (
     CLOSE_MS, DODGE_MS, OPEN_TOTAL_MS, ROW_COUNT, close_pose, corner_dy,
+    fit_corner,
     dodge_lift, open_pose,
 )
-from spike.webview_power import apply_webview_power
+from spike.webview_power import SleepGate, apply_webview_power, prepare_webview_process
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 WEB = os.path.join(HERE, "web")
@@ -213,8 +215,59 @@ def _form_alive(window):
         return True
 
 
+def _toast_painted(window, toast):
+    """The toast is actually in the corner, not a hidden warm slot.
+
+    A window at opacity 0 that is not fading in is invisible. Holding the
+    dial up for it looks exactly like a toast that is not there. A form
+    with no opacity yet (tests, the moment before the native exists) still
+    counts, so a live toast keeps its gap.
+    """
+    try:
+        form = window.native
+    except Exception:
+        return True
+    if form is None:
+        return True
+    try:
+        visible = form.Visible
+    except Exception:
+        visible = None
+    if visible is not None and not bool(visible):
+        return False
+    try:
+        opacity = float(form.Opacity)
+    except Exception:
+        return True
+    if opacity >= 0.05:
+        return True
+    return getattr(toast, "_fade_dir", 0) == 1
+
+
+def _window_physical_size(window):
+    """The HWND's real width and height, in physical pixels."""
+    try:
+        handle = window.native.Handle
+        hwnd = int(handle.ToInt64() if hasattr(handle, "ToInt64") else int(handle))
+    except Exception:
+        return None
+    if not hwnd:
+        return None
+    rect = ctypes.wintypes.RECT()
+    get_rect = ctypes.WINFUNCTYPE(
+        ctypes.c_bool, ctypes.c_void_p, ctypes.POINTER(ctypes.wintypes.RECT),
+    )(("GetWindowRect", ctypes.windll.user32))
+    if not get_rect(ctypes.c_void_p(hwnd), ctypes.byref(rect)):
+        return None
+    width = int(rect.right - rect.left)
+    height = int(rect.bottom - rect.top)
+    if width < 8 or height < 8:
+        return None
+    return width, height
+
+
 def _corner_physical(w_css, h_css, lift=0):
-    """Bottom-right of the cursor's monitor, in PHYSICAL screen pixels.
+    """Bottom-right of the primary work area, in PHYSICAL screen pixels.
 
     ``lift`` raises it by that many physical pixels, so two windows can share
     the corner without sharing the spot.
@@ -239,6 +292,79 @@ def _corner_physical(w_css, h_css, lift=0):
     margin = int(dv.TOAST_MARGIN * scale)
     x = right - int(w_css * scale) - margin
     y = bottom - int(h_css * scale) - margin - lift
+    return x, y
+
+
+def _per_monitor_v2(fn):
+    """Run ``fn`` with this thread PER_MONITOR_AWARE_V2, then restore.
+
+    A system-aware thread gets rectangles virtualised on a mixed-DPI desktop,
+    so a window that is really off-screen can read back as on it.
+    """
+    prev_ctx = None
+    setter = None
+    try:
+        setter = ctypes.windll.user32.SetThreadDpiAwarenessContext
+        setter.argtypes = [ctypes.c_void_p]
+        setter.restype = ctypes.c_void_p
+        prev_ctx = setter(ctypes.c_void_p(-4))
+    except Exception:
+        prev_ctx = None
+    try:
+        return fn()
+    finally:
+        if prev_ctx and setter is not None:
+            try:
+                setter(ctypes.c_void_p(prev_ctx))
+            except Exception:
+                pass
+
+
+def _window_on_virtual_screen(window):
+    """False only when the HWND's rect provably misses every monitor.
+
+    Must run on the GUI thread (``.Handle``). Anything it cannot read counts
+    as on-screen, so a failed probe never moves a toast that was fine.
+    """
+    try:
+        handle = window.native.Handle
+        hwnd = int(handle.ToInt64() if hasattr(handle, "ToInt64") else int(handle))
+    except Exception:
+        return True
+    if not hwnd:
+        return True
+
+    def probe():
+        rect = ctypes.wintypes.RECT()
+        get_rect = ctypes.WINFUNCTYPE(
+            ctypes.c_bool, ctypes.c_void_p, ctypes.POINTER(ctypes.wintypes.RECT),
+        )(("GetWindowRect", ctypes.windll.user32))
+        if not get_rect(ctypes.c_void_p(hwnd), ctypes.byref(rect)):
+            return True
+        metric = ctypes.windll.user32.GetSystemMetrics
+        vx, vy = metric(76), metric(77)       # SM_X/YVIRTUALSCREEN
+        vw, vh = metric(78), metric(79)       # SM_CX/CYVIRTUALSCREEN
+        if vw <= 0 or vh <= 0:
+            return True
+        return (rect.right > vx and rect.left < vx + vw
+                and rect.bottom > vy and rect.top < vy + vh)
+
+    try:
+        return bool(_per_monitor_v2(probe))
+    except Exception:
+        return True
+
+
+def _clamp_to_primary(x, y, w_css, h_css):
+    """Pull a physical point back inside the primary work area."""
+    rect = (ctypes.c_long * 4)()
+    ctypes.windll.user32.SystemParametersInfoW(0x0030, 0, ctypes.byref(rect), 0)
+    left, top, right, bottom = rect[0], rect[1], rect[2], rect[3]
+    scale = _primary_scale()
+    w = int(w_css * scale)
+    h = int(h_css * scale)
+    x = max(left, min(int(x), right - w))
+    y = max(top, min(int(y), bottom - h))
     return x, y
 
 
@@ -479,6 +605,26 @@ def _monitor_key(x, y):
     return "primary", (0, 0, 1920, 1080)
 
 
+def _get_exstyle(hwnd):
+    """Extended style via GetWindowLongPtrW.
+
+    GetWindowLongW takes a 32-bit HWND. On 64-bit that truncates the handle,
+    the call fails, and the topmost bit is never stored — so a later border
+    change drops the window back under whatever is in front.
+    """
+    get_long = ctypes.WINFUNCTYPE(
+        ctypes.c_ssize_t, ctypes.c_void_p, ctypes.c_int,
+    )(("GetWindowLongPtrW", ctypes.windll.user32))
+    return int(get_long(ctypes.c_void_p(int(hwnd)), GWL_EXSTYLE))
+
+
+def _set_exstyle(hwnd, style):
+    set_long = ctypes.WINFUNCTYPE(
+        ctypes.c_ssize_t, ctypes.c_void_p, ctypes.c_int, ctypes.c_ssize_t,
+    )(("SetWindowLongPtrW", ctypes.windll.user32))
+    set_long(ctypes.c_void_p(int(hwnd)), GWL_EXSTYLE, int(style))
+
+
 def _hide_from_taskbar(window, on_log=None):
     """Toast / overlay: no taskbar button, no activation flash.
 
@@ -495,16 +641,17 @@ def _hide_from_taskbar(window, on_log=None):
     """
     try:
         hwnd = int(window.native.Handle.ToInt64())
-        user32 = ctypes.windll.user32
-        style = user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
+        style = _get_exstyle(hwnd)
         style = (
             style | WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE
         ) & ~WS_EX_APPWINDOW
-        user32.SetWindowLongW(hwnd, GWL_EXSTYLE, style)
+        _set_exstyle(hwnd, style)
         # Shell only picks up EXSTYLE changes after a frame change.
-        user32.SetWindowPos(
-            hwnd, 0, 0, 0, 0, 0,
-            SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED,
+        # HWND_TOPMOST here as well: a frame change that only says
+        # NOZORDER leaves a game that grabbed the band in front.
+        _set_window_pos(
+            hwnd, HWND_TOPMOST,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_FRAMECHANGED,
         )
     except Exception as exc:
         if on_log:
@@ -671,11 +818,19 @@ def _raise_above(window):
         return
     if not hwnd:
         return
+    flags = SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE
     try:
-        _set_window_pos(
-            hwnd, HWND_TOPMOST,
-            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
-        )
+        style = _get_exstyle(hwnd)
+        want = (
+            style | WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE
+        ) & ~WS_EX_APPWINDOW
+        if want != style:
+            _set_exstyle(hwnd, want)
+            flags |= SWP_FRAMECHANGED
+    except Exception:
+        pass
+    try:
+        _set_window_pos(hwnd, HWND_TOPMOST, flags)
     except Exception:
         pass
 
@@ -931,6 +1086,12 @@ class _LivenessWatch:
 
 def _force_destroy_controller(ctl):
     """Best-effort destroy that does not need a live host GUI thread."""
+    if ctl is None:
+        return
+    gate = getattr(ctl, "_sleep_gate", None)
+    if gate is not None:
+        gate.cancel()
+        ctl._renderer_asleep = False
     ctl._alive = getattr(ctl, "_alive", False)
     if hasattr(ctl, "_open"):
         ctl._open = False
@@ -1084,28 +1245,70 @@ class ToastController:
         # True after create/hide — next paint soft-fades the HWND in.
         self._needs_appear = True
         self._renderer_asleep = False
+        self._page_needs_wake = False
+        self._sleep_gate = SleepGate()
 
     def _set_renderer_sleep(self, asleep):
-        """Pause toast CSS + TrySuspend while the warm slot is hidden.
+        """Pause toast motion while the warm slot is hidden.
 
-        evaluate_js must not run on the WinForms thread (deadlocks). Power
-        COM calls marshal themselves.
+        The HWND is already hide()'d. TrySuspend is not used here: a script
+        against a suspended renderer never returns, and the next toast stays
+        at opacity 0.
         """
         if not self._window or asleep == self._renderer_asleep:
             return
-        win = self._window
-        script = "setAsleep(%s)" % ("true" if asleep else "false")
+        gate = self._sleep_gate
+        if asleep:
+            # Stamped, so the page drops it if a newer toast got there first.
+            script = ("(!window.toastSleepOk||window.toastSleepOk(%d))"
+                      "&&setAsleep(true)" % self._generation)
+        else:
+            script = "setAsleep(false)"
+        gate.set(
+            self._window, asleep,
+            script=script,
+            log=self._log, prefix="[Toast]",
+            off_gui=_off_gui,
+            run_on_gui=lambda fn: _run_on_gui(self._host, fn),
+            power=False)
+        self._renderer_asleep = gate.asleep
 
-        def push_js():
-            try:
-                win.evaluate_js(script)
-            except Exception:
-                pass
+    def _wake_for_show(self):
+        """A show owns the HWND. Cancel sleep and resume if it was suspended."""
+        if self._renderer_asleep or self._sleep_gate.asleep:
+            # Cancelling the gate clears the flag; the page still has to hear it.
+            self._page_needs_wake = True
+        self._sleep_gate.cancel()
+        self._renderer_asleep = False
+        if self._window:
+            apply_webview_power(
+                self._window, False, log=self._log, prefix="[Toast]")
 
-        _off_gui(push_js)
-        apply_webview_power(
-            win, asleep, log=self._log, prefix="[Toast]")
-        self._renderer_asleep = asleep
+    def _arm_fail_visible(self, gen):
+        """If the fade never leaves opacity 0, put the window up anyway."""
+        def check():
+            time.sleep(0.9)
+            if gen != self._generation or not self._showing:
+                return
+
+            def force():
+                if gen != self._generation or not self._showing or not self._window:
+                    return
+                try:
+                    opacity = float(self._window.native.Opacity)
+                except Exception:
+                    opacity = 0.0
+                if opacity >= 0.2:
+                    return
+                self._log("[Toast] still invisible — forcing the window up")
+                self._wake_for_show()
+                _show_noactivate(self._window, self._log)
+                self._set_form_opacity(1.0)
+                self._fade_dir = 0
+
+            _run_on_gui(self._host, force, wait=False)
+
+        threading.Thread(target=check, name="ToastFailVisible", daemon=True).start()
 
     def suspend_if_hidden(self):
         # The watch thread and the toast's own reveal both used to
@@ -1114,8 +1317,9 @@ class ToastController:
         _run_on_gui(self._host, self._suspend_if_hidden_gui, wait=False)
 
     def _suspend_if_hidden_gui(self):
-        if not self._showing:
-            self._set_renderer_sleep(True)
+        if self._showing or self._fade_dir == 1:
+            return
+        self._set_renderer_sleep(True)
 
     def replace(self, event, display_name, details=None, actions=None,
                 on_timeout=None):
@@ -1150,9 +1354,12 @@ class ToastController:
         self._showing = True
         self._fading = False
         self._fade_dir = 0
+        self._wake_for_show()
+        self._arm_fail_visible(self._generation)
         # Track prompt before create/ready — JS may consume_pending and skip
         # _push, which used to leave the HWND at status 60px (buttons clipped).
         self._prompt = bool(content.get("prompt") or content.get("actions"))
+        content["gen"] = self._generation
         if self._window is not None and not _form_alive(self._window):
             self._log("[Toast] window was disposed — building a new one")
             self._window = None
@@ -1331,36 +1538,36 @@ class ToastController:
         self._prompt = prompt
         appear = bool(self._needs_appear)
 
+        def reveal():
+            if gen != self._generation or not self._showing:
+                return
+            # Show before the script. evaluate_js on a suspended renderer
+            # never returns, and waiting for it left the capsule at opacity 0.
+            self._wake_for_show()
+            self._resize_for_mode(prompt)
+            self._reposition()
+            _show_noactivate(self._window, self._log)
+            self._needs_appear = False
+            if appear:
+                self._set_form_opacity(0.0)
+                self._start_appear()
+            else:
+                self._set_form_opacity(1.0)
+            _clip_capsule(self._window, self._host)
+
+        _run_on_gui(self._host, reveal, wait=False)
+
         def run():
             try:
                 if gen != self._generation or not self._showing:
                     return
-                self._resize_for_mode(prompt)
-                if appear:
-                    # Stay invisible until the DOM has painted. _start_appear
-                    # fades the HWND after that. The page itself stays opaque.
-                    self._set_form_opacity(0.0)
+                if self._renderer_asleep:
+                    self._set_renderer_sleep(False)
+                if self._page_needs_wake:
+                    self._page_needs_wake = False
+                    self._window.evaluate_js("setAsleep(false)")
                 payload = json.dumps(content, ensure_ascii=False)
                 self._window.evaluate_js("window.toastReplace(%s)" % payload)
-                if gen != self._generation or not self._showing:
-                    return
-                self._reposition()
-
-                def reveal():
-                    if gen != self._generation or not self._showing:
-                        return
-                    # Handle / ShowWindow must run on the WinForms thread —
-                    # this worker only owns evaluate_js (see _off_gui).
-                    self._set_renderer_sleep(False)
-                    _show_noactivate(self._window, self._log)
-                    self._needs_appear = False
-                    if appear:
-                        self._start_appear()
-                    else:
-                        self._set_form_opacity(1.0)
-                    _clip_capsule(self._window, self._host)
-
-                _run_on_gui(self._host, reveal)
                 self._schedule_paint_check(gen)
             except Exception as exc:
                 self._log("[Toast] push failed: %s" % exc)
@@ -1439,15 +1646,23 @@ class ToastController:
     def _reposition(self):
         if not self._window:
             return
-        # Same logical coordinates create_window was given, through the same
-        # pywebview scaling. Going around it with SetWindowPos was the thing
-        # that kept getting virtualised.
-        left, top, right, bottom, monitor = _toast_workarea()
-        x, y = _toast_place(right, bottom, monitor, prompt=self._prompt)
-        try:
-            self._window.move(x, y)
-        except Exception:
-            pass
+        # Physical pixels on the primary, through a per-monitor-aware thread.
+        # move() goes through GetDpiForWindow and has put the toast off the
+        # bottom of a mixed-DPI desktop. The primary is the one target that
+        # measured exact; never aim at the cursor's monitor here.
+        w = TOAST_PROMPT_W if self._prompt else TOAST_W
+        h = TOAST_PROMPT_H if self._prompt else TOAST_H
+        x, y = _corner_physical(w, h, 0)
+        _place_physical(self._window, x, y, self._host)
+
+        def verify():
+            if not _window_on_virtual_screen(self._window):
+                self._log("[Toast] off-screen at (%d, %d) — clamping to the "
+                          "primary work area" % (x, y))
+                cx, cy = _clamp_to_primary(x, y, w, h)
+                _place_physical(self._window, cx, cy, self._host)
+
+        _run_on_gui(self._host, verify)
         # Z-order is _raise_above, not Form.TopMost. The property activates.
 
     def _focus_main(self):
@@ -1514,10 +1729,20 @@ class ToastController:
                 self._fade_dir = 0
                 return
             try:
+                from System.Windows.Forms import Timer
+            except ImportError:
+                # No WinForms clock: land on the end state, or a dismiss
+                # never reaches its hide and the toast sticks.
+                self._set_form_opacity(1.0 if direction == 1 else 0.0)
+                if direction == 1:
+                    self._fade_dir = 0
+                if on_done:
+                    on_done()
+                return
+            try:
                 ctypes.windll.winmm.timeBeginPeriod(1)
             except Exception:
                 pass
-            from System.Windows.Forms import Timer
             started = time.perf_counter()
             timer = Timer()
             timer.Interval = 8
@@ -1564,6 +1789,9 @@ class ToastController:
         if self._fade_dir == 1 and self._fade_gen == self._generation:
             return
         self._run_fade(1, dv.TOAST_IN_MS, None)
+        # Claim the corner once the fade has actually started. A warm slot
+        # still at opacity 0 must not keep the dial raised.
+        self._tell_dial()
 
     def _set_form_opacity(self, value):
         """WinForms Form.Opacity — fades the whole HWND (fill + DWM round)."""
@@ -1668,6 +1896,7 @@ class ToastController:
                 except Exception:
                     pass
             self._window = None
+            self._sleep_gate.cancel()
             self._renderer_asleep = False
 
         _run_on_gui(self._host, teardown)
@@ -2041,6 +2270,20 @@ class DialApi:
         # there, and window.show() from anywhere else takes focus.
         _run_on_gui(self._ctl._host, self._ctl._on_ready, wait=False)
 
+    def point(self, index):
+        """Pointer entered a row. The host queue owns the knob lock."""
+        host = self._ctl._host
+        if host is None or not hasattr(host, "dial_point"):
+            return
+        host.call_soon(lambda i=index: host.dial_point(i))
+
+    def choose(self, index):
+        """A row was clicked. Same result as numpad 6 on that row."""
+        host = self._ctl._host
+        if host is None or not hasattr(host, "dial_choose"):
+            return
+        host.call_soon(lambda i=index: host.dial_choose(i))
+
 
 class DialController:
     """One menu for the process. Opens in place, never a stack.
@@ -2079,6 +2322,7 @@ class DialController:
         self._open_epoch = None
         self._top_timer = None
         self._renderer_asleep = False
+        self._sleep_gate = SleepGate()
         self._pose_tick = None
 
     # If the fade never moves, show the plate anyway. Longer than the 220ms
@@ -2127,23 +2371,17 @@ class DialController:
     def _set_renderer_sleep(self, asleep):
         if not self._window or asleep == self._renderer_asleep:
             return
-        win = self._window
-        # Resume the COM renderer before any script. A suspended page
-        # does not answer evaluate_js, which is what left the menu invisible.
-        if not asleep:
-            apply_webview_power(win, False, log=self._log, prefix="[Dial]")
-        script = "setAsleep(%s)" % ("true" if asleep else "false")
-
-        def push_js():
-            try:
-                win.evaluate_js(script)
-            except Exception:
-                pass
-
-        _off_gui(push_js)
-        if asleep:
-            apply_webview_power(win, True, log=self._log, prefix="[Dial]")
-        self._renderer_asleep = asleep
+        # The gate resumes before any script on wake (a suspended page does
+        # not answer evaluate_js, which left the menu invisible) and lets the
+        # script land before TrySuspend on sleep.
+        gate = self._sleep_gate
+        gate.set(
+            self._window, asleep,
+            script="setAsleep(%s)" % ("true" if asleep else "false"),
+            log=self._log, prefix="[Dial]",
+            off_gui=_off_gui,
+            run_on_gui=lambda fn: _run_on_gui(self._host, fn))
+        self._renderer_asleep = gate.asleep
 
     def _open_gui(self, payload):
         self._closing = False
@@ -2374,7 +2612,10 @@ class DialController:
         toast = getattr(windows, "toast", None) if windows is not None else None
         if toast is None or not getattr(toast, "_showing", False):
             return False
-        return _form_alive(getattr(toast, "_window", None))
+        win = getattr(toast, "_window", None)
+        if not _form_alive(win):
+            return False
+        return _toast_painted(win, toast)
 
     def _reconcile_lift(self, glide=False):
         """Come back to the corner when nothing is actually in it."""
@@ -2435,7 +2676,15 @@ class DialController:
         if not self._window or not self._rest:
             return
         x, y = self._rest
-        dy = corner_dy(self._offset, self._lift, _primary_scale())
+        scale = _primary_scale()
+        size = _window_physical_size(self._window)
+        if size is not None:
+            x, y = fit_corner(
+                x, y,
+                int(DIAL_W * scale), int(DIAL_H * scale),
+                size[0], size[1],
+            )
+        dy = corner_dy(self._offset, self._lift, scale)
         _place_physical(self._window, x, y + dy, self._host)
         if self._lift_target > 0:
             self._yield_to_toast()
@@ -2752,6 +3001,7 @@ class DialController:
                 except Exception:
                     pass
             self._window = None
+            self._sleep_gate.cancel()
             self._renderer_asleep = False
 
         _run_on_gui(self._host, teardown)
@@ -2832,9 +3082,8 @@ class NebulaWindows:
         if getattr(self, "_liveness", None):
             self._liveness.stop()
         _release_ontop_hook(self._host)
-        _force_destroy_controller(self.toast)
-        _force_destroy_controller(self.overlay)
-        _force_destroy_controller(self.dial)
+        for name in ("toast", "overlay", "dial"):
+            _force_destroy_controller(getattr(self, name, None))
 
     def destroy(self):
         with self._teardown_lock:
@@ -2907,6 +3156,7 @@ def demo():
     except Exception:
         pass
 
+    prepare_webview_process()
     host = _DemoHost()
     cfg = load_config()
     windows = NebulaWindows(host, cfg)

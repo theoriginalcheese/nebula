@@ -111,9 +111,10 @@ html, body {
 
 /* 2/3 - star dust. Two layers share one wind vector that curves through the
    cycle; the far layer uses a longer period and a deeper phase offset so it
-   lags the near one. Each layer is one box-shadow field (not N nodes).
-   Height is doubled and the path ends at -50% Y so the vertical wrap stays
-   seamless; horizontal drift stays small and reverses so nothing walks off. */
+   lags the near one. Each layer is one baked bitmap (the same dots as the
+   old box-shadow field, including the y+height copy). Height is doubled and
+   the path ends at -50% Y so the vertical wrap stays seamless; horizontal
+   drift stays small and reverses so nothing walks off. */
 .stars {
   position: absolute;
   left: 0; top: 0;

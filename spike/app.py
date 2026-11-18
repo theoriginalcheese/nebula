@@ -60,6 +60,7 @@ from obsauto import thumbs
 from obsauto import steam_scanner
 from obsauto import classifier as classifier_module
 from spike import host as host_mod
+from spike.webview_power import prepare_webview_process
 
 # Main script is flattened to _MEIPASS/app.py under PyInstaller onefile, so
 # dirname(__file__) is _MEIPASS — not spike/. Web assets live at spike/web/.
@@ -565,6 +566,7 @@ class Api:
                 errors.append("%s: %s" % (field.label, error))
             else:
                 self.cfg[key] = value
+                settings_spec.drop_pinned_scancode(self.cfg, key)
         if errors:
             return {"ok": False, "errors": errors}
         root = str(self.cfg.get("recording_root") or "").strip()
@@ -1360,11 +1362,13 @@ class Api:
                     mode_bit = " · LAN"
                 elif st_off.get("auto_lan") and mode.startswith("remote"):
                     mode_bit = " · Tailscale"
-                if pending:
+                if not reach:
+                    offload["text"] = "Checking the NAS connection…"
+                elif pending:
                     offload["text"] = (
                         "%d clip%s waiting on the NAS%s."
                         % (pending, "" if pending == 1 else "s", mode_bit))
-                elif reach and str(reach).startswith("nas_down"):
+                elif str(reach).startswith("nas_down"):
                     clause = ts.diagnose_label(reach)
                     offload["text"] = (
                         "NAS unreachable"
@@ -1646,7 +1650,9 @@ class Api:
             if str(reach).startswith("nas_down"):
                 headline = "%d waiting — NAS unreachable" % pending
         elif enabled:
-            if str(reach).startswith("nas_down"):
+            if not reach:
+                headline = "Checking NAS…"
+            elif str(reach).startswith("nas_down"):
                 headline = "NAS unreachable"
             else:
                 headline = "Up to date"
@@ -1707,7 +1713,7 @@ class Api:
         )
 
         text = headline
-        if reach_label and "Tailscale" not in "".join(r["label"] for r in rows):
+        if reach_label and reach_label not in text:
             text = "%s  ·  %s" % (text, reach_label)
 
         return {
@@ -1823,6 +1829,7 @@ class Api:
             return {"ok": True, "unchanged": True,
                     "value": _settings_display(field, old)}
         self.cfg[key] = value
+        settings_spec.drop_pinned_scancode(self.cfg, key)
         save_config(self.cfg)
         self._settings_saved_at = time.time()
         self._api_log("[Manual] %s = %s" % (key, settings_spec.log_value(field, value)))
@@ -3840,6 +3847,11 @@ def main():
     url_args = next((x[6:] for x in sys.argv if x.startswith("--url=")), "")
     index = spike_page_url(INDEX, url_args, start_hidden=start_hidden)
 
+    # Browser switches must exist before the WebView2 environment does, and
+    # the toast / dial must join this window's environment, not make one.
+    if not prepare_webview_process():
+        log_to_file("[Window] Shared WebView2 environment hook not installed.")
+
     window = webview.create_window(
         "Nebula",
         index,
@@ -3863,6 +3875,9 @@ def main():
 
     def _boot():
         host.start_tray()
+        # The tray icon is the only taskbar presence. DeleteTab, not
+        # ShowInTaskbar (recreates the HWND) or style bits (FRAMECHANGED).
+        host.drop_taskbar_button()
         host.start_taskbar_icon()
         host.start_replay()
         host.start_hotkeys()

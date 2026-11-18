@@ -5,13 +5,14 @@ so the swallow rules can be tested without a desktop session.
 
 Volume keys pass through while the menu is closed. The mute press that opens
 it is swallowed, and so are the notches while it is open, so Windows volume
-does not move under the highlight. Numpad 0 does the same job when Num Lock
-is off: Windows reports that face as insert with ``is_keypad`` set. The
-dedicated Insert key is left alone, and Num Lock on still types 0.
+does not move under the highlight. Numpad 0 does the same job with Num Lock
+either way: off, Windows reports insert; on, it reports ``0``. Both carry
+``is_keypad``, and scan 82 with the digit name is the same key when a laptop
+omits that flag. The dedicated Insert key and the top-row 0 are left alone.
 While the menu is open, numpad 8 and 2 move the highlight and numpad 6 and 3
 run or dismiss it. That is the keypad faces only — the arrow cluster is a
-different key and still types. ``note_closed`` is what releases the swallowed
-keys.
+different key and still types. A click on a row is the same as numpad 6 on
+that row. ``note_closed`` is what releases the swallowed keys.
 """
 from __future__ import annotations
 
@@ -62,6 +63,17 @@ _KEYPAD_NAV = {
     "right": "nav_yes",
     "3": "nav_no",
     "page down": "nav_no",
+}
+# Num Lock on, and a laptop that forgets is_keypad. These scans belong to
+# the numpad cluster, not the digit row (0 is scan 11, 8 is scan 9). The
+# arrow cluster shares some of these scans but is named up/down/left/right,
+# so a bare "down" at scan 80 is still an arrow.
+_NUMPAD_DIGIT = {
+    ("0", 82): "mute",
+    ("8", 72): "nav_up",
+    ("2", 80): "nav_down",
+    ("6", 77): "nav_yes",
+    ("3", 81): "nav_no",
 }
 _HELD = (
     "volume_up", "volume_down", "mute", "esc",
@@ -227,6 +239,22 @@ def corner_dy(offset_css, lift_css, scale):
     return int(round((float(offset_css) - float(lift_css)) * float(scale)))
 
 
+def fit_corner(rest_x, rest_y, assumed_w, assumed_h, actual_w, actual_h):
+    """Shift a corner slot so the real window keeps the same bottom-right.
+
+    The slot is computed as if the window were ``assumed_*`` physical pixels.
+    When the form is actually shorter, that leaves a toast-height hole under
+    the menu. A couple of pixels either way (a DWM hairline) is left alone.
+    """
+    dw = int(assumed_w) - int(actual_w)
+    dh = int(assumed_h) - int(actual_h)
+    if abs(dw) <= 2:
+        dw = 0
+    if abs(dh) <= 2:
+        dh = 0
+    return int(rest_x) + dw, int(rest_y) + dh
+
+
 def close_pose(ms, origin_y=0.0, origin_opacity=1.0):
     """Fade and an 8px leave, 200ms, from wherever the open currently sits."""
     if ms <= 0:
@@ -248,19 +276,33 @@ def classify(event):
     name = (getattr(event, "name", None) or "").lower()
     if name in _BY_NAME:
         return _BY_NAME[name]
-    # Numpad 0, Num Lock off. Same physical key types "0" when Num Lock is on,
-    # and that name is not insert, so it falls through. The dedicated Insert
-    # key shares the name but is not a keypad key.
-    keypad = getattr(event, "is_keypad", False)
-    if name == "insert" and keypad:
+    # Numpad 0. Num Lock off is "insert"; Num Lock on is "0". Both are the
+    # keypad. The dedicated Insert key shares the name and is not a keypad
+    # key. The top-row 0 is a different scan.
+    keypad = bool(getattr(event, "is_keypad", False))
+    scan = getattr(event, "scan_code", None)
+    if keypad and name in ("insert", "0"):
         return "mute"
+    if not keypad:
+        digit = _NUMPAD_DIGIT.get((name, scan))
+        if digit:
+            return digit
     if keypad:
         nav = _KEYPAD_NAV.get(name)
         if nav:
             return nav
     # Empty or unexpected name, but the scan is one of the three volume keys.
-    scan = getattr(event, "scan_code", None)
     return _BY_SCAN.get(scan)
+
+
+def _row_index(index):
+    try:
+        index = int(index)
+    except (TypeError, ValueError):
+        return None
+    if 0 <= index < ROW_COUNT:
+        return index
+    return None
 
 
 class DialKnob:
@@ -334,6 +376,42 @@ class DialKnob:
         if self.phase == "closed":
             return kind == "mute"
         return kind in _HELD
+
+    def point(self, index):
+        """Mouse entered a row. Moves the highlight and does not run it."""
+        with self._lock:
+            if self.phase != "open":
+                return None
+            index = _row_index(index)
+            if index is None or index == self.index:
+                return None
+            if index != DELETE_ROW:
+                self._armed = None
+            self.index = index
+            return {"type": "move", "index": index}
+
+    def choose(self, index):
+        """Mouse clicked a row. Same as the knob click, on that row.
+
+        Only while the menu is open. Promoting a closed knob here would
+        swallow the numpad with no window on screen, and a click during
+        the close fade is what used to do that.
+        """
+        with self._lock:
+            if self.phase != "open":
+                return None
+            index = _row_index(index)
+            if index is None:
+                return None
+            self.index = index
+            if not self._visible():
+                self._log("[Dial] menu not on screen yet")
+                return None
+            if index == DELETE_ROW and self._armed != DELETE_ROW:
+                self._armed = DELETE_ROW
+                return {"type": "arm", "index": index}
+            token = self._begin_close()
+            return {"type": "activate", "index": index, "token": token}
 
     def _step(self, delta):
         was = self._armed

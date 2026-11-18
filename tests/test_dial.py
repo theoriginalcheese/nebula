@@ -22,6 +22,7 @@ from spike.dial import (
     close_pose,
     corner_dy,
     dodge_lift,
+    fit_corner,
     open_pose,
     pause_label,
     pick_background,
@@ -98,6 +99,13 @@ def test_dodge():
           corner_dy(8, 84, 1.0) == -76, corner_dy(8, 84, 1.0))
     check("settled lift is the clearance, in physical px",
           corner_dy(0, 84, 1.5) == -126)
+    # 150% scale, CSS height 236, form actually unscaled: the hole is a toast.
+    check("a short window drops onto the same bottom edge",
+          fit_corner(2100, 1050, 480, 354, 320, 236) == (2260, 1168))
+    check("a matching window is not nudged",
+          fit_corner(2100, 1050, 480, 354, 480, 354) == (2100, 1050))
+    check("a hairline does not walk the window",
+          fit_corner(2100, 1050, 480, 354, 481, 355) == (2100, 1050))
 
 
 def test_hidden_menu_remembers_the_gap():
@@ -150,6 +158,37 @@ def test_dead_toast_releases_the_corner():
     ctl._reconcile_lift()
     check("a live toast keeps the gap",
           ctl._lift == 84 and ctl._lift_target == 84)
+
+    class _Painted(_Form):
+        def __init__(self, visible=True, opacity=1.0):
+            super().__init__(False)
+            self.Visible = visible
+            self.Opacity = opacity
+
+    host._windows.toast._fade_dir = 0
+    host._windows.toast._window = _Win(False)
+    host._windows.toast._window.native = _Painted(opacity=0.0)
+    ctl._lift = 84
+    ctl._lift_target = 84
+    ctl._reconcile_lift()
+    check("an invisible toast does not keep the gap",
+          ctl._lift == 0 and ctl._lift_target == 0)
+
+    host._windows.toast._fade_dir = 1
+    host._windows.toast._window.native = _Painted(opacity=0.0)
+    ctl._lift = 84
+    ctl._lift_target = 84
+    ctl._reconcile_lift()
+    check("a toast that is fading in keeps the gap",
+          ctl._lift == 84 and ctl._lift_target == 84)
+
+    host._windows.toast._fade_dir = 0
+    host._windows.toast._window.native = _Painted(visible=False, opacity=1.0)
+    ctl._lift = 84
+    ctl._lift_target = 84
+    ctl._reconcile_lift()
+    check("a hidden toast window does not keep the gap",
+          ctl._lift == 0 and ctl._lift_target == 0)
 
 
 def test_pool():
@@ -327,8 +366,17 @@ def test_numpad_ins():
     check("the real insert key still inserts",
           allow is True and action is None and knob2.phase == "closed")
     allow, action = knob2.handle(Ev("0", "down", 82, is_keypad=True))
-    check("num lock on still types zero",
-          allow is True and action is None and knob2.phase == "closed")
+    check("num lock on still opens from numpad 0",
+          allow is False and action and action["type"] == "open"
+          and knob2.phase == "open")
+    knob3 = DialKnob(on_log=lambda _msg: None)
+    allow, action = knob3.handle(Ev("0", "down", 82, is_keypad=False))
+    check("a laptop numpad 0 opens without the keypad flag",
+          allow is False and action and action["type"] == "open")
+    knob4 = DialKnob(on_log=lambda _msg: None)
+    allow, action = knob4.handle(Ev("0", "down", 11, is_keypad=False))
+    check("the top-row zero still types",
+          allow is True and action is None and knob4.phase == "closed")
 
 
 def _open(knob):
@@ -362,7 +410,7 @@ def test_numpad_directions():
     allow, action = knob.handle(Ev("down", "down", 80, is_keypad=False))
     check("the arrow cluster is not the numpad",
           allow is True and action is None and knob.index == 1)
-    allow, action = knob.handle(Ev("6", "down", 77, is_keypad=False))
+    allow, action = knob.handle(Ev("6", "down", 7, is_keypad=False))
     check("the digit row is not the numpad",
           allow is True and action is None and knob.phase == "open")
     allow, action = knob.handle(Ev("6", "down", 77, is_keypad=True))
@@ -390,6 +438,47 @@ def test_numpad_directions():
     check("numpad 6 on delete only arms the first press",
           allow is False and action and action["type"] == "arm"
           and knob.phase == "open")
+
+
+def test_numpad_without_keypad_flag():
+    knob = DialKnob(on_log=lambda _msg: None)
+    _open(knob)
+    allow, action = knob.handle(Ev("2", "down", 80, is_keypad=False))
+    check("num lock on walks down without the keypad flag",
+          allow is False and action and action["type"] == "move"
+          and action["index"] == 1)
+    knob.handle(Ev("2", "up", 80, is_keypad=False))
+    allow, action = knob.handle(Ev("8", "down", 9, is_keypad=False))
+    check("the digit-row 8 is not the numpad",
+          allow is True and action is None and knob.index == 1)
+
+
+def test_mouse_choose():
+    knob = DialKnob(on_log=lambda _msg: None, visible=lambda: True)
+    _open(knob)
+    action = knob.point(2)
+    check("hover moves the highlight",
+          action and action["type"] == "move" and knob.index == 2)
+    action = knob.choose(2)
+    check("a click runs that row",
+          action and action["type"] == "activate" and action["index"] == 2
+          and knob.phase == "closing")
+    knob = DialKnob(on_log=lambda _msg: None, visible=lambda: True)
+    _open(knob)
+    action = knob.choose(DELETE_ROW)
+    check("the first click on delete only arms it",
+          action and action["type"] == "arm" and knob.phase == "open")
+    action = knob.choose(DELETE_ROW)
+    check("the second click on delete runs it",
+          action and action["type"] == "activate" and knob.phase == "closing")
+    knob = DialKnob(on_log=lambda _msg: None, visible=lambda: False)
+    action = knob.choose(0)
+    check("a click while the menu is closed does nothing",
+          action is None and knob.phase == "closed")
+    _open(knob)
+    action = knob.choose(0)
+    check("a click before the plate is up does not run the row",
+          action is None and knob.phase == "open")
 
 
 def test_hook_pairs():
@@ -766,6 +855,9 @@ def test_shell_on_disk():
     check("five rows", html.count('class="row"') == 5)
     check("no gallery chrome", "prefs-dial-menu" not in html and "LIKE" not in html)
     check("canvas is the background", 'id="bg"' in html and "dial-bg.js" in html)
+    page = open(os.path.join(root, "spike", "web", "dial.js"), encoding="utf-8").read()
+    check("a click runs the row", "api.choose" in page)
+    check("hover moves the highlight", "api.point" in page)
     check("reduced motion pauses", "animation-play-state: paused" in css)
     check("rows are in with the panel", "--row-d0" not in css)
     js = open(os.path.join(root, "spike", "web", "dial-bg.js"), encoding="utf-8").read()
@@ -793,6 +885,8 @@ def main():
     test_live_k762_scans()
     test_numpad_ins()
     test_numpad_directions()
+    test_numpad_without_keypad_flag()
+    test_mouse_choose()
     test_hook_pairs()
     test_one_window()
     test_hidden_menu_remembers_the_gap()
