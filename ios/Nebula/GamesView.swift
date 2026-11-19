@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 struct GamesView: View {
     @EnvironmentObject private var model: AppModel
@@ -6,265 +7,527 @@ struct GamesView: View {
     @State private var exe = ""
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: Theme.Space.bentoGap) {
             if let note = model.undoNote {
-                HStack {
-                    Text(note).font(.system(size: 14, weight: .semibold)).foregroundStyle(Theme.ink)
-                    Spacer()
-                    Button("Undo") { model.undoClassify() }
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundStyle(Theme.violetLight)
-                }
-                .padding(12)
-                .background(.ultraThinMaterial, in: Capsule())
+                undoBanner(note)
+                    .transition(.opacity)
             }
-            pending
-            games
-            nonGames
+            pendingSection
+            gamesSection
+            nonGamesSection
         }
         .sheet(isPresented: $model.addGame) {
-            NavigationStack {
-                VStack(alignment: .leading, spacing: 12) {
-                    Text("Type the exe name from Studio PC. Nebula hasn’t sent a list of running processes.")
-                        .font(.system(size: 15))
-                        .foregroundStyle(Theme.ink2)
-                    TextField("game.exe", text: $exe)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                        .padding(12)
-                        .background(Theme.card, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-                    PrimaryPill(title: "Add as a game", system: "plus") {
-                        let name = exe.trimmingCharacters(in: .whitespacesAndNewlines)
-                        guard !name.isEmpty else { return }
-                        model.reclassify(exe: name, isGame: true)
-                        exe = ""
-                        model.addGame = false
-                    }
-                    Spacer()
-                }
-                .padding(20)
-                .background(Theme.ground)
-                .navigationTitle("Add a game")
-                .navigationBarTitleDisplayMode(.inline)
-                .toolbar {
-                    ToolbarItem(placement: .cancellationAction) {
-                        Button("Cancel") { model.addGame = false }
-                    }
-                }
+            ToneReader(stillPref: model.prefs.still) { _ in
+                addGameSheet
             }
+            .environmentObject(model)
+            .preferredColorScheme(.dark)
             .presentationDetents([.medium])
         }
     }
 
-    private var pending: some View {
-        let rows = model.studio?.pending ?? []
-        return VStack(spacing: 10) {
-            ForEach(rows.prefix(3)) { item in
-                pendingCard(item)
+    // MARK: - 44pt Glass Undo Confirmation (§9.5)
+
+    private func undoBanner(_ note: String) -> some View {
+        ReadingSurface(radius: Theme.Radius.searchBar, kind: .bar) {
+            HStack(spacing: Theme.Space.bentoGap) {
+                Text(note)
+                    .font(Theme.TypeScale.rowValue)
+                    .foregroundStyle(Theme.inkSoft)
+                    .lineLimit(1)
+                Spacer(minLength: 4)
+                Button {
+                    withAnimation(tone.motion) {
+                        model.undoClassify()
+                    }
+                } label: {
+                    Text("Undo")
+                        .font(Theme.TypeScale.segment)
+                        .foregroundStyle(Theme.violetLight)
+                        .padding(.horizontal, 12)
+                        .frame(minHeight: Theme.Size.minHitTarget)
+                }
+                .buttonStyle(.plain)
             }
-            if rows.count > 3 {
-                Text("+\(rows.count - 3) more")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(tone.tertiary)
+            .padding(.leading, 16)
+            .padding(.trailing, 8)
+            .frame(minHeight: Theme.Size.searchHeight)
+        }
+    }
+
+    // MARK: - Pending App Cards (3c: max 3 visible + "+N more")
+
+    private var pendingSection: some View {
+        let rows = model.studio?.pending ?? []
+        return Group {
+            if !rows.isEmpty {
+                VStack(spacing: Theme.Space.gridGap) {
+                    ForEach(rows.prefix(3)) { item in
+                        pendingCard(item)
+                    }
+                    if rows.count > 3 {
+                        Text("+\(rows.count - 3) more")
+                            .font(Theme.TypeScale.segment)
+                            .foregroundStyle(tone.tertiary)
+                            .frame(maxWidth: .infinity, alignment: .center)
+                    }
+                }
             }
         }
     }
 
     private func pendingCard(_ item: PendingApp) -> some View {
-        Tray(radius: 32) {
-            VStack(alignment: .leading, spacing: 14) {
-                HStack(alignment: .center, spacing: 12) {
-                    Text("?")
-                        .font(.system(size: 19, weight: .semibold))
-                        .foregroundStyle(Theme.violetLight)
-                        .frame(width: 40, height: 40)
-                        .background(Circle().fill(Theme.violet.opacity(0.18)))
-                        .overlay(Circle().stroke(Theme.violet.opacity(0.3), lineWidth: 1))
-                    VStack(alignment: .leading, spacing: 2) {
-                        Eyebrow(text: "New app on Studio PC", color: Theme.violetLight)
-                        Text("Is this a game?")
-                            .font(.system(size: 19, weight: .semibold))
-                            .foregroundStyle(Theme.ink)
-                        Text(item.exe)
-                            .font(.system(size: 12, design: .monospaced))
-                            .foregroundStyle(Theme.ink2)
-                            .lineLimit(1)
-                            .truncationMode(.middle)
+        Tray(role: .featured, tint: .violet) {
+            ReadingSurface(radius: Theme.Radius.featuredCard, kind: .prompt) {
+                VStack(alignment: .leading, spacing: Theme.Space.sectionGap) {
+                    HStack(alignment: .center, spacing: Theme.Space.bentoGap) {
+                        ZStack {
+                            Circle()
+                                .fill(Theme.violet.opacity(0.07))
+                                .frame(width: Theme.Size.pendingBadge + 10, height: Theme.Size.pendingBadge + 10)
+                            Circle()
+                                .fill(Theme.violet.opacity(0.18))
+                                .overlay(Circle().stroke(Theme.violet.opacity(0.32), lineWidth: Theme.Stroke.hairline))
+                                .shadow(color: Theme.violet.opacity(0.35), radius: 9)
+                                .frame(width: Theme.Size.pendingBadge, height: Theme.Size.pendingBadge)
+                            Text("?")
+                                .font(Theme.TypeScale.promptTitle)
+                                .foregroundStyle(Theme.violetPale)
+                        }
+
+                        VStack(alignment: .leading, spacing: 2) {
+                            Eyebrow(text: "New app on Studio PC", color: Theme.violetLight)
+                            Text("Is this a game?")
+                                .font(Theme.TypeScale.promptTitle)
+                                .foregroundStyle(Theme.ink)
+                            Text(item.exe)
+                                .font(Theme.TypeScale.mono)
+                                .foregroundStyle(Theme.ink2)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                        }
+                    }
+
+                    HStack(spacing: Theme.Space.chipGap) {
+                        Button {
+                            withAnimation(tone.motion) {
+                                model.classify(item, isGame: true, capture: "default")
+                            }
+                        } label: {
+                            Text("It’s a game")
+                                .font(Theme.TypeScale.controlSemibold)
+                                .foregroundStyle(Theme.ink)
+                                .frame(maxWidth: .infinity, minHeight: Theme.Size.compactPillHeight)
+                                .background(
+                                    RoundedRectangle(cornerRadius: Theme.Radius.actionPill, style: .continuous)
+                                        .fill(Theme.violet.opacity(Theme.Opacity.primaryFill))
+                                )
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: Theme.Radius.actionPill, style: .continuous)
+                                        .stroke(Theme.violet.opacity(0.50), lineWidth: Theme.Stroke.hairline)
+                                )
+                        }
+                        .buttonStyle(PressScaleStyle())
+
+                        Button {
+                            withAnimation(tone.motion) {
+                                model.classify(item, isGame: false, capture: "default")
+                            }
+                        } label: {
+                            Text("Not a game")
+                                .font(Theme.TypeScale.controlSemibold)
+                                .foregroundStyle(Theme.ink2)
+                                .frame(maxWidth: .infinity, minHeight: Theme.Size.compactPillHeight)
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: Theme.Radius.actionPill, style: .continuous)
+                                        .stroke(Theme.ink.opacity(0.14), lineWidth: Theme.Stroke.hairline)
+                                )
+                                .contentShape(RoundedRectangle(cornerRadius: Theme.Radius.actionPill, style: .continuous))
+                        }
+                        .buttonStyle(PressScaleStyle())
                     }
                 }
-                HStack(spacing: 8) {
-                    Button("It’s a game") { model.classify(item, isGame: true, capture: "default") }
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundStyle(Theme.ink)
-                        .frame(maxWidth: .infinity, minHeight: 46)
-                        .background(Capsule().fill(Theme.violet.opacity(0.20)))
-                        .overlay(Capsule().stroke(Theme.violet.opacity(0.5), lineWidth: 1))
-                    Button("Not a game") { model.classify(item, isGame: false, capture: "default") }
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundStyle(Theme.ink2)
-                        .frame(maxWidth: .infinity, minHeight: 46)
-                        .overlay(Capsule().stroke(Theme.ink.opacity(0.14), lineWidth: 1))
-                }
-                .buttonStyle(PressScaleStyle())
+                .padding(16)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .padding(16)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(
-                LinearGradient(colors: [Theme.violet.opacity(0.22), Color(red: 16 / 255, green: 13 / 255, blue: 28 / 255).opacity(0.6)], startPoint: .topLeading, endPoint: .bottom)
-            )
         }
     }
 
-    private var games: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Text("Games · capture")
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(Theme.ink)
+    // MARK: - Games · Capture Group (3c: sorted by lastPlayed, 4-segment control)
+
+    private var sortedGames: [Game] {
+        return (model.studio?.games ?? []).sorted { left, right in
+            let l = left.lastPlayed ?? .distantPast
+            let r = right.lastPlayed ?? .distantPast
+            if l != r { return l > r }
+            return left.name < right.name
+        }
+    }
+
+    private var gamesSection: some View {
+        let games = sortedGames
+        return VStack(alignment: .leading, spacing: Theme.Space.chipGap) {
+            HStack(alignment: .firstTextBaseline) {
+                Eyebrow(text: "Games · capture", color: Theme.ink2)
                 Spacer()
                 Text("Steam auto-classifies")
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(Theme.TypeScale.caption)
                     .foregroundStyle(tone.tertiary)
             }
-            VStack(spacing: 0) {
-                ForEach(model.studio?.games ?? []) { game in
-                    VStack(alignment: .leading, spacing: 8) {
-                        HStack {
-                            Text(game.name).font(.system(size: 16, weight: .semibold)).foregroundStyle(Theme.ink)
-                            Spacer()
-                            Text(game.sourceLabel)
-                                .font(.system(size: 13))
-                                .foregroundStyle(game.source == "prompt" ? Theme.violetLight : tone.tertiary)
+            .padding(.horizontal, Theme.Space.headerInset)
+            .padding(.top, 2)
+
+            ReadingSurface(radius: Theme.Radius.group) {
+                if games.isEmpty {
+                    Text("No games classified yet.")
+                        .font(Theme.TypeScale.rowValue)
+                        .foregroundStyle(tone.tertiary)
+                        .padding(16)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                } else {
+                    VStack(spacing: 0) {
+                        ForEach(Array(games.enumerated()), id: \.element.id) { idx, game in
+                            if idx > 0 {
+                                GroupDivider()
+                            }
+                            GameCaptureRow(game: game)
                         }
-                        NebulaSegments(
-                            options: [("default", "Default"), ("record", "Record"), ("buffer", "Buffer"), ("both", "Both")],
-                            selection: game.capture
-                        ) { model.setCapture(game, $0) }
                     }
-                    .padding(.vertical, 10)
-                    .swipeActions {
-                        Button("Not a game") { model.reclassify(exe: game.name, isGame: false) }
-                            .tint(Theme.coral)
-                    }
-                    Divider().overlay(Theme.ink.opacity(tone.hairline))
+                    .padding(.horizontal, 14)
                 }
             }
         }
     }
 
-    private var nonGames: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Not games · never recorded")
-                .font(.system(size: 15, weight: .semibold))
-                .foregroundStyle(Theme.ink)
-            if (model.studio?.nonGames ?? []).isEmpty {
+    // MARK: - Not Games · Never Recorded (3c: Wrapping Flow Chips)
+
+    private var nonGamesSection: some View {
+        let nonGames = model.studio?.nonGames ?? []
+        return VStack(alignment: .leading, spacing: Theme.Space.chipGap) {
+            Eyebrow(text: "Not games · never recorded", color: Theme.ink2)
+                .padding(.horizontal, Theme.Space.headerInset)
+                .padding(.top, 2)
+
+            if nonGames.isEmpty {
                 Text("Nothing is filed here.")
-                    .font(.system(size: 14))
+                    .font(Theme.TypeScale.rowValue)
                     .foregroundStyle(tone.tertiary)
+                    .padding(.horizontal, Theme.Space.headerInset)
             } else {
-                FlowChips(items: model.studio?.nonGames ?? []) { item in
-                    model.reclassify(exe: item.exe, isGame: true)
+                FlowLayout(spacing: Theme.Space.tagGap, lineSpacing: Theme.Space.tagGap) {
+                    ForEach(nonGames) { item in
+                        Text(item.displayName)
+                            .font(Theme.TypeScale.subtitle)
+                            .foregroundStyle(Theme.ink2)
+                            .padding(.horizontal, 12)
+                            .frame(height: Theme.Size.tagChipHeight)
+                            .background(Capsule().fill(Theme.ink.opacity(0.06)))
+                            .overlay(Capsule().stroke(Theme.ink.opacity(0.08), lineWidth: Theme.Stroke.hairline))
+                            .padding(.vertical, 4)
+                            .contentShape(Rectangle())
+                            .contextMenu {
+                                Button("Mark as game") {
+                                    model.reclassify(exe: item.exe, isGame: true)
+                                }
+                            }
+                    }
                 }
+                .padding(.horizontal, 4)
             }
         }
+    }
+
+    // MARK: - Add a Game Sheet
+
+    private var addGameSheet: some View {
+        VStack(alignment: .leading, spacing: Theme.Space.sectionGap) {
+            HStack {
+                Text("Add a game")
+                    .font(Theme.TypeScale.cardTitleLarge)
+                    .foregroundStyle(Theme.ink)
+                Spacer()
+                Button {
+                    model.addGame = false
+                } label: {
+                    Text("Cancel")
+                        .font(Theme.TypeScale.controlSemibold)
+                        .foregroundStyle(Theme.violetLight)
+                        .frame(minWidth: Theme.Size.minHitTarget, minHeight: Theme.Size.minHitTarget)
+                }
+                .buttonStyle(.plain)
+            }
+
+            Text("Type the executable name from Studio PC to classify it permanently as a game.")
+                .font(Theme.TypeScale.body)
+                .foregroundStyle(Theme.ink2)
+
+            Tray(role: .tile) {
+                ReadingSurface(radius: Theme.Radius.tileCard) {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Eyebrow(text: "Executable")
+                        TextField("game.exe", text: $exe)
+                            .font(Theme.TypeScale.monoFolder)
+                            .foregroundStyle(Theme.ink)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                            .frame(minHeight: 36)
+                    }
+                    .padding(16)
+                }
+            }
+
+            PrimaryPill(title: "Add as a game", system: "plus") {
+                let trimmed = exe.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !trimmed.isEmpty else { return }
+                model.reclassify(exe: trimmed, isGame: true)
+                exe = ""
+                model.addGame = false
+            }
+
+            Spacer()
+        }
+        .padding(Theme.Space.sheetMargin)
+        .background(Theme.ground.ignoresSafeArea())
     }
 }
 
-private struct FlowChips: View {
-    var items: [NonGame]
-    var mark: (NonGame) -> Void
+private struct GameCaptureRow: View {
+    var game: Game
+    @EnvironmentObject private var model: AppModel
+    @Environment(\.tone) private var tone
+    @State private var swipeOffset: CGFloat = 0
 
     var body: some View {
-        LazyVGrid(columns: [GridItem(.adaptive(minimum: 110), spacing: 8)], alignment: .leading, spacing: 8) {
-            ForEach(items) { item in
-                Text(item.displayName)
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(Theme.ink)
-                    .padding(.horizontal, 12)
-                    .frame(minHeight: 36)
-                    .background(Capsule().fill(Theme.card))
-                    .contextMenu {
-                        Button("Mark as game") { mark(item) }
+        ZStack(alignment: .trailing) {
+            if swipeOffset < -10 {
+                Button {
+                    withAnimation(tone.motion) {
+                        swipeOffset = 0
+                        model.reclassify(exe: game.name, isGame: false)
                     }
+                } label: {
+                    Text("Not a game")
+                        .font(Theme.TypeScale.captionSemibold)
+                        .foregroundStyle(Theme.coralText)
+                        .padding(.horizontal, 12)
+                        .frame(height: 36)
+                        .background(Capsule().fill(Theme.coral.opacity(0.18)))
+                        .overlay(Capsule().stroke(Theme.coral.opacity(0.45), lineWidth: Theme.Stroke.hairline))
+                }
+                .buttonStyle(.plain)
+            }
+
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(alignment: .firstTextBaseline, spacing: 10) {
+                    Text(game.name)
+                        .font(Theme.TypeScale.rowTitle)
+                        .foregroundStyle(Theme.ink)
+                        .lineLimit(1)
+                    Spacer()
+                    Text(game.sourceLabel)
+                        .font(Theme.TypeScale.caption)
+                        .foregroundStyle(game.source == "prompt" ? Theme.violetLight : tone.tertiary)
+                }
+
+                NebulaSegments(
+                    options: [
+                        ("default", "Default"),
+                        ("record", "Record"),
+                        ("buffer", "Buffer"),
+                        ("both", "Both"),
+                    ],
+                    selection: game.capture,
+                    compact: true
+                ) { next in
+                    model.setCapture(game, next)
+                }
+            }
+            .padding(.vertical, 12)
+            .offset(x: swipeOffset)
+            .gesture(
+                DragGesture(minimumDistance: 24).onChanged { value in
+                    if value.translation.width < 0 {
+                        swipeOffset = max(-108, value.translation.width)
+                    } else if swipeOffset < 0 {
+                        swipeOffset = min(0, -108 + value.translation.width)
+                    }
+                }.onEnded { value in
+                    withAnimation(tone.motion) {
+                        swipeOffset = value.translation.width < -52 ? -104 : 0
+                    }
+                }
+            )
+            .contextMenu {
+                Button("Not a game", role: .destructive) {
+                    model.reclassify(exe: game.name, isGame: false)
+                }
             }
         }
     }
 }
+
+// MARK: - Screen 3d: "Is this a game?" Sheet (§9.6)
 
 struct ClassifySheet: View {
     var item: PendingApp
     @EnvironmentObject private var model: AppModel
+    @Environment(\.tone) private var tone
     @State private var capture: String = "record"
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                Capsule().fill(Theme.ink3).frame(width: 36, height: 5).frame(maxWidth: .infinity)
-                Text("?")
-                    .font(.system(size: 28, weight: .bold))
-                    .foregroundStyle(Theme.violetLight)
-                    .frame(width: 56, height: 56)
-                    .background(Circle().fill(Theme.violet.opacity(0.2)))
-                if let seen = item.seenAt {
-                    TimelineView(.periodic(from: .now, by: 1)) { context in
-                        Eyebrow(text: "New app on Studio PC · \(StudioFormat.relative(seen, now: context.date))", color: Theme.violetLight)
+            ReadingSurface(radius: Theme.Radius.sheetCard, kind: .sheet) {
+                VStack(alignment: .leading, spacing: 18) {
+                    Capsule()
+                        .fill(Theme.ink.opacity(0.28))
+                        .frame(width: 38, height: 5)
+                        .frame(maxWidth: .infinity)
+                        .padding(.top, 2)
+
+                    VStack(alignment: .leading, spacing: Theme.Space.bentoGap) {
+                        ZStack {
+                            Circle()
+                                .fill(Theme.violet.opacity(0.06))
+                                .frame(width: Theme.Size.sheetBadge + 16, height: Theme.Size.sheetBadge + 16)
+                            Circle()
+                                .fill(Theme.violet.opacity(0.18))
+                                .overlay(Circle().stroke(Theme.violet.opacity(0.32), lineWidth: Theme.Stroke.hairline))
+                                .shadow(color: Theme.violet.opacity(0.40), radius: 15)
+                                .frame(width: Theme.Size.sheetBadge, height: Theme.Size.sheetBadge)
+                            Text("?")
+                                .font(Theme.TypeScale.sheetBadgeGlyph)
+                                .foregroundStyle(Theme.violetPale)
+                        }
+
+                        VStack(alignment: .leading, spacing: 4) {
+                            if let seen = item.seenAt {
+                                TimelineView(.periodic(from: .now, by: 1.0)) { context in
+                                    Eyebrow(
+                                        text: "New app on Studio PC · \(StudioFormat.relative(seen, now: context.date))",
+                                        color: Theme.violetLight
+                                    )
+                                }
+                            } else {
+                                Eyebrow(text: "New app on Studio PC", color: Theme.violetLight)
+                            }
+                            Text("Is this a game?")
+                                .font(Theme.TypeScale.sheetTitle)
+                                .foregroundStyle(Theme.ink)
+                        }
+                    }
+
+                    ReadingSurface(radius: Theme.Radius.settingsGroup) {
+                        VStack(spacing: 0) {
+                            sheetFactRow("Process") {
+                                Text(item.exe)
+                                    .font(Theme.TypeScale.mono)
+                                    .foregroundStyle(Theme.ink)
+                                    .lineLimit(1)
+                                    .truncationMode(.middle)
+                            }
+                            GroupDivider()
+                            sheetFactRow("Window") {
+                                Text(windowSummary)
+                                    .font(Theme.TypeScale.rowValue)
+                                    .foregroundStyle(Theme.ink)
+                            }
+                            GroupDivider()
+                            sheetFactRow("Steam") {
+                                Text(item.inSteam ? "In library" : "Not in library")
+                                    .font(Theme.TypeScale.rowValue)
+                                    .foregroundStyle(item.inSteam ? Theme.teal : Theme.amberDeep)
+                            }
+                        }
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 4)
+                    }
+
+                    VStack(alignment: .leading, spacing: Theme.Space.chipGap) {
+                        Eyebrow(text: "If it’s a game")
+                        NebulaSegments(
+                            options: [
+                                ("record", "Record"),
+                                ("buffer", "Buffer"),
+                                ("both", "Both"),
+                            ],
+                            selection: capture
+                        ) { next in
+                            capture = next
+                        }
+                    }
+
+                    VStack(spacing: Theme.Space.gridGap) {
+                        PrimaryPill(title: "It’s a game — \(verb)", system: "checkmark") {
+                            UINotificationFeedbackGenerator().notificationOccurred(.success)
+                            model.classify(item, isGame: true, capture: capture)
+                        }
+
+                        Button {
+                            UINotificationFeedbackGenerator().notificationOccurred(.success)
+                            model.classify(item, isGame: false, capture: "default")
+                        } label: {
+                            Text("Not a game")
+                                .font(Theme.TypeScale.rowTitle)
+                                .foregroundStyle(Theme.ink2)
+                                .frame(maxWidth: .infinity, minHeight: Theme.Size.ghostHeight)
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: Theme.Radius.ghostPill, style: .continuous)
+                                        .stroke(Theme.ink.opacity(0.14), lineWidth: Theme.Stroke.hairline)
+                                )
+                                .contentShape(RoundedRectangle(cornerRadius: Theme.Radius.ghostPill, style: .continuous))
+                        }
+                        .buttonStyle(PressScaleStyle())
+
+                        Text("Asked once, remembered forever. Change any call in Games.")
+                            .font(Theme.TypeScale.caption)
+                            .foregroundStyle(tone.tertiary)
+                            .multilineTextAlignment(.center)
+                            .frame(maxWidth: .infinity)
+                            .padding(.top, 2)
                     }
                 }
-                Text("Is this a game?")
-                    .font(.system(size: 30, weight: .bold))
-                    .foregroundStyle(Theme.ink)
-                ReadingSurface {
-                    VStack(spacing: 0) {
-                        row("Process", item.exe)
-                        row("Window", item.fullscreen ? "Fullscreen · \(item.width) × \(item.height)" : "Windowed")
-                        row("Steam", item.inSteam ? "In library" : "Not in library")
-                    }
-                    .padding(.horizontal, 14)
-                }
-                Eyebrow(text: "If it’s a game")
-                NebulaSegments(
-                    options: [("record", "Record"), ("buffer", "Buffer"), ("both", "Both")],
-                    selection: capture
-                ) { capture = $0 }
-                PrimaryPill(title: "It’s a game — \(verb)", system: "checkmark") {
-                    model.classify(item, isGame: true, capture: capture)
-                    model.classifyID = nil
-                }
-                Button("Not a game") {
-                    model.classify(item, isGame: false, capture: "default")
-                    model.classifyID = nil
-                }
-                .font(.system(size: 16, weight: .semibold))
-                .foregroundStyle(Theme.ink2)
-                .frame(maxWidth: .infinity, minHeight: 44)
-                Text("Asked once, remembered forever. Change any call in Games.")
-                    .font(.system(size: 13))
-                    .foregroundStyle(Theme.ink3)
+                .padding(.horizontal, 22)
+                .padding(.top, 10)
+                .padding(.bottom, 26)
             }
-            .padding(20)
+            .padding(8)
         }
-        .background(Theme.ground)
-        .onAppear { capture = model.studio?.settings.launchCapture ?? "record" }
+        .background(Theme.modalBackdrop.opacity(0.65).ignoresSafeArea())
+        .onAppear {
+            capture = model.studio?.settings.launchCapture ?? "record"
+        }
+        .onChange(of: item.id) { _, _ in
+            capture = model.studio?.settings.launchCapture ?? "record"
+        }
+    }
+
+    private var windowSummary: String {
+        let mode = item.fullscreen ? "Fullscreen" : "Windowed"
+        if item.width > 0 && item.height > 0 {
+            return "\(mode) · \(item.width) × \(item.height)"
+        }
+        return mode
     }
 
     private var verb: String {
         switch capture {
-        case "buffer": "buffer it"
-        case "both": "record + buffer"
-        default: "record it"
+        case "buffer":
+            return "buffer it"
+        case "both":
+            return "record + buffer"
+        default:
+            return "record it"
         }
     }
 
-    private func row(_ title: String, _ value: String) -> some View {
-        HStack {
-            Text(title).foregroundStyle(Theme.ink)
-            Spacer()
-            Text(value)
-                .font(.system(size: 13, design: title == "Process" ? .monospaced : .default))
-                .foregroundStyle(title == "Steam" && !item.inSteam ? Theme.amber : Theme.ink2)
-                .lineLimit(1)
-                .truncationMode(.middle)
+    private func sheetFactRow<ValueContent: View>(_ label: String, @ViewBuilder value: () -> ValueContent) -> some View {
+        HStack(spacing: 10) {
+            Text(label)
+                .font(Theme.TypeScale.rowValue)
+                .foregroundStyle(Theme.ink2)
+            Spacer(minLength: 8)
+            value()
         }
-        .frame(minHeight: 48)
+        .frame(minHeight: Theme.Size.sheetFactRowHeight)
     }
 }

@@ -3,146 +3,200 @@ import UIKit
 
 struct RemoteView: View {
     @EnvironmentObject private var model: AppModel
+    @Environment(\.dynamicTypeSize) private var typeSize
     @Environment(\.tone) private var tone
     @Environment(\.openURL) private var openURL
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            host
-            HStack(alignment: .top, spacing: 12) {
-                infoTile("Stream", "1080p · 60", "Matches this screen")
-                infoTile("Controller", "On screen", "Or pair a pad")
-            }
-            peers
+        VStack(alignment: .leading, spacing: Theme.Space.bentoGap) {
+            hostTray
+            tilesRow
+            peersSection
         }
     }
 
-    private var host: some View {
-        Tray {
-            VStack(alignment: .leading, spacing: 14) {
-                HStack(spacing: 14) {
-                    NightCity()
-                        .frame(width: 76, height: 76)
-                        .clipShape(Circle())
-                        .overlay(Circle().stroke(Theme.violet.opacity(0.7), lineWidth: 2))
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Studio PC")
-                            .font(.system(size: 20, weight: .semibold))
-                            .foregroundStyle(Theme.ink)
-                        Text(status)
-                            .font(.system(size: 14, weight: .semibold))
-                            .foregroundStyle(model.link == .online ? Theme.teal : tone.tertiary)
-                        Text(model.streaming ? "Streaming to iPhone" : "Moonlight not running")
-                            .font(.system(size: 13))
-                            .foregroundStyle(tone.tertiary)
+    // MARK: - Host Tray (3e: 34/28 Hero Tray + PrimaryPill)
+
+    private var hostTray: some View {
+        let online = model.link == .online
+        return Tray(role: .hero) {
+            ReadingSurface(radius: Theme.Radius.heroCard, kind: .hero) {
+                VStack(alignment: .leading, spacing: 18) {
+                    HStack(spacing: 16) {
+                        HostEmblem()
+                            .frame(width: Theme.Size.hostAvatar, height: Theme.Size.hostAvatar)
+                            .clipShape(Circle())
+                            .overlay(
+                                Circle()
+                                    .stroke(Theme.ink.opacity(0.16), lineWidth: Theme.Stroke.hairline)
+                            )
+                            .shadow(color: Theme.violet.opacity(0.25), radius: 15)
+
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Studio PC")
+                                .font(Theme.TypeScale.cardTitleLarge)
+                                .foregroundStyle(Theme.ink)
+
+                            HStack(spacing: 6) {
+                                Circle()
+                                    .fill(online ? Theme.teal : tone.tertiary)
+                                    .frame(width: 7, height: 7)
+                                Text(hostStatusLabel)
+                                    .font(Theme.TypeScale.subtitle)
+                                    .foregroundStyle(online ? Theme.teal : tone.tertiary)
+                            }
+
+                            Text(model.streaming ? "Streaming to iPhone" : "Moonlight not running")
+                                .font(Theme.TypeScale.subtitle)
+                                .foregroundStyle(Theme.ink2)
+                        }
                     }
-                }
-                if moonlightOnPhone {
-                    PrimaryPill(title: "Stream to this phone", system: "play.fill") {
-                        model.stream {
-                            if let url = URL(string: "moonlight://") {
+
+                    if moonlightInstalledOnPhone {
+                        PrimaryPill(title: "Stream to this phone", system: "play.fill") {
+                            model.stream {
+                                if let url = URL(string: "moonlight://") {
+                                    openURL(url)
+                                }
+                            }
+                        }
+                        .disabled(!online)
+                        .opacity(online ? 1.0 : Theme.Opacity.disabled)
+                    } else {
+                        PrimaryPill(title: "Get Moonlight", system: "arrow.down") {
+                            if let url = URL(string: "https://apps.apple.com/search?term=Moonlight%20Game%20Streaming") {
                                 openURL(url)
                             }
                         }
                     }
-                    .disabled(model.link != .online)
-                    .opacity(model.link == .online ? 1 : 0.45)
-                } else {
-                    PrimaryPill(title: "Get Moonlight", system: "arrow.down") {
-                        if let url = URL(string: "https://apps.apple.com/search?term=Moonlight%20Game%20Streaming") {
-                            openURL(url)
-                        }
-                    }
                 }
+                .padding(20)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .padding(16)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background {
-                if tone.reduceTransparency {
-                    Theme.card
-                } else {
-                    Rectangle().fill(.ultraThinMaterial)
+        }
+    }
+
+    // MARK: - Stream & Controller Bento Tiles (3e: 30/24 Tile Trays)
+
+    private var tilesRow: some View {
+        Group {
+            if typeSize >= .accessibility1 {
+                VStack(spacing: Theme.Space.bentoGap) {
+                    infoTile(eyebrow: "Stream", value: "1080p · 60", detail: "Matches this screen")
+                    infoTile(eyebrow: "Controller", value: "On screen", detail: "Or pair a pad")
+                }
+            } else {
+                HStack(alignment: .top, spacing: Theme.Space.bentoGap) {
+                    infoTile(eyebrow: "Stream", value: "1080p · 60", detail: "Matches this screen")
+                    infoTile(eyebrow: "Controller", value: "On screen", detail: "Or pair a pad")
                 }
             }
         }
     }
 
-    private var peers: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
+    private func infoTile(eyebrow: String, value: String, detail: String) -> some View {
+        Tray(role: .tile) {
+            ReadingSurface(radius: Theme.Radius.tileCard) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Eyebrow(text: eyebrow)
+                    Text(value)
+                        .font(Theme.TypeScale.cardTitle)
+                        .foregroundStyle(Theme.ink)
+                        .lineLimit(1)
+                    Text(detail)
+                        .font(Theme.TypeScale.caption)
+                        .foregroundStyle(tone.tertiary)
+                        .lineLimit(1)
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 14)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+    }
+
+    // MARK: - Tailscale Peers Group (3e: Labels Only, Zero IPs / Ping)
+
+    private var peersSection: some View {
+        let peers = model.studio?.peers ?? []
+        return VStack(alignment: .leading, spacing: Theme.Space.chipGap) {
+            HStack(alignment: .firstTextBaseline) {
                 Eyebrow(text: "Tailscale peers", color: Theme.ink2)
                 Spacer()
-                Text("\((model.studio?.peers ?? []).count) devices")
-                    .font(.system(size: 12))
+                Text(peers.isEmpty ? "—" : "\(peers.count) \(peers.count == 1 ? "device" : "devices")")
+                    .font(Theme.TypeScale.caption)
                     .foregroundStyle(tone.tertiary)
             }
-            VStack(spacing: 0) {
-                ForEach(model.studio?.peers ?? []) { peer in
-                    HStack(spacing: 12) {
-                        Image(systemName: "desktopcomputer")
-                            .font(.system(size: 16, weight: .light))
-                            .foregroundStyle(Theme.ink)
-                            .frame(width: 32)
-                        Text(peer.name).font(.system(size: 16)).foregroundStyle(Theme.ink)
-                        Spacer()
-                        Text(peer.online ? "Online" : "Offline")
-                            .font(.system(size: 14))
-                            .foregroundStyle(peer.online ? Theme.teal : tone.tertiary)
-                        Circle().fill(peer.online ? Theme.teal : Theme.ink3).frame(width: 8, height: 8)
+            .padding(.horizontal, Theme.Space.headerInset)
+            .padding(.top, 4)
+
+            ReadingSurface(radius: Theme.Radius.group) {
+                if peers.isEmpty {
+                    Text("No Tailscale peers reported.")
+                        .font(Theme.TypeScale.rowValue)
+                        .foregroundStyle(tone.tertiary)
+                        .padding(16)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                } else {
+                    VStack(spacing: 0) {
+                        ForEach(Array(peers.enumerated()), id: \.element.id) { index, peer in
+                            if index > 0 {
+                                GroupDivider()
+                            }
+                            HStack(spacing: Theme.Space.bentoGap) {
+                                ZStack {
+                                    RoundedRectangle(cornerRadius: Theme.Radius.peerIcon, style: .continuous)
+                                        .fill(Theme.ink.opacity(0.06))
+                                    Image(systemName: peerIcon(for: peer))
+                                        .font(Theme.TypeScale.icon(16, weight: .light))
+                                        .foregroundStyle(Theme.ink2)
+                                }
+                                .frame(width: Theme.Size.peerIconBox, height: Theme.Size.peerIconBox)
+
+                                VStack(alignment: .leading, spacing: 1) {
+                                    Text(peer.name)
+                                        .font(Theme.TypeScale.rowLabel)
+                                        .foregroundStyle(Theme.ink)
+                                        .lineLimit(1)
+                                    Text(peer.online ? "Online" : "Offline")
+                                        .font(Theme.TypeScale.caption)
+                                        .foregroundStyle(peer.online ? Theme.teal : tone.tertiary)
+                                }
+
+                                Spacer()
+
+                                Circle()
+                                    .fill(peer.online ? Theme.teal : Theme.inkMuted)
+                                    .frame(width: 8, height: 8)
+                            }
+                            .frame(minHeight: Theme.Size.peerRowHeight)
+                        }
                     }
-                    .frame(minHeight: 58)
-                    .padding(.horizontal, 12)
+                    .padding(.horizontal, 16)
                 }
             }
-            .background(RoundedRectangle(cornerRadius: 18, style: .continuous).fill(Theme.card.opacity(0.55)))
-            if (model.studio?.peers ?? []).isEmpty {
-                Text("No peers reported.")
-                    .foregroundStyle(tone.tertiary)
-            }
         }
     }
 
-    private func infoTile(_ title: String, _ value: String, _ detail: String) -> some View {
-        Tray(radius: 30) {
-            VStack(alignment: .leading, spacing: 6) {
-                Eyebrow(text: title, color: tone.tertiary)
-                Text(value).font(.system(size: 18, weight: .semibold)).foregroundStyle(Theme.ink)
-                Text(detail).font(.system(size: 13)).foregroundStyle(tone.tertiary)
-            }
-            .padding(14)
-            .frame(maxWidth: .infinity, minHeight: 110, alignment: .leading)
-            .background(Theme.card.opacity(0.55))
+    private func peerIcon(for peer: Peer) -> String {
+        let lower = peer.name.lowercased()
+        if lower.contains("laptop") || lower.contains("book") {
+            return "laptopcomputer"
         }
+        if lower.contains("phone") || lower.contains("iphone") {
+            return "iphone"
+        }
+        return "desktopcomputer"
     }
 
-    private var status: String {
+    private var hostStatusLabel: String {
         if model.link != .online { return "Offline" }
         if model.studio?.settings.tailscale == true { return "Online on Tailscale" }
         return "Online"
     }
 
-    private var moonlightOnPhone: Bool {
+    private var moonlightInstalledOnPhone: Bool {
         guard let url = URL(string: "moonlight://") else { return false }
         return UIApplication.shared.canOpenURL(url)
-    }
-}
-
-private struct NightCity: View {
-    var body: some View {
-        Canvas { context, size in
-            context.fill(Path(CGRect(origin: .zero, size: size)), with: .linearGradient(
-                Gradient(colors: [Color(red: 0.08, green: 0.07, blue: 0.18), Color(red: 0.02, green: 0.02, blue: 0.05)]),
-                startPoint: .zero,
-                endPoint: CGPoint(x: size.width, y: size.height)
-            ))
-            var rng = SplitMix(seed: 42)
-            for _ in 0 ..< 18 {
-                let x = rng.unit() * size.width
-                let h = 10 + rng.unit() * size.height * 0.45
-                let rect = CGRect(x: x, y: size.height - h, width: 6, height: h)
-                context.fill(Path(rect), with: .color(Theme.violet.opacity(0.8)))
-            }
-        }
-        .accessibilityHidden(true)
     }
 }

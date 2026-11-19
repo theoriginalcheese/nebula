@@ -7,533 +7,1087 @@ struct NowView: View {
 
     var body: some View {
         let session = model.studio?.session
-        let playing = session?.playing == true
-        VStack(alignment: .leading, spacing: 14) {
-            if playing, let session {
-                hero(session)
-                if model.prefs.nowLayout == .clips {
-                    clipsLedTiles(session)
-                } else {
-                    tileRow(session, playing: true)
+        let isPlaying = session?.playing == true
+        let layout = model.prefs.nowLayout
+
+        VStack(alignment: .leading, spacing: Theme.Space.bentoGap) {
+            if isPlaying, let session = session {
+                playingHero(session, layout: layout)
+                tileContainer {
+                    playingTiles(session, layout: layout)
                 }
-                if model.prefs.nowLayout == .game {
-                    highlights(session.highlights, duration: model.elapsed(at: Date()), live: true)
+                if layout == .game {
+                    TimelineView(.periodic(from: .now, by: 1.0)) { context in
+                        highlightsStrip(
+                            marks: session.highlights,
+                            duration: max(1.0, model.elapsed(at: context.date)),
+                            playhead: model.elapsed(at: context.date),
+                            live: true
+                        )
+                    }
                 }
+                recentSection(layout: layout)
             } else if let last = session?.lastSession {
-                idleHero(last)
-                tileRow(session, playing: false)
-                if model.prefs.nowLayout == .game {
-                    highlights([], duration: last.duration, live: false)
+                idleHero(last, layout: layout)
+                tileContainer {
+                    idleTiles(session: session, last: last, layout: layout)
                 }
+                if layout == .game {
+                    highlightsStrip(
+                        marks: session?.highlights ?? [],
+                        duration: max(1.0, last.duration),
+                        playhead: last.duration,
+                        live: false
+                    )
+                }
+                recentSection(layout: layout)
             } else {
-                ready
-            }
-            if session?.lastSession != nil || playing {
-                recent
+                readyHero
             }
         }
     }
 
-    private var ready: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("Ready when you are")
-                .font(.system(size: 22, weight: .semibold))
-                .foregroundStyle(Theme.ink)
-            Text("Nebula starts recording when a game launches on Studio PC.")
-                .font(.system(size: 15))
-                .foregroundStyle(Theme.ink2)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.vertical, 12)
-    }
+    // MARK: - First-Run / Empty Session (§9.2)
 
-    private func hero(_ session: Session) -> some View {
-        let compact = model.prefs.nowLayout == .clips
-        return Tray(radius: compact ? 28 : 34) {
-            VStack(alignment: .leading, spacing: compact ? 8 : 14) {
-                HStack {
-                    chip(session)
-                    Spacer()
-                    if !session.output.line.isEmpty {
-                        Text(session.output.line)
-                            .font(.system(size: 13))
-                            .foregroundStyle(tone.tertiary)
-                    }
-                }
-                if compact {
-                    HStack {
-                        Text(session.game?.name ?? "Studio PC")
-                            .font(.system(size: 17, weight: .semibold))
-                            .foregroundStyle(Theme.ink)
-                        Spacer()
-                        TimelineView(.periodic(from: .now, by: 1)) { context in
-                            RollingClock(seconds: model.elapsed(at: context.date), paused: session.state == "paused", size: 38)
-                        }
-                        buttons(session)
-                    }
-                } else {
-                    HStack(alignment: .bottom) {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(session.game?.name ?? "Studio PC")
-                                .font(.system(size: 17, weight: .semibold))
-                                .foregroundStyle(Theme.ink)
-                            if session.state == "bufferOnly" {
-                                Text("Replay buffer · \(model.studio?.settings.replayLabel ?? "30 s")")
-                                    .font(.system(size: 22, weight: .medium))
-                                    .foregroundStyle(Theme.violetLight)
-                            } else {
-                                TimelineView(.periodic(from: .now, by: 1)) { context in
-                                    RollingClock(seconds: model.elapsed(at: context.date), paused: session.state == "paused")
-                                }
-                            }
-                        }
-                        Spacer()
-                        buttons(session)
-                    }
-                }
-            }
-            .padding(16)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background {
-                if tone.reduceTransparency {
-                    Theme.card
-                } else {
-                    Rectangle().fill(.ultraThinMaterial)
-                    Color(red: 16 / 255, green: 13 / 255, blue: 28 / 255).opacity(0.50)
-                }
-            }
-        }
-    }
-
-    private func idleHero(_ last: LastSession) -> some View {
-        Tray {
-            VStack(alignment: .leading, spacing: 12) {
-                HStack {
-                    chipDot(Theme.ink3, "IDLE")
-                    Spacer()
-                    Text(model.link == .online ? "Studio PC online" : "Studio PC is offline")
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(model.link == .online ? Theme.teal : tone.tertiary)
-                }
-                if model.prefs.nowLayout == .game {
-                    Eyebrow(text: "Last played · \(StudioFormat.relative(last.endedAt, now: Date()))")
-                    Text(last.game.name)
-                        .font(.system(size: 30, weight: .bold))
+    private var readyHero: some View {
+        Tray(role: .hero) {
+            ReadingSurface(radius: Theme.Radius.heroCard, kind: .hero) {
+                VStack(alignment: .leading, spacing: 8) {
+                    StatusChip(style: .idle)
+                    Text("Ready when you are")
+                        .font(Theme.TypeScale.cardTitleLarge)
                         .foregroundStyle(Theme.ink)
-                    if let line = model.studio?.session.achievement {
-                        Text(line).font(.system(size: 15)).foregroundStyle(Theme.ink2)
-                    }
-                } else {
-                    Eyebrow(text: "Last session · \(StudioFormat.time(last.endedAt))")
-                    Text("\(last.game.name) · \(StudioFormat.clock(last.duration))")
-                        .font(.system(size: 20, weight: .semibold))
-                        .foregroundStyle(Theme.ink)
-                    Text("\(last.highlightCount) highlights · \(StudioFormat.bytes(last.bytes)) · \(offloadLine(last.offload))")
-                        .font(.system(size: 14))
-                        .foregroundStyle(tone.tertiary)
+                    Text("Nebula starts recording when a game launches on Studio PC.")
+                        .font(Theme.TypeScale.body)
+                        .foregroundStyle(Theme.ink2)
                 }
-                HStack(spacing: 10) {
-                    Button {
-                        model.session("session.start")
-                    } label: {
-                        HStack {
-                            Text("Start recording")
-                                .font(.system(size: 16, weight: .semibold))
-                            Spacer()
-                            Circle().fill(Theme.coral).frame(width: 38, height: 38)
-                                .overlay(Circle().fill(Theme.ink).frame(width: 10, height: 10))
-                        }
-                        .foregroundStyle(Theme.ink)
-                        .padding(.leading, 16)
-                        .padding(.trailing, 6)
-                        .frame(height: 46)
-                        .background(RoundedRectangle(cornerRadius: 23, style: .continuous).fill(Theme.coral.opacity(0.18)))
-                    }
-                    .buttonStyle(PressScaleStyle())
-                    .disabled(!model.controlsEnabled)
-                    .opacity(model.controlsEnabled ? 1 : 0.45)
-                    if model.prefs.nowLayout == .game {
-                        Button {} label: {
-                            Text("Launch on PC")
-                                .font(.system(size: 15, weight: .semibold))
-                                .frame(minHeight: 46)
-                        }
-                        .disabled(true)
-                        .opacity(0.45)
-                        .accessibilityHint("Coming soon")
-                    }
-                }
-            }
-            .padding(16)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background {
-                if tone.reduceTransparency {
-                    Theme.card
-                } else {
-                    Rectangle().fill(.ultraThinMaterial)
-                    Color(red: 16 / 255, green: 13 / 255, blue: 28 / 255).opacity(0.50)
-                }
+                .padding(18)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
     }
 
-    @ViewBuilder private func buttons(_ session: Session) -> some View {
-        let dim = model.controlsEnabled ? 1.0 : 0.45
-        HStack(spacing: 10) {
+    // MARK: - Playing Heroes (2f Bento, 2g Game-aware, 2h Clips-led)
+
+    private func playingHero(_ session: Session, layout: NowLayout) -> some View {
+        Tray(role: .hero) {
+            ReadingSurface(radius: Theme.Radius.heroCard, kind: .hero) {
+                ZStack(alignment: .trailing) {
+                    if layout == .game {
+                        heroCoverArt(gameID: session.game?.id)
+                    }
+                    Group {
+                        switch layout {
+                        case .bento:
+                            bentoPlayingBody(session)
+                        case .game:
+                            gamePlayingBody(session)
+                        case .clips:
+                            clipsPlayingBody(session)
+                        }
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+    }
+
+    private func bentoPlayingBody(_ session: Session) -> some View {
+        VStack(alignment: .leading, spacing: Theme.Space.bentoGap) {
+            HStack {
+                sessionStatusChip(session)
+                Spacer()
+                Text(outputLabel(session.output))
+                    .font(Theme.TypeScale.subtitle)
+                    .foregroundStyle(Theme.ink2)
+            }
+            HStack(alignment: .bottom, spacing: 10) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(session.game?.name ?? "Studio PC")
+                        .font(Theme.TypeScale.cardTitle)
+                        .foregroundStyle(Theme.ink)
+                        .lineLimit(1)
+                    if session.state == "bufferOnly" {
+                        Text("Replay buffer · \(model.studio?.settings.replayLabel ?? "30 s")")
+                            .font(Theme.TypeScale.bufferLine)
+                            .foregroundStyle(Theme.violetLight)
+                    } else {
+                        TimelineView(.periodic(from: .now, by: 1.0)) { context in
+                            RollingClock(
+                                seconds: model.elapsed(at: context.date),
+                                paused: session.state == "paused",
+                                size: Theme.Size.clockBento
+                            )
+                        }
+                    }
+                }
+                Spacer(minLength: 4)
+                transportControls(session)
+            }
+        }
+        .padding(18)
+    }
+
+    private func gamePlayingBody(_ session: Session) -> some View {
+        VStack(alignment: .leading, spacing: Theme.Space.bentoGap) {
+            HStack(spacing: 10) {
+                sessionStatusChip(session)
+                Text(gameAndSceneLabel(session))
+                    .font(Theme.TypeScale.subtitle)
+                    .foregroundStyle(Theme.inkSoft)
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+            }
+            HStack(alignment: .bottom, spacing: 10) {
+                if session.state == "bufferOnly" {
+                    Text("Replay buffer · \(model.studio?.settings.replayLabel ?? "30 s")")
+                        .font(Theme.TypeScale.bufferLine)
+                        .foregroundStyle(Theme.violetLight)
+                } else {
+                    TimelineView(.periodic(from: .now, by: 1.0)) { context in
+                        RollingClock(
+                            seconds: model.elapsed(at: context.date),
+                            paused: session.state == "paused",
+                            size: Theme.Size.clockGame
+                        )
+                    }
+                }
+                Spacer(minLength: 4)
+                transportControls(session)
+            }
+        }
+        .padding(18)
+    }
+
+    private func clipsPlayingBody(_ session: Session) -> some View {
+        HStack(alignment: .center, spacing: Theme.Space.bentoGap) {
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 7) {
+                    Circle()
+                        .fill(session.state == "paused" ? Theme.ink2 : Theme.gold)
+                        .frame(width: 6, height: 6)
+                    Eyebrow(
+                        text: "\(session.state == "paused" ? "PAUSED" : (session.state == "bufferOnly" ? "BUFFER" : "REC")) · \(session.game?.name ?? "Studio PC")",
+                        color: session.state == "paused" ? Theme.ink2 : Theme.gold
+                    )
+                }
+                if session.state == "bufferOnly" {
+                    Text("Replay buffer · \(model.studio?.settings.replayLabel ?? "30 s")")
+                        .font(Theme.TypeScale.cardTitle)
+                        .foregroundStyle(Theme.violetLight)
+                } else {
+                    TimelineView(.periodic(from: .now, by: 1.0)) { context in
+                        RollingClock(
+                            seconds: model.elapsed(at: context.date),
+                            paused: session.state == "paused",
+                            size: Theme.Size.clockClips
+                        )
+                    }
+                }
+            }
+            Spacer(minLength: 4)
+            transportControls(session)
+        }
+        .padding(.vertical, 16)
+        .padding(.leading, 18)
+        .padding(.trailing, 14)
+    }
+
+    @ViewBuilder private func heroCoverArt(gameID: String?) -> some View {
+        let cover = gameID.flatMap { id in model.studio?.games.first(where: { $0.id == id })?.coverURL }
+        ClipStill(reference: cover, seed: stillSeed(gameID ?? "game"))
+            .frame(width: 210)
+            .opacity(0.50)
+            .mask(
+                LinearGradient(
+                    colors: [Theme.clear, Theme.ink],
+                    startPoint: .leading,
+                    endPoint: UnitPoint(x: 0.70, y: 0.50)
+                )
+            )
+            .allowsHitTesting(false)
+    }
+
+    // MARK: - Transport Controls (48pt Glass Pause Bars + Only Solid Coral Stop Circle)
+
+    private func transportControls(_ session: Session) -> some View {
+        let enabled = model.controlsEnabled
+        return HStack(spacing: Theme.Space.chipGap) {
             if session.state == "bufferOnly" {
                 Button {
                     model.command("replay.save")
                 } label: {
                     Text("Save replay")
-                        .font(.system(size: 13, weight: .semibold))
+                        .font(Theme.TypeScale.segment)
                         .foregroundStyle(Theme.ink)
-                        .padding(.horizontal, 12)
-                        .frame(height: 48)
-                        .background(Capsule().stroke(Theme.violet.opacity(0.55), lineWidth: 1))
+                        .padding(.horizontal, 14)
+                        .frame(height: Theme.Size.transportButton)
+                        .background(Capsule().fill(Theme.violet.opacity(Theme.Opacity.primaryFill)))
+                        .overlay(Capsule().stroke(Theme.violet.opacity(Theme.Opacity.primaryRing), lineWidth: Theme.Stroke.hairline))
                 }
                 .buttonStyle(PressScaleStyle())
+                .accessibilityLabel("Save replay")
             } else {
                 Button {
                     model.session(session.state == "paused" ? "session.resume" : "session.pause")
                 } label: {
-                    GlassCircle(system: session.state == "paused" ? "play.fill" : "")
-                        .overlay {
-                            if session.state != "paused" {
-                                HStack(spacing: 3) {
-                                    RoundedRectangle(cornerRadius: 1.5, style: .continuous).frame(width: 3.4, height: 14)
-                                    RoundedRectangle(cornerRadius: 1.5, style: .continuous).frame(width: 3.4, height: 14)
-                                }
-                                .foregroundStyle(Theme.ink)
+                    GlassCircle(
+                        system: session.state == "paused" ? "play.fill" : "",
+                        size: Theme.Size.transportButton
+                    )
+                    .overlay {
+                        if session.state != "paused" {
+                            HStack(spacing: 4.5) {
+                                RoundedRectangle(cornerRadius: Theme.Radius.pauseBar, style: .continuous)
+                                    .frame(width: 4.4, height: 15)
+                                RoundedRectangle(cornerRadius: Theme.Radius.pauseBar, style: .continuous)
+                                    .frame(width: 4.4, height: 15)
                             }
+                            .foregroundStyle(Theme.ink)
                         }
+                    }
                 }
                 .buttonStyle(PressScaleStyle())
                 .accessibilityLabel(session.state == "paused" ? "Resume recording" : "Pause recording")
             }
+
+            // Stop is the ONLY solid coral circle in the entire app.
             Button {
                 model.session("session.stop")
             } label: {
-                RoundedRectangle(cornerRadius: 3, style: .continuous)
-                    .fill(Theme.inkDark)
-                    .frame(width: 13, height: 13)
-                    .frame(width: 48, height: 48)
-                    .background(Circle().fill(Theme.coral))
+                ZStack {
+                    Circle()
+                        .fill(Theme.coral)
+                    RoundedRectangle(cornerRadius: Theme.Radius.stopGlyph, style: .continuous)
+                        .fill(Theme.inkDark)
+                        .frame(width: 13, height: 13)
+                }
+                .frame(width: Theme.Size.transportButton, height: Theme.Size.transportButton)
             }
             .buttonStyle(PressScaleStyle())
             .accessibilityLabel("Stop recording")
         }
-        .disabled(!model.controlsEnabled)
-        .opacity(dim)
+        .disabled(!enabled)
+        .opacity(enabled ? 1.0 : Theme.Opacity.disabled)
     }
 
-    private func tileRow(_ session: Session?, playing: Bool) -> some View {
-        let stack = typeSize >= .accessibility1
-        return Group {
-            if stack {
-                VStack(spacing: 12) { tiles(session, playing: playing) }
-            } else {
-                HStack(alignment: .top, spacing: 12) { tiles(session, playing: playing) }
-            }
-        }
-    }
+    // MARK: - Idle Heroes (§9.2)
 
-    @ViewBuilder private func tiles(_ session: Session?, playing: Bool) -> some View {
-        storageTile(session)
-        if playing, model.prefs.nowLayout == .game {
-            gameTile
-        } else if playing {
-            encoderTile
-        } else if model.prefs.nowLayout == .clips {
-            libraryTile
-        } else if model.prefs.nowLayout == .game {
-            weekTile
-        } else {
-            offloadTile
-        }
-    }
-
-    private func clipsLedTiles(_ session: Session) -> some View {
-        HStack(alignment: .top, spacing: 12) {
-            tile(title: "Highlights") {
-                Text("\(session.highlights.count)")
-                    .font(.system(size: 28, weight: .semibold))
-                    .foregroundStyle(Theme.ink)
-                Text(session.highlights.isEmpty ? "No marks yet" : "This session")
-                    .font(.system(size: 13))
-                    .foregroundStyle(tone.tertiary)
-            }
-            tile(title: "Audio") {
-                if let audio = model.studio?.stats?.audio {
-                    meter("Game", audio.game, Theme.violet)
-                    meter("Mic", audio.mic, Theme.teal)
-                    meter("Chat", audio.chat, Theme.magenta)
-                } else {
-                    Text("—").foregroundStyle(tone.tertiary)
-                }
-            }
-        }
-    }
-
-    private func storageTile(_ session: Session?) -> some View {
-        let free = session?.storageFreeBytes
-        let days = StudioFormat.remaining(session?.estimatedRemaining)
-        return tile(title: "Storage") {
-            HStack(spacing: 12) {
-                Circle()
-                    .stroke(Theme.violet, style: StrokeStyle(lineWidth: 6, lineCap: .round))
-                    .frame(width: 52, height: 52)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(StudioFormat.bytes(free))
-                        .font(.system(size: 20, weight: .semibold))
-                        .foregroundStyle(Theme.ink)
-                    if let days {
-                        Text(days).font(.system(size: 13)).foregroundStyle(tone.tertiary)
+    private func idleHero(_ last: LastSession, layout: NowLayout) -> some View {
+        Tray(role: .hero) {
+            ReadingSurface(radius: Theme.Radius.heroCard, kind: .hero) {
+                ZStack(alignment: .trailing) {
+                    if layout == .game {
+                        heroCoverArt(gameID: last.game.id)
+                    }
+                    if layout == .game {
+                        gameIdleBody(last)
+                    } else {
+                        standardIdleBody(last)
                     }
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
+    }
+
+    private func standardIdleBody(_ last: LastSession) -> some View {
+        let online = model.link == .online
+        return VStack(alignment: .leading, spacing: Theme.Space.bentoGap) {
+            HStack {
+                StatusChip(style: .idle)
+                Spacer()
+                HStack(spacing: 6) {
+                    Circle()
+                        .fill(online ? Theme.teal : tone.tertiary)
+                        .frame(width: 6, height: 6)
+                    Text(online ? "Studio PC online" : "Studio PC is offline")
+                        .font(Theme.TypeScale.subtitle)
+                        .foregroundStyle(online ? Theme.teal : tone.tertiary)
+                }
+            }
+
+            VStack(alignment: .leading, spacing: 3) {
+                Eyebrow(text: "Last session · \(StudioFormat.time(last.endedAt))")
+                HStack(alignment: .firstTextBaseline, spacing: 0) {
+                    Text(last.game.name)
+                        .font(Theme.TypeScale.cardTitleLarge)
+                        .foregroundStyle(Theme.ink)
+                    Text(" · \(StudioFormat.clock(last.duration))")
+                        .font(Theme.TypeScale.bufferLine)
+                        .foregroundStyle(tone.tertiary)
+                }
+                .lineLimit(1)
+
+                Text("\(last.highlightCount) highlights · \(StudioFormat.bytes(last.bytes)) · \(offloadLine(last.offload))")
+                    .font(Theme.TypeScale.subtitle)
+                    .foregroundStyle(Theme.ink2)
+                    .lineLimit(1)
+            }
+
+            PrimaryPill(
+                title: "Start recording",
+                system: "record.circle",
+                toneStyle: .coralTint,
+                compact: true
+            ) {
+                model.session("session.start")
+            }
+            .disabled(!model.controlsEnabled)
+            .opacity(model.controlsEnabled ? 1.0 : Theme.Opacity.disabled)
+        }
+        .padding(18)
+    }
+
+    private func gameIdleBody(_ last: LastSession) -> some View {
+        VStack(alignment: .leading, spacing: Theme.Space.bentoGap) {
+            HStack(spacing: 10) {
+                StatusChip(style: .idle, customTitle: "Last played")
+                Text(StudioFormat.relative(last.endedAt, now: Date()))
+                    .font(Theme.TypeScale.subtitle)
+                    .foregroundStyle(Theme.inkSoft)
+                Spacer(minLength: 0)
+            }
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(last.game.name)
+                    .font(Theme.TypeScale.gameHeroTitle)
+                    .foregroundStyle(Theme.ink)
+                    .lineLimit(1)
+                if let achievement = model.studio?.session.achievement, !achievement.isEmpty {
+                    Text(achievement)
+                        .font(Theme.TypeScale.subtitle)
+                        .foregroundStyle(Theme.inkSoft)
+                        .lineLimit(1)
+                }
+            }
+
+            HStack(spacing: Theme.Space.chipGap) {
+                Button {
+                    model.session("session.start")
+                } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: "record.circle")
+                            .font(Theme.TypeScale.icon(14, weight: .semibold))
+                            .foregroundStyle(Theme.coral)
+                        Text("Record")
+                            .font(Theme.TypeScale.controlSemibold)
+                            .foregroundStyle(Theme.coralText)
+                    }
+                    .frame(maxWidth: .infinity, minHeight: Theme.Size.compactPillHeight)
+                    .background(
+                        RoundedRectangle(cornerRadius: Theme.Radius.actionPill, style: .continuous)
+                            .fill(Theme.coral.opacity(0.14))
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: Theme.Radius.actionPill, style: .continuous)
+                            .stroke(Theme.coral.opacity(0.45), lineWidth: Theme.Stroke.hairline)
+                    )
+                }
+                .buttonStyle(PressScaleStyle())
+                .disabled(!model.controlsEnabled)
+                .opacity(model.controlsEnabled ? 1.0 : Theme.Opacity.disabled)
+
+                Button {} label: {
+                    VStack(spacing: 1) {
+                        Text("Launch on PC")
+                            .font(Theme.TypeScale.segment)
+                            .foregroundStyle(Theme.ink)
+                        Text("Coming soon")
+                            .font(Theme.TypeScale.tabLabel)
+                            .foregroundStyle(tone.tertiary)
+                    }
+                    .frame(maxWidth: .infinity, minHeight: Theme.Size.compactPillHeight)
+                    .background(
+                        RoundedRectangle(cornerRadius: Theme.Radius.actionPill, style: .continuous)
+                            .fill(Theme.ink.opacity(0.10))
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: Theme.Radius.actionPill, style: .continuous)
+                            .stroke(Theme.specular.opacity(0.16), lineWidth: Theme.Stroke.hairline)
+                    )
+                }
+                .disabled(true)
+                .opacity(Theme.Opacity.disabled)
+                .accessibilityLabel("Launch on PC, Coming soon")
+            }
+        }
+        .padding(18)
+    }
+
+    // MARK: - Bento Tiles (§9.1, §9.2)
+
+    private func tileContainer<Content: View>(@ViewBuilder content: () -> Content) -> some View {
+        Group {
+            if typeSize >= .accessibility1 {
+                VStack(spacing: Theme.Space.bentoGap) {
+                    content()
+                }
+            } else {
+                HStack(alignment: .top, spacing: Theme.Space.bentoGap) {
+                    content()
+                }
+            }
+        }
+    }
+
+    @ViewBuilder private func playingTiles(_ session: Session, layout: NowLayout) -> some View {
+        switch layout {
+        case .bento:
+            storageTile(session)
+            encoderTile
+        case .game:
+            gameStatsTile
+            storageTile(session)
+        case .clips:
+            highlightsCountTile(marks: session.highlights, subtitle: "this session")
+            audioMetersTile
+        }
+    }
+
+    @ViewBuilder private func idleTiles(session: Session?, last: LastSession, layout: NowLayout) -> some View {
+        switch layout {
+        case .bento:
+            storageTile(session)
+            offloadTile
+        case .game:
+            weekPlaytimeTile(gameID: last.game.id)
+            storageTile(session)
+        case .clips:
+            highlightsCountTile(
+                marks: Array(repeating: Highlight(at: 0, label: nil, kind: "manual"), count: max(0, last.highlightCount)),
+                subtitle: "last session"
+            )
+            libraryTile(session)
+        }
+    }
+
+    private func tileCard<Content: View>(@ViewBuilder content: () -> Content) -> some View {
+        Tray(role: .tile) {
+            ReadingSurface(radius: Theme.Radius.tileCard) {
+                VStack(alignment: .leading, spacing: 6) {
+                    content()
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 14)
+                .frame(maxWidth: .infinity, minHeight: 112, alignment: .topLeading)
+            }
+        }
+    }
+
+    /// Storage tile: PC sends storageFreeBytes and estimatedRemaining, not total disk size.
+    /// Unknown used percentage renders as an honest em dash ("—"), never a fake percent.
+    private func storageTile(_ session: Session?) -> some View {
+        let freeBytes = session?.storageFreeBytes
+        let freeText = StudioFormat.bytes(freeBytes)
+        let daysText = StudioFormat.remaining(session?.estimatedRemaining) ?? "—"
+
+        return tileCard {
+            HStack(spacing: Theme.Space.bentoGap) {
+                ZStack {
+                    Circle()
+                        .stroke(Theme.ink.opacity(0.08), lineWidth: Theme.Stroke.storageRing)
+                    if freeBytes != nil {
+                        Circle()
+                            .trim(from: 0, to: 0.25)
+                            .stroke(
+                                Theme.violet,
+                                style: StrokeStyle(lineWidth: Theme.Stroke.storageRing, lineCap: .round)
+                            )
+                            .rotationEffect(.degrees(-90))
+                    }
+                    Text("—")
+                        .font(Theme.TypeScale.ringPercent)
+                        .foregroundStyle(tone.tertiary)
+                }
+                .frame(width: Theme.Size.storageRing, height: Theme.Size.storageRing)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Eyebrow(text: "Storage")
+                    Text(freeText)
+                        .font(Theme.TypeScale.controlSemibold)
+                        .foregroundStyle(Theme.ink)
+                        .lineLimit(1)
+                    Text(daysText)
+                        .font(Theme.TypeScale.caption)
+                        .foregroundStyle(tone.tertiary)
+                        .lineLimit(1)
+                }
+            }
+            .frame(maxHeight: .infinity, alignment: .center)
+        }
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Storage, \(StudioFormat.bytes(free)) free\(days.map { ", \($0)" } ?? "")")
+        .accessibilityLabel("Storage, \(freeText) free, \(daysText)")
     }
 
     private var encoderTile: some View {
         let drops = model.studio?.stats?.droppedFrames
         let rate = model.studio?.stats?.bitrateMbps
-        return tile(title: "Encoder") {
-            HStack {
-                Spacer()
+
+        return tileCard {
+            HStack(alignment: .firstTextBaseline) {
+                Eyebrow(text: "Encoder")
+                Spacer(minLength: 4)
                 Text(dropsText(drops))
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(Theme.TypeScale.captionSemibold)
                     .foregroundStyle(dropsColor(drops))
             }
-            Text(rate.map { String(format: "%.1f Mb/s", $0) } ?? "—")
-                .font(.system(size: 20, weight: .semibold))
-                .foregroundStyle(Theme.ink)
-            spark(model.bitrate)
+            if let rate = rate {
+                HStack(alignment: .firstTextBaseline, spacing: 3) {
+                    Text(String(format: "%.1f", rate))
+                        .font(Theme.TypeScale.cardTitle)
+                        .foregroundStyle(Theme.ink)
+                    Text("Mb/s")
+                        .font(Theme.TypeScale.captionMedium)
+                        .foregroundStyle(tone.tertiary)
+                }
+            } else {
+                Text("—")
+                    .font(Theme.TypeScale.cardTitle)
+                    .foregroundStyle(tone.tertiary)
+            }
+            sparkline(model.bitrate)
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Encoder, \(dropsText(drops)), \(rate.map { String(format: "%.1f megabits per second", $0) } ?? "bitrate unknown")")
     }
 
-    private var gameTile: some View {
-        tile(title: "Game") {
-            if let fps = model.studio?.stats?.gameFps {
-                Text("\(fps) fps")
-                    .font(.system(size: 20, weight: .semibold))
-                    .foregroundStyle(Theme.ink)
-                spark(model.fpsSamples)
+    private var gameStatsTile: some View {
+        let fps = model.studio?.stats?.gameFps
+        let gpu = model.studio?.stats?.gpuTempC
+        let bars = Array(model.fpsSamples.suffix(16))
+
+        return tileCard {
+            HStack(alignment: .firstTextBaseline) {
+                Eyebrow(text: "Game")
+                Spacer(minLength: 4)
+                Text(gpu.map { "GPU \($0)°" } ?? "GPU —")
+                    .font(Theme.TypeScale.captionRegularTabular)
+                    .foregroundStyle(tone.tertiary)
+            }
+            if let fps = fps {
+                HStack(alignment: .firstTextBaseline, spacing: 3) {
+                    Text("\(fps)")
+                        .font(Theme.TypeScale.statMetric)
+                        .foregroundStyle(Theme.ink)
+                    Text("fps")
+                        .font(Theme.TypeScale.subtitle)
+                        .foregroundStyle(tone.tertiary)
+                }
             } else {
-                Text("—").foregroundStyle(tone.tertiary)
+                Text("—")
+                    .font(Theme.TypeScale.statMetric)
+                    .foregroundStyle(tone.tertiary)
             }
-            if let temp = model.studio?.stats?.gpuTempC {
-                Text("\(temp) °C").font(.system(size: 13)).foregroundStyle(tone.tertiary)
+            barStrip(values: bars)
+        }
+    }
+
+    private func weekPlaytimeTile(gameID: String) -> some View {
+        let game = model.studio?.games.first(where: { $0.id == gameID }) ?? model.studio?.games.first
+        let week = game?.weekPlaytime ?? []
+        let totalSeconds = week.reduce(0, +)
+        let hours = Int(totalSeconds) / 3600
+        let mins = (Int(totalSeconds) % 3600) / 60
+        let clipCount = game?.clipCount
+
+        return tileCard {
+            HStack(alignment: .firstTextBaseline) {
+                Eyebrow(text: "This week")
+                Spacer(minLength: 4)
+                Text(clipCount.map { "\($0) clips" } ?? "—")
+                    .font(Theme.TypeScale.caption)
+                    .foregroundStyle(tone.tertiary)
             }
+            if week.isEmpty {
+                Text("—")
+                    .font(Theme.TypeScale.statMetric)
+                    .foregroundStyle(tone.tertiary)
+            } else {
+                HStack(alignment: .firstTextBaseline, spacing: 2) {
+                    Text("\(hours)h \(mins)")
+                        .font(Theme.TypeScale.statMetric)
+                        .foregroundStyle(Theme.ink)
+                    Text("m")
+                        .font(Theme.TypeScale.subtitle)
+                        .foregroundStyle(tone.tertiary)
+                }
+            }
+            barStrip(values: week)
         }
     }
 
     private var offloadTile: some View {
         let active = (model.studio?.clips ?? []).filter { $0.offload.isActive }
-        return tile(title: "Offload") {
+        let target = model.studio?.settings.offloadTarget ?? "nas-vault"
+
+        return tileCard {
             if active.isEmpty {
+                Eyebrow(text: "Offload")
                 Text("All synced")
-                    .font(.system(size: 17, weight: .semibold))
+                    .font(Theme.TypeScale.cardTitle)
                     .foregroundStyle(Theme.teal)
-            } else {
-                let target = model.studio?.settings.offloadTarget ?? "NAS"
                 Text("To \(target)")
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(Theme.ink)
-                let progress = active.compactMap { item -> Double? in
-                    if case let .moving(progress, _) = item.offload { return progress }
+                    .font(Theme.TypeScale.caption)
+                    .foregroundStyle(tone.tertiary)
+            } else {
+                let movingProgress = active.compactMap { clip -> Double? in
+                    if case let .moving(progress, _) = clip.offload { return progress }
                     return nil
-                }.max() ?? 0
-                ProgressView(value: progress).tint(Theme.amber)
-                Text("\(active.count) clips left")
-                    .font(.system(size: 13))
+                }.max()
+                let bytesRemaining: Int64? = {
+                    let values = active.compactMap { clip -> Int64? in
+                        if case let .moving(_, left) = clip.offload { return left }
+                        return nil
+                    }
+                    return values.isEmpty ? nil : values.reduce(0, +)
+                }()
+
+                HStack(alignment: .firstTextBaseline) {
+                    Eyebrow(text: "Offload")
+                    Spacer(minLength: 4)
+                    Text(movingProgress.map { "\(Int(($0 * 100).rounded()))%" } ?? "—")
+                        .font(Theme.TypeScale.captionTabular)
+                        .foregroundStyle(Theme.amberDeep)
+                }
+                Text("To \(target)")
+                    .font(Theme.TypeScale.controlSemibold)
+                    .foregroundStyle(Theme.ink)
+                    .lineLimit(1)
+                GeometryReader { geo in
+                    ZStack(alignment: .leading) {
+                        Capsule()
+                            .fill(Theme.ink.opacity(0.06))
+                        if let progress = movingProgress {
+                            Capsule()
+                                .fill(LinearGradient(colors: [Theme.amberDeep, Theme.amberPale], startPoint: .leading, endPoint: .trailing))
+                                .frame(width: max(4, geo.size.width * CGFloat(min(1.0, max(0.0, progress)))))
+                        }
+                    }
+                }
+                .frame(height: 5)
+
+                Text("\(active.count) clips · \(StudioFormat.bytes(bytesRemaining)) left")
+                    .font(Theme.TypeScale.caption)
+                    .foregroundStyle(tone.tertiary)
+                    .lineLimit(1)
+            }
+        }
+    }
+
+    private func highlightsCountTile(marks: [Highlight], subtitle: String) -> some View {
+        tileCard {
+            Eyebrow(text: "Highlights")
+            HStack(alignment: .firstTextBaseline, spacing: 4) {
+                Text("\(marks.count)")
+                    .font(Theme.TypeScale.statMetric)
+                    .foregroundStyle(Theme.ink)
+                Text(subtitle)
+                    .font(Theme.TypeScale.subtitle)
                     .foregroundStyle(tone.tertiary)
             }
-        }
-    }
-
-    private var libraryTile: some View {
-        tile(title: "Library") {
-            Text(StudioFormat.bytes(model.studio?.session.storageFreeBytes) + " free")
-                .font(.system(size: 17, weight: .semibold))
-                .foregroundStyle(Theme.ink)
-            let pending = (model.studio?.clips ?? []).contains { $0.offload.isActive }
-            Text(pending ? "Offload in progress" : "All synced\(model.studio?.settings.offloadTarget.map { " to \($0)" } ?? "")")
-                .font(.system(size: 13))
-                .foregroundStyle(pending ? Theme.amber : Theme.teal)
-        }
-    }
-
-    private var weekTile: some View {
-        let week = model.studio?.games.first?.weekPlaytime ?? []
-        let hours = week.reduce(0, +) / 3600
-        return tile(title: "This week") {
-            Text(String(format: "%.1f h", hours))
-                .font(.system(size: 20, weight: .semibold))
-                .foregroundStyle(Theme.ink)
-            HStack(alignment: .bottom, spacing: 4) {
-                ForEach(Array(week.enumerated()), id: \.offset) { index, value in
-                    RoundedRectangle(cornerRadius: 2, style: .continuous)
-                        .fill(index == week.count - 1 ? Theme.gold : Theme.violet.opacity(0.7))
-                        .frame(width: 8, height: max(4, CGFloat(value / 3600) * 8))
-                }
-            }
-        }
-    }
-
-    private func tile<Content: View>(title: String, @ViewBuilder content: @escaping () -> Content) -> some View {
-        Tray(radius: 30) {
-            VStack(alignment: .leading, spacing: 8) {
-                Eyebrow(text: title, color: tone.tertiary)
-                content()
-            }
-            .padding(14)
-            .frame(maxWidth: .infinity, minHeight: 120, alignment: .leading)
-            .background {
-                ReadingFill()
-            }
-        }
-    }
-
-    private func highlights(_ marks: [Highlight], duration: Double, live: Bool) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Eyebrow(text: "Highlights", color: tone.tertiary)
             GeometryReader { geo in
                 ZStack(alignment: .leading) {
-                    Capsule().fill(Theme.ink.opacity(0.12)).frame(height: 6)
-                    if live, duration > 0 {
-                        Capsule().fill(Theme.gold).frame(width: 8, height: 18)
-                            .offset(x: 0)
-                    }
-                    ForEach(Array(marks.enumerated()), id: \.offset) { _, mark in
-                        Capsule().fill(Theme.amber)
-                            .frame(width: 4, height: 14)
-                            .offset(x: duration > 0 ? geo.size.width * mark.at / duration : 0)
+                    Capsule()
+                        .fill(Theme.ink.opacity(0.06))
+                        .frame(height: 6)
+                    ForEach(Array(marks.prefix(6).enumerated()), id: \.offset) { idx, mark in
+                        let frac = marks.count == 1 ? 0.5 : Double(idx + 1) / Double(marks.count + 1)
+                        Circle()
+                            .fill(mark.kind == "manual" ? Theme.amber : Theme.violetLight)
+                            .frame(width: 10, height: 10)
+                            .offset(x: max(0, geo.size.width * CGFloat(frac) - 5))
                     }
                 }
             }
-            .frame(height: 18)
-            if marks.isEmpty {
-                Text(live ? "No highlights yet" : "Last session")
-                    .font(.system(size: 13))
+            .frame(height: 10)
+        }
+    }
+
+    private var audioMetersTile: some View {
+        tileCard {
+            Eyebrow(text: "Audio")
+            if let audio = model.studio?.stats?.audio {
+                VStack(spacing: 7) {
+                    audioBar(label: "Game", level: audio.game, start: Theme.violet, end: Theme.violetLight)
+                    audioBar(label: "Mic", level: audio.mic, start: Theme.teal, end: Theme.tealPale)
+                    audioBar(label: "Chat", level: audio.chat, start: Theme.magenta, end: Theme.magentaLight)
+                }
+            } else {
+                Text("—")
+                    .font(Theme.TypeScale.statMetric)
                     .foregroundStyle(tone.tertiary)
             }
         }
-        .padding(14)
     }
 
-    private var recent: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                Text("Recent clips")
-                    .font(.system(size: 20, weight: .semibold))
-                    .foregroundStyle(Theme.ink)
-                Spacer()
-                Button("See all") { model.requestedTab = .clips }
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(Theme.violetLight)
+    private func libraryTile(_ session: Session?) -> some View {
+        let free = session?.storageFreeBytes
+        let pending = (model.studio?.clips ?? []).contains { $0.offload.isActive }
+        let target = model.studio?.settings.offloadTarget ?? "nas-vault"
+
+        return tileCard {
+            Eyebrow(text: "Library")
+            if let free = free {
+                HStack(alignment: .firstTextBaseline, spacing: 4) {
+                    Text(StudioFormat.bytes(free))
+                        .font(Theme.TypeScale.cardTitleLarge)
+                        .foregroundStyle(Theme.ink)
+                    Text("free")
+                        .font(Theme.TypeScale.subtitle)
+                        .foregroundStyle(tone.tertiary)
+                }
+            } else {
+                Text("—")
+                    .font(Theme.TypeScale.statMetric)
+                    .foregroundStyle(tone.tertiary)
             }
-            ClipStack(clips: Array((model.studio?.clips ?? []).prefix(3)))
+            HStack(spacing: 6) {
+                Circle()
+                    .fill(pending ? Theme.amber : Theme.teal)
+                    .frame(width: 6, height: 6)
+                Text(pending ? "Offloading to \(target)" : "All synced to \(target)")
+                    .font(Theme.TypeScale.caption)
+                    .foregroundStyle(pending ? Theme.amber : Theme.teal)
+                    .lineLimit(1)
+            }
         }
     }
 
-    private func chip(_ session: Session) -> some View {
+    // MARK: - 2g Highlights Strip (§9.1)
+
+    private func highlightsStrip(marks: [Highlight], duration: Double, playhead: Double, live: Bool) -> some View {
+        Tray(role: .tile) {
+            ReadingSurface(radius: Theme.Radius.tileCard) {
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack(alignment: .firstTextBaseline) {
+                        Eyebrow(text: live ? "Highlights · auto-marked" : "Last session highlights")
+                        Spacer()
+                        Text("\(marks.count)")
+                            .font(Theme.TypeScale.controlSemibold)
+                            .foregroundStyle(Theme.violetPale)
+                    }
+
+                    GeometryReader { geo in
+                        let w = geo.size.width
+                        let fillFrac = live ? min(1.0, max(0.0, playhead / max(duration, 1.0))) : 1.0
+                        ZStack(alignment: .leading) {
+                            RoundedRectangle(cornerRadius: Theme.Radius.highlightStrip, style: .continuous)
+                                .fill(Theme.ink.opacity(0.04))
+                                .frame(height: 24)
+                            RoundedRectangle(cornerRadius: Theme.Radius.highlightStrip, style: .continuous)
+                                .fill(
+                                    LinearGradient(
+                                        colors: [Theme.violet.opacity(0.06), Theme.violet.opacity(0.22)],
+                                        startPoint: .leading,
+                                        endPoint: .trailing
+                                    )
+                                )
+                                .frame(width: w * CGFloat(fillFrac), height: 24)
+
+                            ForEach(Array(marks.enumerated()), id: \.offset) { _, mark in
+                                let x = min(max(2, w * CGFloat(mark.at / max(duration, 1.0))), max(2, w - 4))
+                                RoundedRectangle(cornerRadius: Theme.Radius.bar, style: .continuous)
+                                    .fill(mark.kind == "manual" ? Theme.amber : Theme.violetLight)
+                                    .frame(width: 3, height: 18)
+                                    .offset(x: x)
+                            }
+
+                            if live {
+                                RoundedRectangle(cornerRadius: Theme.Radius.playhead, style: .continuous)
+                                    .fill(Theme.gold)
+                                    .frame(width: 2, height: 30)
+                                    .shadow(color: Theme.gold.opacity(0.75), radius: 4)
+                                    .offset(x: min(max(0, w * CGFloat(fillFrac) - 1), max(0, w - 2)))
+                            }
+                        }
+                    }
+                    .frame(height: 28)
+
+                    if let first = marks.first {
+                        HStack {
+                            Text("\(first.label ?? "Mark") · \(shortDuration(first.at))")
+                            Spacer()
+                            if marks.count > 1, let last = marks.last {
+                                Text("\(last.label ?? "Mark") · \(shortDuration(last.at))")
+                            }
+                        }
+                        .font(Theme.TypeScale.caption)
+                        .foregroundStyle(tone.tertiary)
+                        .lineLimit(1)
+                    } else {
+                        Text(live ? "No marks yet" : "Last session")
+                            .font(Theme.TypeScale.caption)
+                            .foregroundStyle(tone.tertiary)
+                    }
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 14)
+            }
+        }
+    }
+
+    // MARK: - Recent Clips (Stack for 2f/2h, Two-up Row for 2g)
+
+    private func recentSection(layout: NowLayout) -> some View {
+        let clips = Array((model.studio?.clips ?? []).prefix(3))
+        return Group {
+            if !clips.isEmpty {
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack(alignment: .firstTextBaseline) {
+                        Text("Recent clips")
+                            .font(Theme.TypeScale.sectionHeading)
+                            .foregroundStyle(Theme.ink)
+                        Spacer()
+                        Button {
+                            model.requestedTab = .clips
+                        } label: {
+                            Text("See all")
+                                .font(Theme.TypeScale.body)
+                                .foregroundStyle(Theme.violetLight)
+                                .frame(minHeight: Theme.Size.minHitTarget)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    .padding(.horizontal, Theme.Space.headerInset)
+
+                    if layout == .game {
+                        twoUpClips(Array(clips.prefix(2)))
+                    } else {
+                        ClipStack(clips: clips, richFront: layout == .clips)
+                    }
+                }
+                .padding(.top, 4)
+            }
+        }
+    }
+
+    private func twoUpClips(_ clips: [Clip]) -> some View {
+        HStack(spacing: Theme.Space.gridGap) {
+            ForEach(clips) { clip in
+                Button {
+                    model.clipRoute = clip.id
+                } label: {
+                    ZStack(alignment: .bottomLeading) {
+                        ClipStill(reference: clip.thumbnailURL, seed: stillSeed(clip.id))
+                        LinearGradient(
+                            colors: [Theme.clear, Theme.scrimBase.opacity(0.90)],
+                            startPoint: UnitPoint(x: 0.5, y: 0.25),
+                            endPoint: .bottom
+                        )
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("\(clip.game.name) · \(clip.duration.map(shortDuration) ?? "—")")
+                                .font(Theme.TypeScale.filterChip)
+                                .foregroundStyle(Theme.ink)
+                                .lineLimit(1)
+                            clipLocationBadge(clip)
+                        }
+                        .padding(12)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .frame(height: Theme.Size.gameCoverHeight)
+                    .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.settingsGroup, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: Theme.Radius.settingsGroup, style: .continuous)
+                            .stroke(Theme.ink.opacity(0.12), lineWidth: Theme.Stroke.hairline)
+                    )
+                }
+                .buttonStyle(PressScaleStyle())
+            }
+        }
+    }
+
+    @ViewBuilder private func clipLocationBadge(_ clip: Clip) -> some View {
+        let target = model.studio?.settings.offloadTarget ?? "nas-vault"
+        if clip.writing {
+            Text("Writing")
+                .font(Theme.TypeScale.captionSemibold)
+                .foregroundStyle(Theme.violetPale)
+        } else if clip.offload.isActive {
+            HStack(spacing: 4) {
+                Image(systemName: "arrow.up")
+                Text("Offloading")
+            }
+            .font(Theme.TypeScale.captionSemibold)
+            .foregroundStyle(Theme.amberDeep)
+        } else if clip.locations.contains("nas") || clip.offload == .done {
+            HStack(spacing: 4) {
+                Image(systemName: "checkmark")
+                Text(target)
+            }
+            .font(Theme.TypeScale.captionSemibold)
+            .foregroundStyle(Theme.teal)
+        } else {
+            Text("Studio PC")
+                .font(Theme.TypeScale.caption)
+                .foregroundStyle(Theme.ink2)
+        }
+    }
+
+    // MARK: - Helpers & Charts
+
+    private func sessionStatusChip(_ session: Session) -> some View {
         switch session.state {
         case "paused":
-            chipDot(Theme.ink2, "PAUSED", hollow: true)
+            return StatusChip(style: .paused)
         case "bufferOnly":
-            chipDot(Theme.violet, "BUFFER")
+            return StatusChip(style: .buffer)
         default:
-            chipDot(Theme.gold, "REC")
+            return StatusChip(style: .rec)
         }
     }
 
-    private func chipDot(_ color: Color, _ title: String, hollow: Bool = false) -> some View {
-        HStack(spacing: 7) {
-            Circle()
-                .strokeBorder(color, lineWidth: hollow ? 1.5 : 0)
-                .background(Circle().fill(hollow ? .clear : color))
-                .frame(width: 7, height: 7)
-            Text(title)
-                .font(.system(size: 11, weight: .semibold))
-                .tracking(1.6)
-                .foregroundStyle(hollow ? Theme.ink2 : color)
+    private func outputLabel(_ output: Output) -> String {
+        if output.resolution.isEmpty || output.fps <= 0 || output.encoder.isEmpty {
+            return "—"
         }
-        .padding(.horizontal, 11)
-        .frame(height: 26)
-        .background(Capsule().fill(color.opacity(hollow ? 0.08 : 0.10)))
-        .overlay(Capsule().stroke(color.opacity(hollow ? 0.18 : 0.32), lineWidth: 0.5))
+        return output.line
+    }
+
+    private func gameAndSceneLabel(_ session: Session) -> String {
+        let game = session.game?.name ?? "Studio PC"
+        if session.scene.isEmpty { return game }
+        return "\(game) · \(session.scene)"
     }
 
     private func dropsText(_ drops: Int?) -> String {
-        guard let drops else { return "—" }
+        guard let drops = drops else { return "—" }
         return drops == 1 ? "1 drop" : "\(drops) drops"
     }
 
     private func dropsColor(_ drops: Int?) -> Color {
-        guard let drops else { return tone.tertiary }
+        guard let drops = drops else { return tone.tertiary }
         if drops == 0 { return Theme.teal }
+        if drops > 30 { return Theme.coral }
         return Theme.amber
     }
 
-    private func spark(_ samples: [Double]) -> some View {
+    private func sparkline(_ samples: [Double]) -> some View {
         GeometryReader { geo in
-            let maxValue = max(samples.max() ?? 1, 0.1)
-            Path { path in
-                guard samples.count > 1 else { return }
-                for (index, sample) in samples.enumerated() {
-                    let x = geo.size.width * CGFloat(index) / CGFloat(samples.count - 1)
-                    let y = geo.size.height * (1 - CGFloat(sample / maxValue))
-                    if index == 0 { path.move(to: CGPoint(x: x, y: y)) } else { path.addLine(to: CGPoint(x: x, y: y)) }
+            let w = geo.size.width
+            let h = geo.size.height
+            let minVal = (samples.min() ?? 0.0) * 0.92
+            let maxVal = max((samples.max() ?? 1.0) * 1.05, minVal + 1.0)
+
+            ZStack {
+                if samples.count > 1 {
+                    Path { path in
+                        path.move(to: CGPoint(x: 0, y: h))
+                        for (index, sample) in samples.enumerated() {
+                            let x = w * CGFloat(index) / CGFloat(samples.count - 1)
+                            let norm = (sample - minVal) / (maxVal - minVal)
+                            let y = h * (1.0 - CGFloat(min(1.0, max(0.0, norm))))
+                            path.addLine(to: CGPoint(x: x, y: y))
+                        }
+                        path.addLine(to: CGPoint(x: w, y: h))
+                        path.closeSubpath()
+                    }
+                    .fill(
+                        LinearGradient(
+                            colors: [Theme.violet.opacity(0.45), Theme.clear],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                    )
+
+                    Path { path in
+                        for (index, sample) in samples.enumerated() {
+                            let x = w * CGFloat(index) / CGFloat(samples.count - 1)
+                            let norm = (sample - minVal) / (maxVal - minVal)
+                            let y = h * (1.0 - CGFloat(min(1.0, max(0.0, norm))))
+                            if index == 0 {
+                                path.move(to: CGPoint(x: x, y: y))
+                            } else {
+                                path.addLine(to: CGPoint(x: x, y: y))
+                            }
+                        }
+                    }
+                    .stroke(Theme.violetLight, style: StrokeStyle(lineWidth: Theme.Stroke.sparkline, lineCap: .round, lineJoin: .round))
+                } else {
+                    Rectangle()
+                        .fill(Theme.ink.opacity(0.06))
+                        .frame(height: 2)
                 }
             }
-            .stroke(Theme.violet, lineWidth: 1.5)
         }
-        .frame(height: 28)
+        .frame(height: Theme.Size.sparklineHeight)
     }
 
-    private func meter(_ title: String, _ level: Double, _ color: Color) -> some View {
-        HStack(spacing: 8) {
-            Text(title).font(.system(size: 11, weight: .semibold)).foregroundStyle(tone.tertiary).frame(width: 36, alignment: .leading)
-            GeometryReader { geo in
-                Capsule().fill(Theme.ink.opacity(0.12))
-                Capsule().fill(color).frame(width: geo.size.width * CGFloat(min(max(level, 0), 1)))
+    private func barStrip(values: [Double]) -> some View {
+        let peak = max(values.max() ?? 1.0, 0.1)
+        return HStack(alignment: .bottom, spacing: 3) {
+            if values.isEmpty {
+                ForEach(0 ..< 7, id: \.self) { _ in
+                    RoundedRectangle(cornerRadius: Theme.Radius.bar, style: .continuous)
+                        .fill(Theme.ink.opacity(0.08))
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 4)
+                }
+            } else {
+                ForEach(Array(values.enumerated()), id: \.offset) { idx, value in
+                    let isLast = idx == values.count - 1
+                    let h = max(4.0, 22.0 * CGFloat(min(1.0, max(0.0, value / peak))))
+                    RoundedRectangle(cornerRadius: Theme.Radius.bar, style: .continuous)
+                        .fill(isLast ? Theme.gold : Theme.violetLight.opacity(0.55))
+                        .frame(maxWidth: .infinity)
+                        .frame(height: h)
+                }
             }
-            .frame(height: 6)
+        }
+        .frame(height: 22)
+    }
+
+    private func audioBar(label: String, level: Double, start: Color, end: Color) -> some View {
+        let clamped = CGFloat(min(1.0, max(0.0, level)))
+        return HStack(spacing: 8) {
+            Text(label)
+                .font(Theme.TypeScale.caption)
+                .foregroundStyle(Theme.ink2)
+                .frame(width: 34, alignment: .leading)
+            GeometryReader { geo in
+                ZStack(alignment: .leading) {
+                    Capsule()
+                        .fill(Theme.ink.opacity(0.06))
+                    Capsule()
+                        .fill(LinearGradient(colors: [start, end], startPoint: .leading, endPoint: .trailing))
+                        .frame(width: geo.size.width * clamped)
+                        .animation(tone.isStill ? nil : Theme.spring, value: clamped)
+                }
+            }
+            .frame(height: 5)
         }
     }
 
     private func offloadLine(_ offload: Offload) -> String {
+        let target = model.studio?.settings.offloadTarget ?? "nas-vault"
         switch offload {
-        case .done: "on \(model.studio?.settings.offloadTarget ?? "NAS")"
-        case .queued: "queued"
-        case let .moving(progress, _): "offloading \(Int(progress * 100))%"
-        case let .failed(error): error
-        case .none: "on Studio PC"
+        case .done:
+            return "on \(target)"
+        case .queued:
+            return "queued"
+        case let .moving(progress, _):
+            return "offloading \(Int((progress * 100).rounded()))%"
+        case let .failed(error):
+            return error
+        case .none:
+            return "on Studio PC"
         }
+    }
+
+    private func shortDuration(_ seconds: Double) -> String {
+        let whole = max(0, Int(seconds.rounded(.down)))
+        if whole >= 3600 {
+            return StudioFormat.clock(seconds)
+        }
+        return String(format: "%d:%02d", whole / 60, whole % 60)
     }
 }
 
-private struct ReadingFill: View {
-    @EnvironmentObject private var model: AppModel
-    @Environment(\.tone) private var tone
-
-    var body: some View {
-        if tone.reduceTransparency || model.prefs.surfaces == .solid {
-            Theme.card
-        } else if model.prefs.surfaces == .lively {
-            LinearGradient(colors: [Theme.livelyTop, Theme.livelyBottom], startPoint: .topLeading, endPoint: .bottomTrailing)
-        } else {
-            Theme.card.opacity(0.55)
-        }
-    }
-}
+// MARK: - Physically Stacked Recent Clips (§9.1: 1.0 / 0.92 / 0.84 scale, 1.0 / 0.72 / 0.45 opacity)
 
 struct ClipStack: View {
     var clips: [Clip]
+    var richFront: Bool = false
     @EnvironmentObject private var model: AppModel
     @Environment(\.tone) private var tone
     @State private var index = 0
@@ -542,75 +1096,178 @@ struct ClipStack: View {
         if clips.isEmpty {
             EmptyView()
         } else {
-            let front = clips[index % clips.count]
-            ZStack {
-                ForEach(Array(clips.enumerated()), id: \.element.id) { offset, clip in
-                    let depth = (offset - index + clips.count) % clips.count
-                    if depth < 3 {
-                        card(clip)
-                            .scaleEffect(depth == 0 ? 1 : (depth == 1 ? 0.92 : 0.84))
-                            .opacity(depth == 0 ? 1 : (depth == 1 ? 0.72 : 0.45))
-                            .offset(y: depth == 0 ? 0 : (depth == 1 ? -22 : -48))
-                            .zIndex(Double(3 - depth))
-                            .allowsHitTesting(depth == 0)
-                    }
+            let safeIndex = index % clips.count
+            let front = clips[safeIndex]
+            let depthCount = min(3, clips.count)
+
+            ZStack(alignment: .top) {
+                ForEach(0 ..< depthCount, id: \.self) { rev in
+                    let depth = (depthCount - 1) - rev
+                    let clip = clips[(safeIndex + depth) % clips.count]
+                    stackCard(clip, isFront: depth == 0)
+                        .scaleEffect(scale(for: depth), anchor: .top)
+                        .opacity(opacity(for: depth))
+                        .offset(y: yOffset(for: depth, total: depthCount))
+                        .zIndex(Double(3 - depth))
+                        .allowsHitTesting(depth == 0)
                 }
             }
-            .frame(height: 210)
+            .frame(height: containerHeight(total: depthCount), alignment: .top)
             .contentShape(Rectangle())
-            .gesture(DragGesture(minimumDistance: 20).onEnded { value in
-                guard clips.count > 1 else { return }
-                withAnimation(tone.motion) {
-                    if value.translation.width < -30 {
-                        index = (index + 1) % clips.count
-                    } else if value.translation.width > 30 {
-                        index = (index - 1 + clips.count) % clips.count
+            .gesture(
+                DragGesture(minimumDistance: 20).onEnded { value in
+                    guard clips.count > 1 else { return }
+                    withAnimation(tone.motion) {
+                        if value.translation.width < -30 {
+                            index = (index + 1) % clips.count
+                        } else if value.translation.width > 30 {
+                            index = (index - 1 + clips.count) % clips.count
+                        }
                     }
                 }
-            })
-            .onTapGesture { model.clipRoute = front.id }
+            )
+            .onTapGesture {
+                model.clipRoute = front.id
+            }
         }
     }
 
-    private func card(_ clip: Clip) -> some View {
+    private func scale(for depth: Int) -> CGFloat {
+        switch depth {
+        case 0: return Theme.ClipStack.frontScale
+        case 1: return Theme.ClipStack.middleScale
+        default: return Theme.ClipStack.backScale
+        }
+    }
+
+    private func opacity(for depth: Int) -> Double {
+        switch depth {
+        case 0: return Theme.Opacity.stackFront
+        case 1: return Theme.Opacity.stackMiddle
+        default: return Theme.Opacity.stackBack
+        }
+    }
+
+    private func yOffset(for depth: Int, total: Int) -> CGFloat {
+        if total == 1 { return 0 }
+        if total == 2 {
+            return depth == 0 ? 22 : 0
+        }
+        switch depth {
+        case 0: return Theme.ClipStack.frontOffset
+        case 1: return Theme.ClipStack.middleOffset
+        default: return Theme.ClipStack.backOffset
+        }
+    }
+
+    private func containerHeight(total: Int) -> CGFloat {
+        if total == 1 { return Theme.Size.clipStackCardHeight }
+        if total == 2 { return Theme.Size.clipStackCardHeight + 22 }
+        return Theme.Size.clipStackContainerHeight
+    }
+
+    private func stackCard(_ clip: Clip, isFront: Bool) -> some View {
         ZStack(alignment: .bottomLeading) {
             ClipStill(reference: clip.thumbnailURL, seed: stillSeed(clip.id))
-            LinearGradient(colors: [.clear, Color(red: 7 / 255, green: 6 / 255, blue: 14 / 255).opacity(0.9)], startPoint: .center, endPoint: .bottom)
-            VStack(alignment: .leading, spacing: 6) {
-                Text("\(clip.game.name) · \(clip.label)")
-                    .font(.system(size: 17, weight: .semibold))
-                    .foregroundStyle(Theme.ink)
-                HStack(spacing: 12) {
-                    if clip.locations.contains("nas") || clip.offload == .done {
-                        Label(model.studio?.settings.offloadTarget ?? "nas-vault", systemImage: "checkmark")
-                            .foregroundStyle(Theme.teal)
-                    }
-                    Label(clip.resolution.isEmpty ? "—" : clip.resolution, systemImage: "rectangle")
-                    Label("\(clip.highlights.count) marks", systemImage: "star")
+            LinearGradient(
+                colors: [Theme.clear, Theme.scrimBase.opacity(0.92)],
+                startPoint: UnitPoint(x: 0.5, y: 0.28),
+                endPoint: .bottom
+            )
+
+            if isFront {
+                if richFront {
+                    GlassCircle(system: "play.fill", size: 40)
+                        .padding(14)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                 }
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(Theme.ink2)
-            }
-            .padding(16)
-            if clip.writing {
-                durationChip("WRITING", gold: false)
-            } else if let duration = clip.duration {
-                durationChip(StudioFormat.clock(duration), gold: false)
+
+                durationBadge(clip)
+                    .padding(12)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("\(clip.game.name) · \(clip.label)")
+                        .font(richFront ? Theme.TypeScale.promptTitle : Theme.TypeScale.cardTitle)
+                        .foregroundStyle(Theme.ink)
+                        .lineLimit(1)
+
+                    if richFront, let created = clip.createdAt {
+                        Text(StudioFormat.dayAndTime(created, now: Date()))
+                            .font(Theme.TypeScale.subtitle)
+                            .foregroundStyle(Theme.ink2)
+                    }
+
+                    HStack(spacing: 10) {
+                        if clip.locations.contains("nas") || clip.offload == .done {
+                            HStack(spacing: 4) {
+                                Image(systemName: "checkmark")
+                                Text(model.studio?.settings.offloadTarget ?? "nas-vault")
+                            }
+                            .foregroundStyle(Theme.teal)
+                        }
+                        HStack(spacing: 4) {
+                            Image(systemName: "rectangle")
+                            Text(qualityChip(clip))
+                        }
+                        if richFront {
+                            Text(StudioFormat.bytes(clip.bytes))
+                        }
+                        HStack(spacing: 4) {
+                            Image(systemName: "star")
+                            Text("\(clip.highlights.count) marks")
+                        }
+                    }
+                    .font(Theme.TypeScale.captionSemibold)
+                    .foregroundStyle(Theme.ink2)
+                    .lineLimit(1)
+                }
+                .padding(16)
             }
         }
-        .frame(height: 180)
-        .clipShape(RoundedRectangle(cornerRadius: 26, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 26, style: .continuous).stroke(Color.white.opacity(0.12), lineWidth: 1))
+        .frame(height: Theme.Size.clipStackCardHeight)
+        .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.featuredCard, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: Theme.Radius.featuredCard, style: .continuous)
+                .stroke(Theme.ink.opacity(0.12), lineWidth: Theme.Stroke.hairline)
+        )
+        .shadow(color: Theme.shadow.opacity(isFront ? 0.50 : 0.30), radius: 16, x: 0, y: -6)
     }
 
-    private func durationChip(_ title: String, gold: Bool) -> some View {
-        Text(title)
-            .font(.system(size: 12, weight: .semibold))
-            .foregroundStyle(gold ? Theme.gold : Theme.ink)
+    private func durationBadge(_ clip: Clip) -> some View {
+        let label: String
+        let fg: Color
+        if clip.writing {
+            label = "WRITING"
+            fg = Theme.violetPale
+        } else if let dur = clip.duration {
+            let whole = max(0, Int(dur.rounded(.down)))
+            label = whole >= 3600 ? StudioFormat.clock(dur) : String(format: "%d:%02d", whole / 60, whole % 60)
+            fg = Theme.ink
+        } else {
+            label = "—"
+            fg = Theme.ink2
+        }
+
+        return Text(label)
+            .font(Theme.TypeScale.captionTabular)
+            .foregroundStyle(fg)
             .padding(.horizontal, 10)
-            .frame(height: 26)
-            .background(.ultraThinMaterial, in: Capsule())
-            .padding(12)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+            .frame(height: Theme.Size.statusChipHeight)
+            .background {
+                if tone.reduceTransparency {
+                    Capsule().fill(Theme.inkDark)
+                } else {
+                    Capsule().fill(.ultraThinMaterial)
+                    Capsule().fill(Theme.glassHeroBase.opacity(Theme.Opacity.chipGlassFill))
+                }
+            }
+    }
+
+    private func qualityChip(_ clip: Clip) -> String {
+        if clip.resolution.isEmpty { return "—" }
+        let h = clip.resolution.split(separator: "x").last.map(String.init) ?? clip.resolution
+        if clip.fps > 0 { return "\(h)p\(clip.fps)" }
+        return clip.resolution
     }
 }

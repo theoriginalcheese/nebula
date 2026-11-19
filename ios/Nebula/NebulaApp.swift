@@ -7,7 +7,7 @@ struct NebulaApp: App {
 
     var body: some Scene {
         WindowGroup {
-            ToneReader { _ in
+            ToneReader(stillPref: model.prefs.still) { _ in
                 RootView()
             }
             .environmentObject(model)
@@ -22,12 +22,17 @@ struct NebulaApp: App {
 
 struct RootView: View {
     @EnvironmentObject private var model: AppModel
+    @Environment(\.tone) private var tone
 
     var body: some View {
         Group {
             if model.link == .unpaired {
                 ZStack {
-                    BackgroundView(kind: model.prefs.background, seed: model.prefs.planetSeed, live: false)
+                    BackgroundView(
+                        kind: model.prefs.background,
+                        seed: model.prefs.planetSeed,
+                        live: model.active && !tone.isStill && !ProcessInfo.processInfo.isLowPowerModeEnabled
+                    )
                     ConnectionView(done: nil)
                 }
             } else {

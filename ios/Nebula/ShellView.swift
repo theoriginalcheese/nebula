@@ -10,61 +10,101 @@ struct ShellView: View {
     @State private var gamesPath = NavigationPath()
 
     var body: some View {
+        let shouldAnimateBg = model.active
+            && !model.playback
+            && !tone.isStill
+            && !ProcessInfo.processInfo.isLowPowerModeEnabled
+            && ProcessInfo.processInfo.thermalState != .serious
+            && ProcessInfo.processInfo.thermalState != .critical
+
         ZStack(alignment: .bottom) {
             BackgroundView(
                 kind: model.prefs.background,
                 seed: model.prefs.planetSeed,
-                live: model.active && !model.prefs.still && !tone.reduceMotion && !ProcessInfo.processInfo.isLowPowerModeEnabled && ProcessInfo.processInfo.thermalState != .serious && ProcessInfo.processInfo.thermalState != .critical
+                live: shouldAnimateBg
             )
+
             ZStack {
                 stack(tab: .now, path: $nowPath) { NowView() }
                 stack(tab: .clips, path: $clipsPath) { ClipsView() }
                 stack(tab: .remote, path: .constant(NavigationPath())) { RemoteView() }
                 stack(tab: .games, path: $gamesPath) { GamesView() }
             }
-            .opacity(model.link == .connecting ? 0.7 : 1)
+            .opacity(model.link == .connecting ? Theme.Opacity.connectingDim : 1.0)
+
             tabBar
+
             if let toast = model.toastText {
                 ToastBanner(text: toast)
-                    .padding(.bottom, 96)
+                    .padding(.bottom, Theme.Space.contentBottomInset - 8)
                     .transition(.opacity)
             }
         }
-        .safeAreaPadding(.bottom, 110)
+        .ignoresSafeArea(.keyboard, edges: .bottom)
         .onChange(of: model.requestedTab) { _, next in
-            if let next { tab = next; model.requestedTab = nil }
+            guard let next = next else { return }
+            withAnimation(tone.motion) {
+                tab = next
+            }
+            model.requestedTab = nil
         }
         .onChange(of: model.clipRoute) { _, id in
-            guard let id else { return }
-            tab = .clips
-            clipsPath.append(ClipDest.clip(id))
+            guard let id = id else { return }
+            if tab == .now && model.requestedTab == nil {
+                nowPath.append(ClipDest.clip(id))
+            } else {
+                tab = .clips
+                clipsPath.append(ClipDest.clip(id))
+            }
             model.clipRoute = nil
         }
-        .onChange(of: tab) { _, _ in model.watchStats(tab == .now && model.active) }
+        .onChange(of: tab) { _, _ in
+            model.watchStats(tab == .now && model.active)
+        }
         .onChange(of: scene) { _, phase in
             model.setActive(phase == .active)
             model.watchStats(tab == .now && phase == .active)
         }
         .sheet(isPresented: $model.settingsPresented) {
-            SettingsRoot().environmentObject(model)
+            ToneReader(stillPref: model.prefs.still) { _ in
+                SettingsRoot()
+            }
+            .environmentObject(model)
+            .preferredColorScheme(.dark)
         }
         .sheet(item: classifyBinding) { item in
-            ClassifySheet(item: item).environmentObject(model)
-                .presentationDetents([.large])
+            ToneReader(stillPref: model.prefs.still) { _ in
+                ClassifySheet(item: item)
+            }
+            .environmentObject(model)
+            .preferredColorScheme(.dark)
+            .presentationDetents([.medium, .large])
+            .presentationBackground(Theme.clear)
         }
-        .onAppear { model.watchStats(true) }
+        .onAppear {
+            model.watchStats(true)
+        }
     }
 
     private var classifyBinding: Binding<PendingApp?> {
-        Binding(
-            get: { model.pendingApp },
+        return Binding(
+            get: { return model.pendingApp },
             set: { model.classifyID = $0?.id }
         )
     }
 
-    private func stack<Content: View>(tab item: PhoneTab, path: Binding<NavigationPath>, @ViewBuilder content: @escaping () -> Content) -> some View {
+    private func stack<Content: View>(
+        tab item: PhoneTab,
+        path: Binding<NavigationPath>,
+        @ViewBuilder content: @escaping () -> Content
+    ) -> some View {
         NavigationStack(path: path) {
-            ScreenChrome(title: item.rawValue, subtitle: subtitle(item), trailing: item == .games ? .add : .settings) {
+            ScreenChrome(
+                tab: item,
+                title: item.rawValue,
+                subtitle: subtitle(item),
+                trailing: item == .games ? .add : .settings
+            ) {
                 content()
             }
             .navigationDestination(for: ClipDest.self) { dest in
@@ -72,12 +112,29 @@ struct ShellView: View {
                 case let .clip(id):
                     ClipDetailView(id: id)
                 case let .game(id):
-                    ClipsView(lockedGame: id)
+                    ScreenChrome(
+                        tab: .clips,
+                        title: gameTitle(for: id),
+                        subtitle: gameSubtitle(for: id),
+                        trailing: .settings,
+                        showsBack: true
+                    ) {
+                        ClipsView(lockedGame: id)
+                    }
                 }
             }
         }
-        .opacity(tab == item ? 1 : 0)
+        .opacity(tab == item ? 1.0 : 0.0)
         .allowsHitTesting(tab == item)
+    }
+
+    private func gameTitle(for id: String) -> String {
+        return model.studio?.games.first(where: { $0.id == id })?.name ?? "Clips"
+    }
+
+    private func gameSubtitle(for id: String) -> String? {
+        guard let game = model.studio?.games.first(where: { $0.id == id }) else { return nil }
+        return "\(game.clipCount) clips · \(StudioFormat.bytes(game.bytes))"
     }
 
     private func subtitle(_ item: PhoneTab) -> String? {
@@ -86,10 +143,11 @@ struct ShellView: View {
             return nil
         case .clips:
             let clips = model.studio?.clips ?? []
-            let games = Set(clips.map(\.game.id)).count
-            let bytes = clips.compactMap(\.bytes).reduce(0, +)
             if clips.isEmpty { return nil }
-            return "\(clips.count) clips · \(StudioFormat.bytes(bytes)) · \(games) games"
+            let games = Set(clips.map(\.game.id)).count
+            let knownBytes = clips.compactMap(\.bytes)
+            let bytesText = knownBytes.isEmpty ? "—" : StudioFormat.bytes(knownBytes.reduce(0, +))
+            return "\(clips.count) clips · \(bytesText) · \(games) games"
         case .remote:
             return "Moonlight · Tailscale"
         case .games:
@@ -98,136 +156,211 @@ struct ShellView: View {
     }
 
     private var tabBar: some View {
-        HStack(spacing: 0) {
+        let pendingCount = model.studio?.pending.count ?? 0
+        return HStack(spacing: 0) {
             ForEach(PhoneTab.allCases) { item in
+                let isSelected = tab == item
                 Button {
-                    withAnimation(tone.motion) { tab = item }
-                } label: {
-                    VStack(spacing: 4) {
-                        Image(systemName: item.symbol)
-                            .font(.system(size: 22, weight: .light))
-                            .foregroundStyle(tab == item ? Theme.violet : tone.tertiary)
-                        Text(item.rawValue)
-                            .font(.system(size: 10, weight: .semibold))
-                            .foregroundStyle(tab == item ? Theme.ink : tone.tertiary)
+                    withAnimation(tone.motion) {
+                        tab = item
                     }
-                    .frame(maxWidth: .infinity, minHeight: 44)
+                } label: {
+                    VStack(spacing: 2) {
+                        ZStack(alignment: .topTrailing) {
+                            Image(systemName: item.symbol)
+                                .font(Theme.TypeScale.icon(Theme.Size.tabIcon, weight: .light))
+                                .foregroundStyle(isSelected ? Theme.violet : tone.tertiary)
+                                .frame(width: 28, height: 26)
+                            if item == .games && pendingCount > 0 {
+                                Circle()
+                                    .fill(Theme.violetLight)
+                                    .frame(width: 7, height: 7)
+                                    .offset(x: 3, y: 1)
+                            }
+                        }
+                        Text(item.rawValue)
+                            .font(Theme.TypeScale.tabLabel)
+                            .foregroundStyle(isSelected ? Theme.ink : tone.tertiary)
+                    }
+                    .frame(maxWidth: .infinity, minHeight: Theme.Size.minHitTarget)
+                    .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel(item.rawValue)
-                .accessibilityAddTraits(tab == item ? .isSelected : [])
+                .accessibilityAddTraits(isSelected ? .isSelected : [])
             }
         }
-        .padding(.horizontal, 8)
-        .frame(height: 62)
+        .padding(.horizontal, Theme.Space.tabBarInnerPad)
+        .frame(height: Theme.Size.tabBarHeight)
         .background {
             if tone.reduceTransparency {
                 Capsule().fill(Theme.card)
             } else {
                 Capsule().fill(.ultraThinMaterial)
-                Capsule().fill(Color(red: 30 / 255, green: 26 / 255, blue: 48 / 255).opacity(0.30))
+                Capsule().fill(Theme.glassBarBase.opacity(Theme.Opacity.barGlassFill))
             }
         }
-        .overlay(Capsule().stroke(Color.white.opacity(tone.hairline), lineWidth: 1))
-        .padding(.horizontal, 21)
-        .padding(.bottom, 28)
+        .overlay(
+            Capsule().stroke(Theme.specular.opacity(tone.increaseContrast ? Theme.Opacity.highContrastHairline : 0.14), lineWidth: Theme.Stroke.hairline)
+        )
+        .shadow(color: Theme.shadow.opacity(0.45), radius: 17, x: 0, y: 12)
+        .padding(.horizontal, Theme.Space.tabBarSideInset)
+        .padding(.bottom, Theme.Space.tabBarBottomInset)
     }
 }
 
-private enum ChromeButton { case settings, add }
+enum ChromeTrailing {
+    case settings
+    case add
+}
 
-private struct ScreenChrome<Content: View>: View {
+struct ScreenChrome<Content: View>: View {
     @EnvironmentObject private var model: AppModel
     @Environment(\.tone) private var tone
+    @Environment(\.dismiss) private var dismiss
+    let tab: PhoneTab
     let title: String
     let subtitle: String?
-    var trailing: ChromeButton = .settings
+    var trailing: ChromeTrailing = .settings
+    var showsBack: Bool = false
     @ViewBuilder var content: () -> Content
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                HStack(alignment: .top) {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(title)
-                            .font(.system(size: 34, weight: .bold))
-                            .tracking(-0.3)
-                            .foregroundStyle(Theme.ink)
-                        if let subtitle {
-                            Button(subtitle) {
-                                if title == "Games" {
-                                    model.settingsPresented = true
-                                    model.settingsRoute = .recording
-                                }
-                            }
-                            .font(.system(size: 13))
-                            .foregroundStyle(Theme.ink2)
-                            .disabled(title != "Games")
-                        }
-                    }
-                    Spacer()
-                    Button {
-                        if trailing == .add {
-                            model.addGame = true
-                        } else {
-                            model.settingsPresented = true
-                        }
-                    } label: {
-                        Image(systemName: trailing == .add ? "plus" : "slider.horizontal.3")
-                            .font(.system(size: 18, weight: .light))
-                            .foregroundStyle(Theme.ink)
-                            .frame(width: 42, height: 42)
-                            .background {
-                                if tone.reduceTransparency {
-                                    Circle().fill(Theme.card)
-                                } else {
-                                    Circle().fill(.ultraThinMaterial)
-                                }
-                            }
-                    }
-                    .accessibilityLabel(trailing == .add ? "Add a game" : "Settings")
-                }
-                if let count = model.studio?.pending.count, count > 0, title == "Games" {
-                    Text(count == 1 ? "1 app to classify" : "\(count) apps to classify")
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(Theme.violetLight)
-                }
+            VStack(alignment: .leading, spacing: Theme.Space.sectionGap) {
+                header
+                    .padding(.horizontal, Theme.Space.headerInset)
+
                 if model.link == .offline {
-                    banner(dot: tone.tertiary, title: "Studio PC is offline", detail: lastSeen)
+                    statusBanner(
+                        dot: tone.tertiary,
+                        title: "Studio PC is offline",
+                        detail: lastSeenText,
+                        coralTint: false
+                    )
                 } else if model.studio?.obsConnected == false {
-                    banner(dot: Theme.coral, title: "OBS isn’t connected on Studio PC", detail: nil)
+                    statusBanner(
+                        dot: Theme.coral,
+                        title: "OBS isn’t connected on Studio PC",
+                        detail: nil,
+                        coralTint: true
+                    )
                 }
+
                 content()
             }
-            .padding(.horizontal, 14)
-            .padding(.top, 8)
-            .padding(.bottom, 24)
+            .padding(.horizontal, Theme.Space.screenMargin)
+            .padding(.top, 16)
+            .padding(.bottom, Theme.Space.contentBottomInset)
         }
         .scrollContentBackground(.hidden)
+        .toolbar(.hidden, for: .navigationBar)
     }
 
-    private var lastSeen: String? {
+    private var header: some View {
+        HStack(alignment: .center, spacing: Theme.Space.bentoGap) {
+            if showsBack {
+                Button {
+                    dismiss()
+                } label: {
+                    GlassCircle(system: "chevron.left", size: Theme.Size.chromeButton)
+                }
+                .buttonStyle(PressScaleStyle())
+                .accessibilityLabel("Back")
+            }
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(Theme.TypeScale.largeTitle)
+                    .tracking(Theme.TypeScale.largeTitleTracking)
+                    .foregroundStyle(Theme.ink)
+                    .lineLimit(1)
+
+                if tab == .games {
+                    Button {
+                        model.settingsRoute = .recording
+                        model.settingsPresented = true
+                    } label: {
+                        HStack(spacing: 4) {
+                            Text("When a game launches:")
+                                .foregroundStyle(Theme.ink2)
+                            Text(model.studio?.settings.launchLabel ?? "Record")
+                                .foregroundStyle(Theme.ink)
+                        }
+                        .font(Theme.TypeScale.subtitle)
+                    }
+                    .buttonStyle(.plain)
+                } else if let subtitle = subtitle {
+                    Text(subtitle)
+                        .font(Theme.TypeScale.subtitle)
+                        .foregroundStyle(Theme.ink2)
+                        .lineLimit(1)
+                }
+            }
+
+            Spacer(minLength: 4)
+
+            Button {
+                if trailing == .add {
+                    model.addGame = true
+                } else {
+                    model.settingsPresented = true
+                }
+            } label: {
+                GlassCircle(
+                    system: trailing == .add ? "plus" : "slider.horizontal.3",
+                    size: Theme.Size.chromeButton
+                )
+            }
+            .buttonStyle(PressScaleStyle())
+            .accessibilityLabel(trailing == .add ? "Add a game" : "Settings")
+        }
+    }
+
+    private var lastSeenText: String? {
         guard let seen = model.lastSeen else { return nil }
         return "Last seen \(StudioFormat.time(seen))"
     }
 
-    private func banner(dot: Color, title: String, detail: String?) -> some View {
+    private func statusBanner(dot: Color, title: String, detail: String?, coralTint: Bool) -> some View {
         HStack(spacing: 10) {
-            Circle().fill(dot).frame(width: 8, height: 8)
+            Circle()
+                .fill(dot)
+                .frame(width: 8, height: 8)
             VStack(alignment: .leading, spacing: 2) {
-                Text(title).foregroundStyle(Theme.ink)
-                if let detail { Text(detail).foregroundStyle(tone.tertiary) }
+                Text(title)
+                    .font(Theme.TypeScale.rowValue)
+                    .foregroundStyle(coralTint ? Theme.coralText : Theme.ink)
+                if let detail = detail {
+                    Text(detail)
+                        .font(Theme.TypeScale.caption)
+                        .foregroundStyle(tone.tertiary)
+                }
             }
-            .font(.system(size: 14))
             Spacer()
         }
-        .padding(14)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
         .background {
-            if tone.reduceTransparency {
-                RoundedRectangle(cornerRadius: 18, style: .continuous).fill(Theme.card)
+            if coralTint {
+                RoundedRectangle(cornerRadius: Theme.Radius.banner, style: .continuous)
+                    .fill(Theme.coral.opacity(0.12))
+            } else if tone.reduceTransparency {
+                RoundedRectangle(cornerRadius: Theme.Radius.banner, style: .continuous)
+                    .fill(Theme.card)
             } else {
-                RoundedRectangle(cornerRadius: 18, style: .continuous).fill(.ultraThinMaterial)
+                RoundedRectangle(cornerRadius: Theme.Radius.banner, style: .continuous)
+                    .fill(.ultraThinMaterial)
+                RoundedRectangle(cornerRadius: Theme.Radius.banner, style: .continuous)
+                    .fill(Theme.glassBarBase.opacity(Theme.Opacity.searchGlassFill))
             }
         }
+        .overlay(
+            RoundedRectangle(cornerRadius: Theme.Radius.banner, style: .continuous)
+                .stroke(
+                    coralTint ? Theme.coral.opacity(0.35) : Theme.ink.opacity(tone.hairline),
+                    lineWidth: Theme.Stroke.hairline
+                )
+        )
     }
 }
