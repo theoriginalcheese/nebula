@@ -295,8 +295,8 @@ struct SettingsPage: View {
                 }
             }
             labelled("Motion") {
-                NebulaSegments(options: [("live", "Live"), ("still", "Still")], selection: model.prefs.motion) {
-                    model.updatePrefs { prefs in prefs.motion = $0 }
+                NebulaSegments(options: [("live", "Live"), ("still", "Still")], selection: model.prefs.motion) { choice in
+                    model.updatePrefs { prefs in prefs.motion = choice }
                 }
             }
             labelled("Random planet") {
