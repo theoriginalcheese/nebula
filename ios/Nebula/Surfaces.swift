@@ -180,14 +180,14 @@ struct ReadingSurface<Content: View>: View {
                     )
                 }
             } else {
-                let alpha = Theme.readingGlassAlpha(for: model.prefs.background.rawValue)
+                // App pages: glass is for the hero, tab bar, search and round buttons.
+                // Reading rows and tiles are the solid plate the frames actually draw.
                 ZStack {
-                    Rectangle().fill(.ultraThinMaterial)
-                    Theme.glassReadingBase.opacity(alpha)
+                    Theme.card
                     LinearGradient(
-                        colors: [Theme.violetLight.opacity(Theme.Opacity.specularMedium), Theme.clear],
-                        startPoint: .topLeading,
-                        endPoint: UnitPoint(x: 0.65, y: 0.46)
+                        colors: [Theme.specular.opacity(0.08), Theme.clear],
+                        startPoint: .top,
+                        endPoint: UnitPoint(x: 0.5, y: 0.45)
                     )
                 }
             }

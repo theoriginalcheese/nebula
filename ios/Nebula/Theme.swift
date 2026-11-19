@@ -121,7 +121,7 @@ enum Theme {
         static let targetHeight: CGFloat = 844
 
         static let tabBarHeight: CGFloat = 62
-        static let tabIcon: CGFloat = 24
+        static let tabIcon: CGFloat = 26
         static let minHitTarget: CGFloat = 44
 
         static let chromeButton: CGFloat = 42

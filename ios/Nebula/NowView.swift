@@ -518,7 +518,7 @@ struct NowView: View {
                         Circle()
                             .trim(from: 0, to: CGFloat(fraction))
                             .stroke(
-                                Theme.violetLight,
+                                Theme.violet,
                                 style: StrokeStyle(lineWidth: Theme.Stroke.storageRing, lineCap: .round)
                             )
                             .rotationEffect(.degrees(-90))
