@@ -50,6 +50,12 @@ jobs:
             DEVELOPMENT_TEAM="" \
             COMPILER_INDEX_STORE_ENABLED=NO
 
+      - name: Check the built app can ask about Moonlight
+        working-directory: ios
+        run: |
+          PLIST="build/Nebula.xcarchive/Products/Applications/Nebula.app/Info.plist"
+          /usr/libexec/PlistBuddy -c "Print :LSApplicationQueriesSchemes" "$PLIST" | grep -qx "    moonlight"
+
       - name: Pack the unsigned IPA
         working-directory: ios
         run: |

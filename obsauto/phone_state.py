@@ -62,6 +62,84 @@ def _clock(seconds):
     return "%02d:%02d:%02d" % (seconds // 3600, (seconds % 3600) // 60, seconds % 60)
 
 
+_USELESS_HOSTS = ("", "localhost", "local", "unknown")
+
+
+def _is_address(text):
+    """True for anything that parses as an IPv4/IPv6 address."""
+    import ipaddress
+    try:
+        ipaddress.ip_address(str(text).strip().strip("[]"))
+        return True
+    except ValueError:
+        return False
+
+
+def _first_label(text):
+    return str(text or "").strip().rstrip(".").split(".", 1)[0].strip()
+
+
+def peer_label(entry):
+    """A peer's on-screen name: its hostname, never an address.
+
+    A hostname that is empty or useless ("localhost") falls back to the first
+    label of the MagicDNS name, which by construction carries no tailnet
+    suffix. A hostname that is itself a dotted name is cut to its first label.
+    None when nothing usable remains - the row is dropped rather than shown as
+    an IP or an invented name.
+    """
+    for raw in (entry.get("hostname"), entry.get("name"), entry.get("dns")):
+        text = str(raw or "").strip()
+        if not text or _is_address(text):
+            continue
+        label = _first_label(text)
+        if label.lower() in _USELESS_HOSTS or _is_address(label):
+            continue
+        return label
+    return None
+
+
+def _is_local_node(entry, own):
+    """Is this peer row actually the node we are running on?"""
+    dns = str(entry.get("dns") or "").rstrip(".").lower()
+    if dns and dns == str(own.get("dns") or "").rstrip(".").lower():
+        return True
+    mine = set(own.get("ips") or [])
+    return bool(mine and mine & set(entry.get("ips") or []))
+
+
+def peer_rows(status):
+    """Every tailnet peer as `{name, online}` - hostname only, no addresses.
+
+    Compares by DNS name and address, not hostname, so a second machine that
+    happens to share this one's hostname is kept. Offline peers stay in.
+    Names are made unique (a repeat gains its MagicDNS label) because the
+    phone keys its rows by name. A peer whose label collides and has no
+    distinct DNS label is dropped, not given an invented name.
+    """
+    status = status or {}
+    own = status.get("self") or {}
+    # This machine's own name is reserved: a stale second node reporting the
+    # same hostname must not read as "this PC" on the phone.
+    taken = {_first_label(own.get("hostname")).lower()} - {""}
+    out = []
+    for entry in (status.get("peer_list") or []):
+        if not isinstance(entry, dict) or _is_local_node(entry, own):
+            continue
+        name = peer_label(entry)
+        if not name:
+            continue
+        if name.lower() in taken:
+            extra = _first_label(entry.get("dns"))
+            if extra and not _is_address(extra) and extra.lower() not in taken:
+                name = extra
+            else:
+                continue
+        taken.add(name.lower())
+        out.append({"name": name, "online": bool(entry.get("online"))})
+    return out
+
+
 class DiskSnapshot:
     """`Api.snapshot()`-shaped payload assembled from files. Read-only."""
 
@@ -210,6 +288,7 @@ class DiskSnapshot:
             "name": entry.name,
             "title": os.path.splitext(entry.name)[0],
             "size_label": _format_bytes(st.st_size),
+            "size": st.st_size,
             "mtime": st.st_mtime,
             "location": "local",
             # Duration needs a probe of the file itself, which is exactly what
@@ -303,16 +382,9 @@ class DiskSnapshot:
 
     def _peers(self):
         from obsauto import tailscale as ts
-        status = ts.status() or {}
-        out = []
-        for peer in (status.get("peer_list") or []):
-            # peer_list entries are keyed `hostname`, not `name`.
-            name = (peer.get("hostname") or peer.get("name") or "").strip()
-            if not name:
-                continue
-            out.append({"name": name, "online": bool(peer.get("online")),
-                        "status": "Online" if peer.get("online") else "Offline"})
-        return out
+        return [{"name": row["name"], "online": row["online"],
+                 "status": "Online" if row["online"] else "Offline"}
+                for row in peer_rows(ts.status() or {})]
 
     def _moonlight(self):
         from obsauto import moonlight as moon

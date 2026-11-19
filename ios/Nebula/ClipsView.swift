@@ -207,7 +207,7 @@ struct ClipsView: View {
                         HStack(spacing: 6) {
                             if clip.locations.contains("nas") || clip.offload == .done {
                                 metaPill(
-                                    text: model.studio?.settings.offloadTarget ?? "nas-vault",
+                                    text: model.studio?.settings.offloadTarget ?? "—",
                                     system: "checkmark",
                                     fg: Theme.teal,
                                     bg: Theme.teal.opacity(0.14)

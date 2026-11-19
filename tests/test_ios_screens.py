@@ -57,6 +57,17 @@ check(
 )
 check("phone preferences are not in the keychain store", "UserDefaults" not in TEXT)
 
+# Remote: the stream control opens the Moonlight app, never an App Store search,
+# and the Stream tile is this phone's panel rather than a typed-in number.
+check("the stream control opens moonlight://", 'URL(string: "moonlight://")' in TEXT)
+check("no App Store search for Moonlight", "apps.apple.com" not in TEXT and "Get Moonlight" not in TEXT)
+check("the stream tile is not a hardcoded 1080p", "1080p" not in TEXT and "nativeBounds" in TEXT)
+PLIST = open(os.path.join(IOS, "Nebula", "Info.plist"), encoding="utf-8").read()
+check("the plist lists the moonlight query scheme",
+      "LSApplicationQueriesSchemes" in PLIST and "<string>moonlight</string>" in PLIST)
+PROJECT = open(os.path.join(IOS, "project.yml"), encoding="utf-8").read()
+check("the app ships its own plist unmerged", "GENERATE_INFOPLIST_FILE: NO" in PROJECT)
+
 passed_all = all(ok for _, ok, _ in results)
 for name, ok, detail in results:
     print("%s  %-62s %s" % ("PASS" if ok else "FAIL", name, detail))

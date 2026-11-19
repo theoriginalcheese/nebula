@@ -83,6 +83,9 @@ final class AppModel: ObservableObject {
     private var savedGeneration = 0
     private var undoExe: String?
     private var undoWasGame = false
+    private var classifyInFlight: Set<String> = []
+    private var resolvedPending: [String: Date] = [:]
+    private let resolvedHold: TimeInterval = 30
     private var clockOffset: TimeInterval = 0
     private let cacheURL: URL
     private let prefsURL: URL
@@ -255,17 +258,35 @@ final class AppModel: ObservableObject {
     }
 
     func classify(_ item: PendingApp, isGame: Bool, capture: String) {
-        command("app.classify", ["pendingId": item.id, "isGame": isGame, "capture": isGame ? capture : "default"]) { [weak self] ok in
-            guard let self, ok else { return }
+        let pendingID = item.id
+        guard !classifyInFlight.contains(pendingID) else { return }
+        classifyInFlight.insert(pendingID)
+        command("app.classify", ["pendingId": pendingID, "isGame": isGame, "capture": isGame ? capture : "default"]) { [weak self] ok in
+            guard let self else { return }
+            self.classifyInFlight.remove(pendingID)
+            guard ok else { return }
             let name = Self.pretty(item.exe)
             self.undoExe = item.exe
             self.undoWasGame = isGame
             self.undoNote = isGame ? "\(name) added — it’ll record" : "\(name) marked not a game"
             self.armUndo()
-            if self.classifyID == item.id {
-                self.classifyID = self.studio?.pending.first?.id
+            // The answer is final on this phone: drop the row now rather than
+            // waiting for app.resolved, and close the sheet (the old code
+            // re-pointed it at pending.first, which was still this item).
+            self.resolvedPending[pendingID] = Date()
+            self.studio?.pending.removeAll { $0.id == pendingID || $0.exe == item.exe }
+            if self.classifyID == pendingID {
+                self.classifyID = nil
             }
         }
+    }
+
+    /// True while a just-answered id may still be echoed back by a stale
+    /// snapshot or a late app.pending event.
+    private func recentlyResolved(_ id: String) -> Bool {
+        let now = Date()
+        resolvedPending = resolvedPending.filter { now.timeIntervalSince($0.value) < resolvedHold }
+        return resolvedPending[id] != nil
     }
 
     func reclassify(exe: String, isGame: Bool) {
@@ -307,11 +328,13 @@ final class AppModel: ObservableObject {
         command("clip.trim", ["id": id, "in": start, "out": end])
     }
 
+    /// Opens Moonlight on this phone first. A slow or offline Studio PC must
+    /// not stand between the tap and the app.
     func stream(openMoonlight: @escaping () -> Void) {
+        openMoonlight()
         command("remote.stream") { [weak self] ok in
             guard ok else { return }
             self?.streaming = true
-            openMoonlight()
         }
     }
 
@@ -367,6 +390,7 @@ final class AppModel: ObservableObject {
             if let server = next.serverNow {
                 clockOffset = Date().timeIntervalSince(server)
             }
+            next.pending.removeAll { recentlyResolved($0.id) }
             studio = next
             cache()
             syncActivity()
@@ -396,7 +420,7 @@ final class AppModel: ObservableObject {
                 if fpsSamples.count > 28 { fpsSamples.removeFirst(fpsSamples.count - 28) }
             }
         case "app.pending":
-            if let item = StudioJSON.pending(data) {
+            if let item = StudioJSON.pending(data), !recentlyResolved(item.id) {
                 studio?.pending.removeAll { $0.id == item.id }
                 studio?.pending.insert(item, at: 0)
                 if active, !playback, !trimming, classifyID == nil {

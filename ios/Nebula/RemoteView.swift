@@ -52,21 +52,12 @@ struct RemoteView: View {
                         }
                     }
 
-                    if moonlightInstalledOnPhone {
-                        PrimaryPill(title: "Stream to this phone", system: "play.fill") {
-                            model.stream {
-                                if let url = URL(string: "moonlight://") {
-                                    openURL(url)
-                                }
-                            }
-                        }
-                        .disabled(!online)
-                        .opacity(online ? 1.0 : Theme.Opacity.disabled)
-                    } else {
-                        PrimaryPill(title: "Get Moonlight", system: "arrow.down") {
-                            if let url = URL(string: "https://apps.apple.com/search?term=Moonlight%20Game%20Streaming") {
-                                openURL(url)
-                            }
+                    // Always try moonlight://. canOpenURL is only a hint (it
+                    // reads LSApplicationQueriesSchemes from the signed plist),
+                    // so a false there must never send the user to the store.
+                    PrimaryPill(title: "Stream to this phone", system: "play.fill") {
+                        model.stream {
+                            openMoonlight()
                         }
                     }
                 }
@@ -82,12 +73,12 @@ struct RemoteView: View {
         Group {
             if typeSize >= .accessibility1 {
                 VStack(spacing: Theme.Space.bentoGap) {
-                    infoTile(eyebrow: "Stream", value: "1080p · 60", detail: "Matches this screen")
+                    infoTile(eyebrow: "Stream", value: panelValue, detail: panelDetail)
                     infoTile(eyebrow: "Controller", value: "On screen", detail: "Or pair a pad")
                 }
             } else {
                 HStack(alignment: .top, spacing: Theme.Space.bentoGap) {
-                    infoTile(eyebrow: "Stream", value: "1080p · 60", detail: "Matches this screen")
+                    infoTile(eyebrow: "Stream", value: panelValue, detail: panelDetail)
                     infoTile(eyebrow: "Controller", value: "On screen", detail: "Or pair a pad")
                 }
             }
@@ -103,6 +94,7 @@ struct RemoteView: View {
                         .font(Theme.TypeScale.cardTitle)
                         .foregroundStyle(Theme.ink)
                         .lineLimit(1)
+                        .minimumScaleFactor(0.7)
                     Text(detail)
                         .font(Theme.TypeScale.caption)
                         .foregroundStyle(tone.tertiary)
@@ -195,8 +187,40 @@ struct RemoteView: View {
         return "Online"
     }
 
-    private var moonlightInstalledOnPhone: Bool {
-        guard let url = URL(string: "moonlight://") else { return false }
-        return UIApplication.shared.canOpenURL(url)
+    private func openMoonlight() {
+        guard let url = URL(string: "moonlight://") else { return }
+        openURL(url) { accepted in
+            if !accepted {
+                model.toast("Couldn’t open Moonlight on this phone.")
+            }
+        }
+    }
+
+    // MARK: - This phone's real panel
+
+    private var phoneScreen: UIScreen? {
+        for scene in UIApplication.shared.connectedScenes {
+            if let windowScene = scene as? UIWindowScene {
+                return windowScene.screen
+            }
+        }
+        return nil
+    }
+
+    /// Native pixels, long edge first: what this panel really is, or an em dash.
+    private var panelValue: String {
+        guard let screen = phoneScreen else { return "—" }
+        let pixels = screen.nativeBounds
+        let longEdge = Int(max(pixels.width, pixels.height).rounded())
+        let shortEdge = Int(min(pixels.width, pixels.height).rounded())
+        if longEdge <= 0 || shortEdge <= 0 { return "—" }
+        return "\(longEdge)×\(shortEdge)"
+    }
+
+    private var panelDetail: String {
+        guard let screen = phoneScreen else { return "This phone" }
+        let rate = screen.maximumFramesPerSecond
+        if rate <= 0 { return "This phone" }
+        return "\(rate) Hz · this phone"
     }
 }

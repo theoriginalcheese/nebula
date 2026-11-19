@@ -349,7 +349,7 @@ struct ClipDetailView: View {
     }
 
     @ViewBuilder private func storedBadge(_ clip: Clip) -> some View {
-        let target = model.studio?.settings.offloadTarget ?? "nas-vault"
+        let target = model.studio?.settings.offloadTarget ?? "—"
         switch clip.offload {
         case let .moving(progress, _):
             HStack(spacing: 6) {
@@ -544,7 +544,8 @@ struct ClipDetailView: View {
     private func deleteDialogTitle(_ clip: Clip) -> String {
         var line = "Delete this clip from Studio PC and nas-vault?"
         if clip.offload.isActive {
-            line += " It’s still being copied to nas-vault."
+            let target = model.studio?.settings.offloadTarget ?? "—"
+            line += " It’s still being copied to \(target)."
         }
         return line
     }

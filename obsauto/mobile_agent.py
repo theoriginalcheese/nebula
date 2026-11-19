@@ -187,7 +187,9 @@ class MobileAgent:
             return [_error(mid, "unknown", "Unknown message type.")]
         if kind != "hello" and not self.paired:
             return [_error(mid, "unpaired", "Say hello before sending commands.")]
-        return handler(self, mid, data)
+        # Resolved through the instance so a subclass (the real-state studio)
+        # can override a verb without touching the table.
+        return getattr(self, handler.__name__)(mid, data)
 
     def _hello(self, mid, data):
         if data.get("deviceToken") != self.token:
@@ -468,7 +470,12 @@ class MobileAgent:
 
 
 def serve_mock(agent, host="127.0.0.1", port=0):
-    """One-client WebSocket around `handle`. Returns (stop_event, bound_port)."""
+    """One-client WebSocket around `handle`. Returns (stop_event, bound_port).
+
+    An agent that defines `poll_events()` gets it called every few seconds
+    while a client is connected; whatever it returns is pushed unsolicited.
+    The seeded mock has no such method, so the tests see no change.
+    """
     listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     listener.bind((host, port))
@@ -495,18 +502,45 @@ def serve_mock(agent, host="127.0.0.1", port=0):
     return stop, bound
 
 
+_PUSH_EVERY_S = 3.0
+
+
 def _speak(conn, agent):
     _handshake(conn)
-    while True:
-        text = _read_text(conn)
-        if text is None:
-            return
+    lock = threading.Lock()
+    done = threading.Event()
+    poll = getattr(agent, "poll_events", None)
+    if callable(poll):
+        threading.Thread(
+            target=_push_loop, args=(conn, lock, done, agent, poll),
+            name="mobile-push", daemon=True,
+        ).start()
+    try:
+        while True:
+            text = _read_text(conn, lock)
+            if text is None:
+                return
+            try:
+                message = json.loads(text)
+            except ValueError:
+                message = None
+            for outbound in agent.handle(message):
+                _send_text(conn, json.dumps(outbound), lock)
+    finally:
+        done.set()
+
+
+def _push_loop(conn, lock, done, agent, poll):
+    while not done.wait(_PUSH_EVERY_S):
+        if not agent.paired:
+            continue
         try:
-            message = json.loads(text)
-        except ValueError:
-            message = None
-        for outbound in agent.handle(message):
-            _send_text(conn, json.dumps(outbound))
+            for outbound in poll() or ():
+                _send_text(conn, json.dumps(outbound), lock)
+        except OSError:
+            return
+        except Exception:
+            continue
 
 
 def _handshake(conn):
@@ -542,7 +576,7 @@ def _read_exact(conn, count):
     return blob
 
 
-def _read_text(conn):
+def _read_text(conn, lock=None):
     parts = []
     while True:
         head = _read_exact(conn, 2)
@@ -560,7 +594,7 @@ def _read_text(conn):
         if opcode == 0x8:
             return None
         if opcode == 0x9:
-            _send_raw(conn, 0xA, payload)
+            _send_raw(conn, 0xA, payload, lock)
             continue
         if opcode == 0xA:
             continue
@@ -569,11 +603,11 @@ def _read_text(conn):
             return b"".join(parts).decode("utf-8")
 
 
-def _send_text(conn, text):
-    _send_raw(conn, 0x1, text.encode("utf-8"))
+def _send_text(conn, text, lock=None):
+    _send_raw(conn, 0x1, text.encode("utf-8"), lock)
 
 
-def _send_raw(conn, opcode, payload):
+def _send_raw(conn, opcode, payload, lock=None):
     length = len(payload)
     if length < 126:
         head = bytes([0x80 | opcode, length])
@@ -581,7 +615,11 @@ def _send_raw(conn, opcode, payload):
         head = bytes([0x80 | opcode, 126]) + length.to_bytes(2, "big")
     else:
         head = bytes([0x80 | opcode, 127]) + length.to_bytes(8, "big")
-    conn.sendall(head + payload)
+    if lock is None:
+        conn.sendall(head + payload)
+        return
+    with lock:
+        conn.sendall(head + payload)
 
 
 def _idle_session():
@@ -686,15 +724,32 @@ _DISPATCH = {
 }
 
 
-def main():
-    """Serve the mock studio on the Tailscale address only.
+def main(argv=None):
+    """Serve a studio on the Tailscale address only.
 
-    The phone types this address itself. Nothing here reads config.json, and
-    the listener is never opened on the home LAN.
+    By default the studio is the machine's real state (`obsauto.mobile_real`):
+    games from games.json, clips that exist under recording_root, live
+    tailnet peers. `--mock` (or NEBULA_MOBILE_MOCK=1) serves `seed_mock()`
+    instead, for demos. A failure to build real state exits non-zero; it
+    never falls back to the mock behind the user's back.
+
+    The phone types this address itself, and the listener is never opened on
+    the home LAN.
     """
+    import argparse
+    import os
     import time
 
     from obsauto import tailscale as ts
+
+    parser = argparse.ArgumentParser(prog="python -m obsauto.mobile_agent")
+    parser.add_argument("--mock", action="store_true",
+                        help="serve the seeded in-memory demo studio")
+    parser.add_argument("--root", default=None,
+                        help="checkout holding config.json / games.json")
+    parser.add_argument("--port", type=int, default=DEFAULT_PORT)
+    args = parser.parse_args(argv)
+    use_mock = args.mock or os.environ.get("NEBULA_MOBILE_MOCK") == "1"
 
     try:
         status = ts.status()
@@ -703,11 +758,21 @@ def main():
     ips = ((status or {}).get("self") or {}).get("ips") or []
     host = ips[0] if ips else None
     if not host:
-        print("No Tailscale address. The mock will not listen on the LAN.")
+        print("No Tailscale address. The studio will not listen on the LAN.")
         return 1
-    _stop, port = serve_mock(seed_mock(), host, DEFAULT_PORT)
-    print("Mock studio at ws://%s:%d/nebula" % (host, port))
-    print("Token for the phone: %s" % MOCK_TOKEN)
+    if use_mock:
+        agent = seed_mock()
+    else:
+        try:
+            from obsauto.mobile_real import build_real_agent
+            agent = build_real_agent(root=args.root)
+        except Exception as exc:
+            print("Could not read this machine's state: %s" % exc)
+            return 1
+    _stop, port = serve_mock(agent, host, args.port)
+    print("%s studio at ws://%s:%d/nebula" % (
+        "Mock" if use_mock else "Real", host, port))
+    print("Token for the phone: %s" % agent.token)
     try:
         while True:
             time.sleep(3600)

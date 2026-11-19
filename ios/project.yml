@@ -26,7 +26,10 @@ targets:
       TARGETED_DEVICE_FAMILY: "1"
       IPHONEOS_DEPLOYMENT_TARGET: "17.0"
       INFOPLIST_FILE: Nebula/Info.plist
-      GENERATE_INFOPLIST_FILE: YES
+      # Ship Nebula/Info.plist exactly as written. Generated + merged plists
+      # are how LSApplicationQueriesSchemes (the moonlight scheme) can go
+      # missing; the IPA workflow asserts it is in the built app.
+      GENERATE_INFOPLIST_FILE: NO
       CODE_SIGN_STYLE: Manual
       CODE_SIGNING_ALLOWED: "NO"
       CODE_SIGNING_REQUIRED: "NO"

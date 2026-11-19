@@ -117,6 +117,8 @@ struct GamesView: View {
                             Text("It’s a game")
                                 .font(Theme.TypeScale.controlSemibold)
                                 .foregroundStyle(Theme.ink)
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.8)
                                 .frame(maxWidth: .infinity, minHeight: Theme.Size.compactPillHeight)
                                 .background(
                                     RoundedRectangle(cornerRadius: Theme.Radius.actionPill, style: .continuous)
@@ -137,6 +139,8 @@ struct GamesView: View {
                             Text("Not a game")
                                 .font(Theme.TypeScale.controlSemibold)
                                 .foregroundStyle(Theme.ink2)
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.8)
                                 .frame(maxWidth: .infinity, minHeight: Theme.Size.compactPillHeight)
                                 .overlay(
                                     RoundedRectangle(cornerRadius: Theme.Radius.actionPill, style: .continuous)
@@ -441,56 +445,21 @@ struct ClassifySheet: View {
                         .padding(.horizontal, 16)
                         .padding(.vertical, 4)
                     }
-
-                    VStack(alignment: .leading, spacing: Theme.Space.chipGap) {
-                        Eyebrow(text: "If it’s a game")
-                        NebulaSegments(
-                            options: [
-                                ("record", "Record"),
-                                ("buffer", "Buffer"),
-                                ("both", "Both"),
-                            ],
-                            selection: capture
-                        ) { next in
-                            capture = next
-                        }
-                    }
-
-                    VStack(spacing: Theme.Space.gridGap) {
-                        PrimaryPill(title: "It’s a game — \(verb)", system: "checkmark") {
-                            UINotificationFeedbackGenerator().notificationOccurred(.success)
-                            model.classify(item, isGame: true, capture: capture)
-                        }
-
-                        Button {
-                            UINotificationFeedbackGenerator().notificationOccurred(.success)
-                            model.classify(item, isGame: false, capture: "default")
-                        } label: {
-                            Text("Not a game")
-                                .font(Theme.TypeScale.rowTitle)
-                                .foregroundStyle(Theme.ink2)
-                                .frame(maxWidth: .infinity, minHeight: Theme.Size.ghostHeight)
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: Theme.Radius.ghostPill, style: .continuous)
-                                        .stroke(Theme.ink.opacity(0.14), lineWidth: Theme.Stroke.hairline)
-                                )
-                                .contentShape(RoundedRectangle(cornerRadius: Theme.Radius.ghostPill, style: .continuous))
-                        }
-                        .buttonStyle(PressScaleStyle())
-
-                        Text("Asked once, remembered forever. Change any call in Games.")
-                            .font(Theme.TypeScale.caption)
-                            .foregroundStyle(tone.tertiary)
-                            .multilineTextAlignment(.center)
-                            .frame(maxWidth: .infinity)
-                            .padding(.top, 2)
-                    }
                 }
                 .padding(.horizontal, 22)
                 .padding(.top, 10)
-                .padding(.bottom, 26)
+                .padding(.bottom, 18)
             }
-            .padding(8)
+            .padding(.horizontal, 8)
+            .padding(.top, 8)
+        }
+        .scrollBounceBehavior(.basedOnSize)
+        // The capture choice and both answers are pinned, not scrolled: the
+        // sheet opens at a medium detent, and anything below the fold there
+        // used to sit under the home indicator. safeAreaInset keeps them
+        // clear of it at any height or text size.
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            actionBar
         }
         .background(Theme.modalBackdrop.opacity(0.65).ignoresSafeArea())
         .onAppear {
@@ -499,6 +468,88 @@ struct ClassifySheet: View {
         .onChange(of: item.id) { _, _ in
             capture = model.studio?.settings.launchCapture ?? "record"
         }
+    }
+
+    private var actionBar: some View {
+        VStack(spacing: Theme.Space.gridGap) {
+            VStack(alignment: .leading, spacing: Theme.Space.chipGap) {
+                Eyebrow(text: "If it’s a game")
+                NebulaSegments(
+                    options: [
+                        ("record", "Record"),
+                        ("buffer", "Buffer"),
+                        ("both", "Both"),
+                    ],
+                    selection: capture
+                ) { next in
+                    capture = next
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            Button {
+                UINotificationFeedbackGenerator().notificationOccurred(.success)
+                model.classify(item, isGame: true, capture: capture)
+            } label: {
+                HStack(spacing: Theme.Space.bentoGap) {
+                    Text("It’s a game — \(verb)")
+                        .font(Theme.TypeScale.cardTitle)
+                        .foregroundStyle(Theme.ink)
+                        .lineLimit(2)
+                        .minimumScaleFactor(0.8)
+                        .multilineTextAlignment(.leading)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 4)
+                    Image(systemName: "checkmark")
+                        .font(Theme.TypeScale.icon(16, weight: .semibold))
+                        .foregroundStyle(Theme.ink)
+                        .frame(width: Theme.Size.primaryTrailingCircle, height: Theme.Size.primaryTrailingCircle)
+                        .background(Circle().fill(Theme.violet.opacity(Theme.Opacity.primaryBadgeFill)))
+                        .overlay(Circle().stroke(Theme.violetLight.opacity(0.32), lineWidth: Theme.Stroke.hairline))
+                }
+                .padding(.leading, 22)
+                .padding(.trailing, 6)
+                .padding(.vertical, 4)
+                .frame(maxWidth: .infinity, minHeight: Theme.Size.primaryHeight)
+                .background(
+                    RoundedRectangle(cornerRadius: Theme.Size.primaryHeight / 2.0, style: .continuous)
+                        .fill(Theme.violet.opacity(Theme.Opacity.primaryFill))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: Theme.Size.primaryHeight / 2.0, style: .continuous)
+                        .stroke(Theme.violet.opacity(Theme.Opacity.primaryRing), lineWidth: Theme.Stroke.hairline)
+                )
+                .contentShape(RoundedRectangle(cornerRadius: Theme.Size.primaryHeight / 2.0, style: .continuous))
+            }
+            .buttonStyle(PressScaleStyle())
+
+            Button {
+                UINotificationFeedbackGenerator().notificationOccurred(.success)
+                model.classify(item, isGame: false, capture: "default")
+            } label: {
+                Text("Not a game")
+                    .font(Theme.TypeScale.rowTitle)
+                    .foregroundStyle(Theme.ink2)
+                    .frame(maxWidth: .infinity, minHeight: Theme.Size.ghostHeight)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: Theme.Radius.ghostPill, style: .continuous)
+                            .stroke(Theme.ink.opacity(0.14), lineWidth: Theme.Stroke.hairline)
+                    )
+                    .contentShape(RoundedRectangle(cornerRadius: Theme.Radius.ghostPill, style: .continuous))
+            }
+            .buttonStyle(PressScaleStyle())
+
+            Text("Asked once, remembered forever. Change any call in Games.")
+                .font(Theme.TypeScale.caption)
+                .foregroundStyle(tone.tertiary)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity)
+        }
+        .padding(.horizontal, 30)
+        .padding(.top, 12)
+        .padding(.bottom, 12)
+        .background(Theme.modalBackdrop.opacity(0.92))
     }
 
     private var windowSummary: String {
@@ -521,12 +572,24 @@ struct ClassifySheet: View {
     }
 
     private func sheetFactRow<ValueContent: View>(_ label: String, @ViewBuilder value: () -> ValueContent) -> some View {
-        HStack(spacing: 10) {
-            Text(label)
-                .font(Theme.TypeScale.rowValue)
-                .foregroundStyle(Theme.ink2)
-            Spacer(minLength: 8)
-            value()
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 10) {
+                Text(label)
+                    .font(Theme.TypeScale.rowValue)
+                    .foregroundStyle(Theme.ink2)
+                    .fixedSize()
+                Spacer(minLength: 8)
+                value()
+                    .multilineTextAlignment(.trailing)
+            }
+            VStack(alignment: .leading, spacing: 2) {
+                Text(label)
+                    .font(Theme.TypeScale.rowValue)
+                    .foregroundStyle(Theme.ink2)
+                value()
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.vertical, 8)
         }
         .frame(minHeight: Theme.Size.sheetFactRowHeight)
     }

@@ -610,7 +610,7 @@ struct NowView: View {
 
     private var offloadTile: some View {
         let active = (model.studio?.clips ?? []).filter { $0.offload.isActive }
-        let target = model.studio?.settings.offloadTarget ?? "nas-vault"
+        let target = model.studio?.settings.offloadTarget ?? "—"
 
         return tileCard {
             if active.isEmpty {
@@ -715,7 +715,7 @@ struct NowView: View {
     private func libraryTile(_ session: Session?) -> some View {
         let free = session?.storageFreeBytes
         let pending = (model.studio?.clips ?? []).contains { $0.offload.isActive }
-        let target = model.studio?.settings.offloadTarget ?? "nas-vault"
+        let target = model.studio?.settings.offloadTarget ?? "—"
 
         return tileCard {
             Eyebrow(text: "Library")
@@ -889,7 +889,7 @@ struct NowView: View {
     }
 
     @ViewBuilder private func clipLocationBadge(_ clip: Clip) -> some View {
-        let target = model.studio?.settings.offloadTarget ?? "nas-vault"
+        let target = model.studio?.settings.offloadTarget ?? "—"
         if clip.writing {
             Text("Writing")
                 .font(Theme.TypeScale.captionSemibold)
@@ -1050,7 +1050,7 @@ struct NowView: View {
     }
 
     private func offloadLine(_ offload: Offload) -> String {
-        let target = model.studio?.settings.offloadTarget ?? "nas-vault"
+        let target = model.studio?.settings.offloadTarget ?? "—"
         switch offload {
         case .done:
             return "on \(target)"
@@ -1193,7 +1193,7 @@ struct ClipStack: View {
                         if clip.locations.contains("nas") || clip.offload == .done {
                             HStack(spacing: 4) {
                                 Image(systemName: "checkmark")
-                                Text(model.studio?.settings.offloadTarget ?? "nas-vault")
+                                Text(model.studio?.settings.offloadTarget ?? "—")
                             }
                             .foregroundStyle(Theme.teal)
                         }
