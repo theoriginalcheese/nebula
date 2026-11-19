@@ -198,8 +198,8 @@ struct SettingsRoot: View {
                         Spacer()
 
                         Image(systemName: "chevron.right")
-                            .font(Theme.TypeScale.icon(14, weight: .semibold))
-                            .foregroundStyle(tone.tertiary)
+                            .font(Theme.TypeScale.icon(13, weight: .light))
+                            .foregroundStyle(Theme.inkMuted)
                     }
                     .padding(.horizontal, 16)
                     .padding(.vertical, 14)
@@ -253,9 +253,9 @@ struct SettingsRoot: View {
                             ZStack {
                                 RoundedRectangle(cornerRadius: Theme.Radius.settingsIcon, style: .continuous)
                                     .fill(item.iconFill)
-                                Image(systemName: item.symbol)
-                                    .font(Theme.TypeScale.icon(15, weight: .regular))
-                                    .foregroundStyle(item.iconStroke)
+                                MenuIcon(symbol: item.symbol)
+                                    .stroke(item.iconStroke, style: StrokeStyle(lineWidth: 1.6, lineCap: .round, lineJoin: .round))
+                                    .frame(width: 17, height: 17)
                             }
                             .frame(width: Theme.Size.settingsIconBox, height: Theme.Size.settingsIconBox)
 
@@ -272,7 +272,7 @@ struct SettingsRoot: View {
                                 .lineLimit(1)
 
                             Image(systemName: "chevron.right")
-                                .font(Theme.TypeScale.icon(12, weight: .semibold))
+                                .font(Theme.TypeScale.icon(11, weight: .light))
                                 .foregroundStyle(Theme.inkMuted)
                         }
                         .frame(minHeight: Theme.Size.settingsRowHeight)
@@ -1186,5 +1186,98 @@ private struct NebulaSwitch: View {
         }
         .buttonStyle(.plain)
         .accessibilityValue(isOn ? "On" : "Off")
+    }
+}
+
+/// Line icons for the settings rows, drawn at the same weight as the frames
+/// rather than as filled system badges.
+struct MenuIcon: Shape {
+    var symbol: String
+
+    func path(in rect: CGRect) -> Path {
+        let scale = min(rect.width, rect.height) / 24.0
+        var unit = Path()
+        switch symbol {
+        case "folder":
+            unit.move(to: CGPoint(x: 3.5, y: 9.5))
+            unit.addLine(to: CGPoint(x: 3.5, y: 17.5))
+            unit.addQuadCurve(to: CGPoint(x: 5.5, y: 19.5), control: CGPoint(x: 3.5, y: 19.5))
+            unit.addLine(to: CGPoint(x: 18.5, y: 19.5))
+            unit.addQuadCurve(to: CGPoint(x: 20.5, y: 17.5), control: CGPoint(x: 20.5, y: 19.5))
+            unit.addLine(to: CGPoint(x: 20.5, y: 9.5))
+            unit.addQuadCurve(to: CGPoint(x: 18.5, y: 7.5), control: CGPoint(x: 20.5, y: 7.5))
+            unit.addLine(to: CGPoint(x: 11.5, y: 7.5))
+            unit.addLine(to: CGPoint(x: 9.5, y: 5.5))
+            unit.addLine(to: CGPoint(x: 5.5, y: 5.5))
+            unit.addQuadCurve(to: CGPoint(x: 3.5, y: 7.5), control: CGPoint(x: 3.5, y: 5.5))
+            unit.closeSubpath()
+        case "clock.arrow.circlepath":
+            unit.addArc(
+                center: CGPoint(x: 12, y: 13),
+                radius: 7,
+                startAngle: .degrees(-40),
+                endAngle: .degrees(260),
+                clockwise: false
+            )
+            unit.move(to: CGPoint(x: 6.5, y: 6.2))
+            unit.addLine(to: CGPoint(x: 6.5, y: 9.6))
+            unit.addLine(to: CGPoint(x: 10, y: 9.6))
+            unit.move(to: CGPoint(x: 12, y: 10))
+            unit.addLine(to: CGPoint(x: 12, y: 13))
+            unit.addLine(to: CGPoint(x: 14.4, y: 14.6))
+        case "gamecontroller":
+            return TabGlyph(tab: .games).path(in: rect)
+        case "keyboard":
+            unit.addRoundedRect(in: CGRect(x: 3, y: 6, width: 18, height: 12), cornerSize: CGSize(width: 2, height: 2))
+            unit.move(to: CGPoint(x: 7.5, y: 10))
+            unit.addLine(to: CGPoint(x: 7.5, y: 10.2))
+            unit.move(to: CGPoint(x: 12, y: 10))
+            unit.addLine(to: CGPoint(x: 12, y: 10.2))
+            unit.move(to: CGPoint(x: 16.5, y: 10))
+            unit.addLine(to: CGPoint(x: 16.5, y: 10.2))
+            unit.move(to: CGPoint(x: 8, y: 14))
+            unit.addLine(to: CGPoint(x: 16, y: 14))
+        case "icloud":
+            unit.move(to: CGPoint(x: 7, y: 18))
+            unit.addCurve(to: CGPoint(x: 8, y: 10), control1: CGPoint(x: 3.5, y: 17.5), control2: CGPoint(x: 4, y: 11))
+            unit.addCurve(to: CGPoint(x: 17, y: 9.5), control1: CGPoint(x: 9.5, y: 6), control2: CGPoint(x: 15, y: 6.5))
+            unit.addCurve(to: CGPoint(x: 17.5, y: 18), control1: CGPoint(x: 21, y: 10), control2: CGPoint(x: 21, y: 17))
+            unit.addQuadCurve(to: CGPoint(x: 7, y: 18), control: CGPoint(x: 12, y: 19.2))
+        case "externaldrive":
+            unit.addRoundedRect(in: CGRect(x: 4, y: 5, width: 16, height: 10), cornerSize: CGSize(width: 1.5, height: 1.5))
+            unit.move(to: CGPoint(x: 12, y: 15))
+            unit.addLine(to: CGPoint(x: 12, y: 19))
+            unit.move(to: CGPoint(x: 8, y: 19))
+            unit.addLine(to: CGPoint(x: 16, y: 19))
+        case "play.tv":
+            return TabGlyph(tab: .remote).path(in: rect)
+        case "paintpalette":
+            unit.addEllipse(in: CGRect(x: 6, y: 6, width: 12, height: 12))
+            unit.move(to: CGPoint(x: 3, y: 15))
+            unit.addQuadCurve(to: CGPoint(x: 21, y: 9), control: CGPoint(x: 14, y: 18))
+        case "bell":
+            unit.move(to: CGPoint(x: 6, y: 16))
+            unit.addLine(to: CGPoint(x: 6, y: 11))
+            unit.addQuadCurve(to: CGPoint(x: 18, y: 11), control: CGPoint(x: 12, y: 4))
+            unit.addLine(to: CGPoint(x: 18, y: 16))
+            unit.addLine(to: CGPoint(x: 19.5, y: 18))
+            unit.addLine(to: CGPoint(x: 4.5, y: 18))
+            unit.closeSubpath()
+            unit.move(to: CGPoint(x: 10, y: 20))
+            unit.addQuadCurve(to: CGPoint(x: 14, y: 20), control: CGPoint(x: 12, y: 21.5))
+        default:
+            unit.addArc(
+                center: CGPoint(x: 12, y: 12),
+                radius: 7,
+                startAngle: .degrees(40),
+                endAngle: .degrees(320),
+                clockwise: false
+            )
+            unit.move(to: CGPoint(x: 17.2, y: 5.2))
+            unit.addLine(to: CGPoint(x: 17.2, y: 8.6))
+            unit.addLine(to: CGPoint(x: 13.8, y: 8.6))
+        }
+        let fitted = CGAffineTransform(translationX: rect.minX, y: rect.minY).scaledBy(x: scale, y: scale)
+        return unit.applying(fitted)
     }
 }

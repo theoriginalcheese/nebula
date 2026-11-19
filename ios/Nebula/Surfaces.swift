@@ -350,7 +350,6 @@ struct NebulaSegments: View {
                                     .matchedGeometryEffect(id: "segmentThumb", in: slideNamespace)
                             }
                         }
-                        .frame(minHeight: Theme.Size.minHitTarget)
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
@@ -367,7 +366,6 @@ struct NebulaSegments: View {
             RoundedRectangle(cornerRadius: trackRadius, style: .continuous)
                 .stroke(Theme.ink.opacity(tone.hairline), lineWidth: Theme.Stroke.hairline)
         )
-        .frame(minHeight: Theme.Size.minHitTarget)
     }
 }
 

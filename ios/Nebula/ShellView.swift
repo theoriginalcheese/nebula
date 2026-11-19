@@ -186,10 +186,9 @@ struct ShellView: View {
                 } label: {
                     VStack(spacing: 2) {
                         ZStack(alignment: .topTrailing) {
-                            Image(systemName: item.symbol)
-                                .font(Theme.TypeScale.icon(Theme.Size.tabIcon, weight: .light))
-                                .foregroundStyle(isSelected ? Theme.violet : tone.tertiary)
-                                .frame(width: 28, height: 26)
+                            TabGlyph(tab: item)
+                                .stroke(isSelected ? Theme.violet : tone.tertiary, lineWidth: 1.5)
+                                .frame(width: Theme.Size.tabIcon, height: Theme.Size.tabIcon)
                             if item == .games && pendingCount > 0 {
                                 Circle()
                                     .fill(Theme.violetLight)
@@ -199,6 +198,7 @@ struct ShellView: View {
                         }
                         Text(item.rawValue)
                             .font(Theme.TypeScale.tabLabel)
+                            .tracking(0.2)
                             .foregroundStyle(isSelected ? Theme.ink : tone.tertiary)
                     }
                     .frame(maxWidth: .infinity, minHeight: Theme.Size.minHitTarget)
@@ -215,14 +215,21 @@ struct ShellView: View {
             if tone.reduceTransparency {
                 Capsule().fill(Theme.card)
             } else {
-                Capsule().fill(.ultraThinMaterial)
-                Capsule().fill(Theme.glassBarBase.opacity(Theme.Opacity.barGlassFill))
+                // Even glass. A thinner material lets the card underneath print
+                // through as a blob behind whichever tab happens to sit on it.
+                Capsule().fill(.thinMaterial)
+                Capsule().fill(Theme.glassBarBase.opacity(0.62))
             }
         }
-        .overlay(
-            Capsule().stroke(Theme.specular.opacity(tone.increaseContrast ? Theme.Opacity.highContrastHairline : 0.14), lineWidth: Theme.Stroke.hairline)
-        )
-        .shadow(color: Theme.shadow.opacity(0.45), radius: 17, x: 0, y: 12)
+        .overlay {
+            Capsule().stroke(Theme.specular.opacity(tone.increaseContrast ? Theme.Opacity.highContrastHairline : 0.16), lineWidth: Theme.Stroke.hairline)
+            Capsule()
+                .stroke(Theme.specular.opacity(0.30), lineWidth: 1)
+                .mask(
+                    LinearGradient(colors: [Theme.ink, Theme.clear], startPoint: .top, endPoint: .center)
+                )
+        }
+        .shadow(color: Theme.shadow.opacity(0.50), radius: 22, x: 0, y: 12)
         .padding(.horizontal, Theme.Space.tabBarSideInset)
         .padding(.bottom, Theme.Space.tabBarBottomInset)
     }
@@ -407,5 +414,79 @@ struct ClearHostBackground: UIViewRepresentable {
                 current = current?.superview
             }
         }
+    }
+}
+
+/// The four tab marks from the design frames: 1.5 pt line, round caps, no fill.
+struct TabGlyph: Shape {
+    var tab: PhoneTab
+
+    func path(in rect: CGRect) -> Path {
+        let scale = min(rect.width, rect.height) / 24.0
+        var unit = Path()
+        switch tab {
+        case .now:
+            unit.addEllipse(in: CGRect(x: 3.4, y: 3.4, width: 17.2, height: 17.2))
+            unit.addEllipse(in: CGRect(x: 9.2, y: 9.2, width: 5.6, height: 5.6))
+        case .clips:
+            unit.addRoundedRect(
+                in: CGRect(x: 3.5, y: 5, width: 17, height: 14),
+                cornerSize: CGSize(width: 2.6, height: 2.6)
+            )
+            unit.move(to: CGPoint(x: 7.6, y: 5))
+            unit.addLine(to: CGPoint(x: 7.6, y: 19))
+            unit.move(to: CGPoint(x: 16.4, y: 5))
+            unit.addLine(to: CGPoint(x: 16.4, y: 19))
+        case .remote:
+            unit.addRoundedRect(
+                in: CGRect(x: 2.8, y: 4.2, width: 18.4, height: 12.6),
+                cornerSize: CGSize(width: 2.4, height: 2.4)
+            )
+            unit.move(to: CGPoint(x: 9, y: 20.2))
+            unit.addLine(to: CGPoint(x: 15, y: 20.2))
+            unit.move(to: CGPoint(x: 12, y: 16.8))
+            unit.addLine(to: CGPoint(x: 12, y: 20.2))
+            unit.move(to: CGPoint(x: 10.6, y: 8.4))
+            unit.addLine(to: CGPoint(x: 10.6, y: 12.8))
+            unit.addLine(to: CGPoint(x: 14.4, y: 10.6))
+            unit.closeSubpath()
+        case .games:
+            unit.move(to: CGPoint(x: 7.6, y: 7.4))
+            unit.addLine(to: CGPoint(x: 16.4, y: 7.4))
+            unit.addCurve(
+                to: CGPoint(x: 20.9, y: 11.8),
+                control1: CGPoint(x: 18.9, y: 7.4),
+                control2: CGPoint(x: 20.5, y: 9.3)
+            )
+            unit.addLine(to: CGPoint(x: 21.5, y: 16))
+            unit.addCurve(
+                to: CGPoint(x: 18.5, y: 18),
+                control1: CGPoint(x: 21.8, y: 17.8),
+                control2: CGPoint(x: 19.9, y: 19)
+            )
+            unit.addLine(to: CGPoint(x: 16.3, y: 16.4))
+            unit.addQuadCurve(to: CGPoint(x: 14.9, y: 15.9), control: CGPoint(x: 15.6, y: 15.9))
+            unit.addLine(to: CGPoint(x: 9.1, y: 15.9))
+            unit.addQuadCurve(to: CGPoint(x: 7.7, y: 16.4), control: CGPoint(x: 8.4, y: 15.9))
+            unit.addLine(to: CGPoint(x: 5.5, y: 18))
+            unit.addCurve(
+                to: CGPoint(x: 2.5, y: 16),
+                control1: CGPoint(x: 4.1, y: 19),
+                control2: CGPoint(x: 2.2, y: 17.8)
+            )
+            unit.addLine(to: CGPoint(x: 3.1, y: 11.8))
+            unit.addCurve(
+                to: CGPoint(x: 7.6, y: 7.4),
+                control1: CGPoint(x: 3.5, y: 9.3),
+                control2: CGPoint(x: 5.1, y: 7.4)
+            )
+            unit.closeSubpath()
+            unit.move(to: CGPoint(x: 7.6, y: 10.2))
+            unit.addLine(to: CGPoint(x: 7.6, y: 13.4))
+            unit.move(to: CGPoint(x: 6, y: 11.8))
+            unit.addLine(to: CGPoint(x: 9.2, y: 11.8))
+        }
+        let fitted = CGAffineTransform(translationX: rect.minX, y: rect.minY).scaledBy(x: scale, y: scale)
+        return unit.applying(fitted)
     }
 }
