@@ -462,7 +462,7 @@ struct NowView: View {
         }
     }
 
-    private func tileCard<Content: View>(@ViewBuilder content: () -> Content) -> some View {
+    private func tileCard<Content: View>(@ViewBuilder content: @escaping () -> Content) -> some View {
         Tray(role: .tile) {
             ReadingSurface(radius: Theme.Radius.tileCard) {
                 VStack(alignment: .leading, spacing: 6) {
@@ -487,15 +487,6 @@ struct NowView: View {
                 ZStack {
                     Circle()
                         .stroke(Theme.ink.opacity(0.08), lineWidth: Theme.Stroke.storageRing)
-                    if freeBytes != nil {
-                        Circle()
-                            .trim(from: 0, to: 0.25)
-                            .stroke(
-                                Theme.violet,
-                                style: StrokeStyle(lineWidth: Theme.Stroke.storageRing, lineCap: .round)
-                            )
-                            .rotationEffect(.degrees(-90))
-                    }
                     Text("—")
                         .font(Theme.TypeScale.ringPercent)
                         .foregroundStyle(tone.tertiary)
