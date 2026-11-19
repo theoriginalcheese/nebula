@@ -141,12 +141,17 @@ struct Clip: Codable, Equatable, Identifiable {
     var thumbnailURL: String?
     var writing: Bool
 
+    /// The name on the card. A mark the PC actually sent wins; otherwise the
+    /// file's own name, which is the recording's name. Never a made-up
+    /// "Gameplay" suffix.
     var label: String {
         if let mark = highlights.first(where: { ($0.label ?? "").isEmpty == false })?.label {
             return mark
         }
         if kind == "replay" { return "Replay" }
-        return "Gameplay"
+        let stem = (file as NSString).deletingPathExtension
+        if stem.isEmpty == false { return stem }
+        return "—"
     }
 }
 
@@ -444,11 +449,14 @@ enum StudioJSON {
 
 enum StudioFormat {
     static func bytes(_ value: Int64?) -> String {
-        guard let value else { return "—" }
-        let gb = Double(value) / 1_000_000_000
-        if gb < 10 {
-            return String(format: "%.1f GB", gb)
+        guard let value, value > 0 else { return "—" }
+        let mb = Double(value) / 1_000_000
+        if mb < 1000 {
+            if mb < 10 { return String(format: "%.1f MB", mb) }
+            return String(format: "%.0f MB", mb.rounded())
         }
+        let gb = Double(value) / 1_000_000_000
+        if gb < 10 { return String(format: "%.1f GB", gb) }
         return String(format: "%.0f GB", gb.rounded())
     }
 

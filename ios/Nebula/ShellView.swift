@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 struct ShellView: View {
     @EnvironmentObject private var model: AppModel
@@ -124,6 +125,7 @@ struct ShellView: View {
                 }
             }
         }
+        .background(ClearHostBackground())
         .opacity(tab == item ? 1.0 : 0.0)
         .allowsHitTesting(tab == item)
     }
@@ -254,6 +256,7 @@ struct ScreenChrome<Content: View>: View {
             .padding(.bottom, Theme.Space.contentBottomInset)
         }
         .scrollContentBackground(.hidden)
+        .background(ClearHostBackground())
         .toolbar(.hidden, for: .navigationBar)
     }
 
@@ -362,5 +365,30 @@ struct ScreenChrome<Content: View>: View {
                     lineWidth: Theme.Stroke.hairline
                 )
         )
+    }
+}
+
+/// The page stacks sit in a navigation controller that paints an opaque
+/// plate. Settings is a sheet with the planet inside it, so it showed
+/// through; the tabs did not. Clearing those host views lets the one
+/// background behind the shell show on every page.
+private struct ClearHostBackground: UIViewRepresentable {
+    func makeUIView(context: Context) -> UIView {
+        let view = UIView()
+        view.backgroundColor = .clear
+        view.isOpaque = false
+        view.isUserInteractionEnabled = false
+        return view
+    }
+
+    func updateUIView(_ view: UIView, context: Context) {
+        DispatchQueue.main.async {
+            var current: UIView? = view
+            for _ in 0 ..< 6 {
+                current?.backgroundColor = .clear
+                current?.isOpaque = false
+                current = current?.superview
+            }
+        }
     }
 }

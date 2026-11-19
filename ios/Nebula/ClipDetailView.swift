@@ -77,7 +77,7 @@ struct ClipDetailView: View {
 
                 VStack(alignment: .leading, spacing: Theme.Space.sectionGap) {
                     VStack(alignment: .leading, spacing: 3) {
-                        Text("\(clip.game.name) · \(clip.label)")
+                        Text(clip.label)
                             .font(Theme.TypeScale.detailTitle)
                             .tracking(Theme.TypeScale.detailTitleTracking)
                             .foregroundStyle(Theme.ink)
@@ -524,7 +524,7 @@ struct ClipDetailView: View {
     private func metaLine(_ clip: Clip) -> String {
         let when = clip.createdAt.map { StudioFormat.dayAndTime($0, now: Date()) } ?? "—"
         let length = clip.writing ? "—" : (clip.duration.map(shortDuration) ?? "—")
-        return "\(when) · \(length) · \(clip.label)"
+        return "\(when) · \(length)"
     }
 
     private func qualitySummary(_ clip: Clip) -> String {

@@ -6,16 +6,19 @@ serves what `build_real_agent()` returns instead:
 - games / non-games: the classification files Nebula itself keeps
   (`games.json`, the sync-folder copy, the NAS hub copy), merged newest-wins.
 - clips: video files that actually exist under `recording_root`, from
-  `DiskSnapshot._scan_local()` - `scandir` and `stat`, nothing opened. An
-  absent or empty root is an empty list. Never a sample.
+  `DiskSnapshot._scan_local()`. An absent or empty root is an empty list.
+  Never a sample. A background probe may read a file with ffmpeg to learn
+  its length and to write a jpeg into the app cache. That cache is the only
+  thing served to the phone. Nothing is written into the footage folder.
 - pending: only an unknown exe that is really in the foreground right now.
 - peers: every tailnet peer by hostname, online or not, never an address.
 
-Read-only with respect to footage. The one thing this module writes is the
-classification file, through `merge_classifications` + an atomic replace, so
-a verdict survives a restart without clobbering another machine's additions.
-It has no verb that opens, moves, trims or deletes a recording: `clip.delete`
-and `clip.trim` are refused, and the recording controls are refused too,
+Read-only with respect to footage. The one thing this module writes into
+Nebula's data is the classification file, through `merge_classifications` +
+an atomic replace, so a verdict survives a restart without clobbering
+another machine's additions. Thumbnails and measured lengths live in the
+app cache, never beside the recording. `clip.delete` and `clip.trim` are
+refused, and the recording controls are refused too,
 because this agent is not wired to OBS and a pretend recording would put a
 pretend clip in the library.
 """
@@ -24,6 +27,7 @@ import json
 import os
 import re
 import shutil
+import subprocess
 import threading
 import time
 from datetime import datetime, timezone
@@ -43,6 +47,10 @@ SELF_PROCESSES = frozenset((
 
 _REFRESH_EVERY_S = 2.0
 _WRITING_WINDOW_S = 20.0
+# A stub file in a test is a couple of kilobytes. A real recording is not.
+# Skipping the small ones keeps a probe from ever touching a fixture.
+_PROBE_MIN_BYTES = 100_000
+_THUMB_NAME = re.compile(r"^clip-[0-9a-f]{12}\.jpg$")
 _PENDING_CONFIRMATIONS = 2
 _PENDING_CAP = 5
 _CLIP_CAP = 400
@@ -181,10 +189,14 @@ class RealStudio(MobileAgent):
         self._fresh = set()        # exes the phone classified this run
         self._clip_cache = (0.0, [])
         self._classes = {"games": {}, "non_games": {}}
-        self._announced = {"pending": {}, "peers": None, "clips": None, "games": None}
+        self._announced = {"pending": {}, "peers": None, "clips": None, "games": None,
+                           "clip_meta": None, "session": None}
+        self._media = {}
         self.obs_connected = False
         self.settings = self._settings()
         self.refresh(force=True)
+        threading.Thread(target=self._media_loop, name="nebula-clip-media",
+                         daemon=True).start()
 
     # ------------------------------------------------------------- building
 
@@ -256,7 +268,20 @@ class RealStudio(MobileAgent):
                 free = None
         session = dict(self.session)
         session.update(output={"resolution": "", "fps": 0, "encoder": ""},
-                       storageFreeBytes=free, estimatedRemaining=None)
+                       scene="", storageFreeBytes=free, estimatedRemaining=None)
+        clips = getattr(self, "clips", None) or []
+        if clips:
+            newest = clips[0]
+            session["lastSession"] = {
+                "game": newest["game"],
+                "endedAt": newest["createdAt"],
+                "duration": newest.get("duration") or 0,
+                "bytes": newest.get("bytes") or 0,
+                "highlightCount": len(newest.get("highlights") or []),
+                "offload": newest.get("offload") or "none",
+            }
+        else:
+            session["lastSession"] = None
         return session
 
     def _clips(self, now):
@@ -276,15 +301,17 @@ class RealStudio(MobileAgent):
         folder = row.get("game") or ""
         name = folder or "Unsorted"
         mtime = row.get("mtime") or 0
+        clip_id = "clip-" + hashlib.sha1(row["rel"].encode("utf-8")).hexdigest()[:12]
+        meta = self._media.get(clip_id) or {}
+        thumb = ("/thumbs/%s.jpg" % clip_id) if meta.get("thumb") else None
         return {
-            "id": "clip-" + hashlib.sha1(row["rel"].encode("utf-8")).hexdigest()[:12],
+            "id": clip_id,
             "game": {"id": _slug(name), "name": name},
             "file": row["name"],
             "folder": folder,
             "kind": "recording",
             "createdAt": _iso(datetime.fromtimestamp(mtime, timezone.utc)),
-            # Length needs a probe of the file, which this agent never makes.
-            "duration": None,
+            "duration": meta.get("duration"),
             "bytes": row.get("size"),
             "resolution": "",
             "fps": 0,
@@ -292,7 +319,7 @@ class RealStudio(MobileAgent):
             "highlights": [],
             "locations": ["pc"],
             "offload": "none",
-            "thumbnailURL": None,
+            "thumbnailURL": thumb,
             "writing": (now - mtime) < _WRITING_WINDOW_S,
         }
 
@@ -585,7 +612,80 @@ class RealStudio(MobileAgent):
                 events.append(self._event("games", {"games": self.games,
                                                     "nonGames": self.non_games}))
             last["games"] = marker
+            meta = {row["id"]: (row.get("duration"), row.get("thumbnailURL"))
+                    for row in self.clips}
+            if last.get("clip_meta") is not None:
+                prev = last["clip_meta"]
+                for row in self.clips:
+                    if row["id"] in prev and prev[row["id"]] != meta.get(row["id"]):
+                        events.append(self._event("clip.updated", row))
+            last["clip_meta"] = meta
+            session_sig = json.dumps(self.session.get("lastSession"), sort_keys=True)
+            if last.get("session") is not None and last["session"] != session_sig:
+                events.append(self._event("session", self.session))
+            last["session"] = session_sig
             return events
+
+    # --------------------------------------------------------------- media
+
+    def _cache_dir(self):
+        from .paths import APP_DIR
+        path = os.path.join(APP_DIR, "phone_clip_cache")
+        try:
+            os.makedirs(path, exist_ok=True)
+        except OSError:
+            pass
+        return path
+
+    def thumb_bytes(self, name):
+        """A cached jpeg, or None. The name is a fixed pattern, so a request
+        cannot point at a recording."""
+        if not isinstance(name, str) or not _THUMB_NAME.match(name):
+            return None
+        path = os.path.join(self._cache_dir(), name)
+        try:
+            with open(path, "rb") as fh:
+                data = fh.read(2_000_000)
+        except OSError:
+            return None
+        if not data.startswith(b"\xff\xd8"):
+            return None
+        return data
+
+    def _media_loop(self):
+        while True:
+            with self._lock:
+                job = self._next_media_job()
+            if job is None:
+                time.sleep(2.0)
+                continue
+            measured = _measure_clip(job["path"], job["dest"])
+            with self._lock:
+                self._media[job["id"]] = measured
+
+    def _next_media_job(self):
+        root = (self.disk.config().get("recording_root") or "").strip()
+        if not root:
+            return None
+        root_abs = os.path.abspath(root)
+        _, rows = self._clip_cache
+        for row in rows:
+            clip_id = "clip-" + hashlib.sha1(row["rel"].encode("utf-8")).hexdigest()[:12]
+            if clip_id in self._media:
+                continue
+            rel = (row.get("rel") or "").replace("/", os.sep).replace("\\", os.sep)
+            full = os.path.abspath(os.path.join(root, rel))
+            try:
+                inside = os.path.commonpath([root_abs, full]) == root_abs
+            except ValueError:
+                inside = False
+            size = row.get("size") or 0
+            if not inside or size < _PROBE_MIN_BYTES:
+                self._media[clip_id] = {"duration": None, "thumb": False}
+                continue
+            return {"id": clip_id, "path": full,
+                    "dest": os.path.join(self._cache_dir(), clip_id + ".jpg")}
+        return None
 
 
 def _tailscale_status():
@@ -600,6 +700,71 @@ def _slug(text):
 def _epoch(stamp):
     return datetime.strptime(stamp, "%Y-%m-%dT%H:%M:%SZ").replace(
         tzinfo=timezone.utc).timestamp()
+
+
+def _measure_clip(path, dest):
+    """Read-only. The jpeg is written to `dest` in the app cache, never next
+    to the recording. A failure leaves the length unknown and no thumbnail."""
+    return {"duration": _ffprobe_duration(path), "thumb": _ffmpeg_thumb(path, dest)}
+
+
+def _ffprobe_duration(path):
+    tool = shutil.which("ffprobe")
+    if not tool:
+        return None
+    from .silent_proc import run_kwargs
+    try:
+        done = subprocess.run(
+            [tool, "-v", "error", "-show_entries", "format=duration",
+             "-of", "default=nw=1:nk=1", path],
+            timeout=12, capture_output=True, **run_kwargs(),
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if done.returncode != 0:
+        return None
+    try:
+        value = float((done.stdout or b"").decode("ascii", "replace").strip())
+    except ValueError:
+        return None
+    if value <= 0 or value > 60 * 60 * 48:
+        return None
+    return value
+
+
+def _ffmpeg_thumb(path, dest):
+    tool = shutil.which("ffmpeg")
+    if not tool:
+        return False
+    from .silent_proc import run_kwargs
+    part = dest + ".part"
+    for seek in ("3", "0"):
+        try:
+            subprocess.run(
+                [tool, "-y", "-ss", seek, "-i", path, "-frames:v", "1",
+                 "-vf", "scale=640:-2", "-q:v", "5", part],
+                timeout=20, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                **run_kwargs(),
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+        if _jpeg_file(part):
+            try:
+                os.replace(part, dest)
+                return True
+            except OSError:
+                return False
+        # A failed attempt is not a recording. Leave the part file; the next
+        # seek overwrites it. Nothing in the footage tree is removed.
+    return False
+
+
+def _jpeg_file(path):
+    try:
+        with open(path, "rb") as fh:
+            return fh.read(3).startswith(b"\xff\xd8") and os.path.getsize(path) > 32
+    except OSError:
+        return False
 
 
 def build_real_agent(root=None, token=None, **kwargs):

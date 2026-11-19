@@ -199,7 +199,7 @@ struct ClipsView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
 
                     VStack(alignment: .leading, spacing: 6) {
-                        Text("\(clip.game.name) · \(clip.label)")
+                        Text(clip.label)
                             .font(Theme.TypeScale.featuredTitle)
                             .foregroundStyle(Theme.ink)
                             .lineLimit(1)
@@ -221,11 +221,19 @@ struct ClipsView: View {
                                 )
                             }
                             metaPill(
-                                text: qualityLabel(clip),
+                                text: StudioFormat.bytes(clip.bytes),
                                 system: nil,
                                 fg: Theme.inkSoft,
                                 bg: Theme.ink.opacity(0.10)
                             )
+                            if clip.resolution.isEmpty == false {
+                                metaPill(
+                                    text: qualityLabel(clip),
+                                    system: nil,
+                                    fg: Theme.inkSoft,
+                                    bg: Theme.ink.opacity(0.10)
+                                )
+                            }
                             if !clip.highlights.isEmpty {
                                 metaPill(
                                     text: "\(clip.highlights.count) marks",
@@ -368,11 +376,11 @@ struct ClipsView: View {
                                     )
 
                                 VStack(alignment: .leading, spacing: 2) {
-                                    Text("\(clip.game.name) · \(clip.label)")
+                                    Text(clip.label)
                                         .font(Theme.TypeScale.rowLabel)
                                         .foregroundStyle(Theme.ink)
                                         .lineLimit(1)
-                                    Text("\(clip.writing ? "—" : (clip.duration.map(shortDuration) ?? "—")) · \(clip.writing ? "—" : StudioFormat.bytes(clip.bytes))")
+                                    Text("\(clip.duration.map(shortDuration) ?? "—") · \(StudioFormat.bytes(clip.bytes))")
                                         .font(Theme.TypeScale.captionRegularTabular)
                                         .foregroundStyle(tone.tertiary)
                                         .lineLimit(1)

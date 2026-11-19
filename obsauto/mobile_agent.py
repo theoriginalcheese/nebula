@@ -506,7 +506,11 @@ _PUSH_EVERY_S = 3.0
 
 
 def _speak(conn, agent):
-    _handshake(conn)
+    header = _read_header(conn)
+    if _thumb_get(header):
+        _serve_thumb(conn, agent, header)
+        return
+    _accept_websocket(conn, header)
     lock = threading.Lock()
     done = threading.Event()
     poll = getattr(agent, "poll_events", None)
@@ -543,14 +547,53 @@ def _push_loop(conn, lock, done, agent, poll):
             continue
 
 
-def _handshake(conn):
+def _read_header(conn):
     blob = b""
     while b"\r\n\r\n" not in blob:
         chunk = conn.recv(4096)
         if not chunk:
             raise ConnectionError("client left during the handshake")
         blob += chunk
-    header = blob.split(b"\r\n\r\n", 1)[0].decode("latin1")
+        if len(blob) > 65536:
+            raise ConnectionError("header too large")
+    return blob.split(b"\r\n\r\n", 1)[0].decode("latin1")
+
+
+def _thumb_get(header):
+    """A plain GET for a cached still. A websocket upgrade is not one."""
+    if "websocket" in header.lower():
+        return False
+    first = header.split("\r\n", 1)[0]
+    parts = first.split(" ")
+    if len(parts) < 2 or parts[0] != "GET":
+        return False
+    path = parts[1].split("?", 1)[0]
+    return path.startswith("/thumbs/")
+
+
+def _serve_thumb(conn, agent, header):
+    """Bytes the agent already cached. Never a path the request chooses,
+    and never a recording."""
+    first = header.split("\r\n", 1)[0]
+    path = first.split(" ")[1].split("?", 1)[0] if " " in first else ""
+    name = path.rsplit("/", 1)[-1]
+    getter = getattr(agent, "thumb_bytes", None)
+    data = getter(name) if callable(getter) else None
+    if not data:
+        conn.sendall(b"HTTP/1.1 404 Not Found\r\nConnection: close\r\nContent-Length: 0\r\n\r\n")
+        return
+    head = (
+        "HTTP/1.1 200 OK\r\n"
+        "Content-Type: image/jpeg\r\n"
+        "Content-Length: %d\r\n"
+        "Connection: close\r\n"
+        "Cache-Control: private, max-age=86400\r\n"
+        "\r\n" % len(data)
+    ).encode("ascii")
+    conn.sendall(head + data)
+
+
+def _accept_websocket(conn, header):
     key = ""
     for line in header.split("\r\n"):
         if line.lower().startswith("sec-websocket-key:"):

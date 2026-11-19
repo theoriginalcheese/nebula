@@ -313,7 +313,7 @@ struct NowView: View {
                     Text(last.game.name)
                         .font(Theme.TypeScale.cardTitleLarge)
                         .foregroundStyle(Theme.ink)
-                    Text(" · \(StudioFormat.clock(last.duration))")
+                    Text(last.duration > 1 ? " · \(StudioFormat.clock(last.duration))" : " · —")
                         .font(Theme.TypeScale.bufferLine)
                         .foregroundStyle(tone.tertiary)
                 }
@@ -1178,7 +1178,7 @@ struct ClipStack: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
 
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("\(clip.game.name) · \(clip.label)")
+                    Text(clip.label)
                         .font(richFront ? Theme.TypeScale.promptTitle : Theme.TypeScale.cardTitle)
                         .foregroundStyle(Theme.ink)
                         .lineLimit(1)

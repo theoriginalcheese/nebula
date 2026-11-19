@@ -137,6 +137,15 @@ with tempfile.TemporaryDirectory() as root:
           snap["clips"][0]["game"]["id"] == portal["id"])
     check("an hour-old clip is not flagged as still being written",
           snap["clips"][0]["writing"] is False)
+    last = snap["session"]["lastSession"]
+    check("the idle card is that clip, not a sample session",
+          last["game"]["name"] == "Portal 2" and last["bytes"] == 2048
+          and last["duration"] == 0 and snap["clips"][0]["thumbnailURL"] is None,
+          last)
+    check("a thumbnail request cannot name a recording",
+          agent.thumb_bytes("../one.mkv") is None
+          and agent.thumb_bytes(r"..\one.mkv") is None
+          and agent.thumb_bytes("one.mkv") is None)
 
     # ------------------------------------------------ peers: names only
     peers = snap["peers"]
