@@ -1,5 +1,7 @@
 import Foundation
 
+extension String: Error {}
+
 /// One WebSocket to the studio PC. The token is sent in `hello` and never logged.
 final class AgentClient {
     var onEvent: ((String, [String: Any]) -> Void)?
