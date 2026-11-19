@@ -20,6 +20,8 @@ struct ClipDetailView: View {
     @State private var shareItem: ShareItem?
     @State private var busy = false
     @State private var lastHighlightHit: Int?
+    @State private var scrubbing = false
+    @State private var timeObserver: Any?
 
     private var clip: Clip? {
         return model.studio?.clips.first(where: { $0.id == id }) ?? model.listed?.first(where: { $0.id == id })
@@ -33,13 +35,22 @@ struct ClipDetailView: View {
                 missingClipState
             }
         }
-        .background(Theme.ground.ignoresSafeArea())
+        // No page-wide ground: the planet behind the shell shows around the
+        // glass here exactly as it does on the other tabs.
         .toolbar(.hidden, for: .navigationBar)
         .onAppear {
             model.playback = true
         }
         .onDisappear {
             player?.pause()
+            if !fullScreen {
+                if let observer = timeObserver {
+                    player?.removeTimeObserver(observer)
+                    timeObserver = nil
+                }
+                player = nil
+                playing = false
+            }
             model.playback = false
             model.trimming = false
         }
@@ -102,8 +113,11 @@ struct ClipDetailView: View {
         .ignoresSafeArea(edges: .top)
         .confirmationDialog(deleteDialogTitle(clip), isPresented: $confirmDelete, titleVisibility: .visible) {
             Button("Delete", role: .destructive) {
-                model.deleteClip(clip.id)
-                dismiss()
+                // Studio PC decides. Leave the screen only once it agrees; a
+                // refusal is toasted and the clip stays right here.
+                model.deleteClip(clip.id) { ok in
+                    if ok { dismiss() }
+                }
             }
             Button("Cancel", role: .cancel) {}
         }
@@ -135,18 +149,32 @@ struct ClipDetailView: View {
         let canStream = model.link != .offline && model.http("/files/clip/\(clip.id)") != nil
 
         return ZStack {
-            ClipStill(reference: clip.thumbnailURL, seed: stillSeed(clip.id))
+            // The picture fades out at its foot (a mask, not a ground-coloured
+            // gradient) so the planet shows through below the stage.
+            ZStack {
+                ClipStill(reference: clip.thumbnailURL, seed: stillSeed(clip.id))
 
-            if playing, let player = player {
-                VideoPlayer(player: player)
+                if playing, let player = player {
+                    VideoPlayer(player: player)
+                }
             }
+            .mask(
+                LinearGradient(
+                    stops: [
+                        .init(color: Theme.ink, location: 0.0),
+                        .init(color: Theme.ink, location: 0.55),
+                        // A playing picture keeps its controls readable: no fade.
+                        .init(color: playing ? Theme.ink : Theme.clear, location: 1.0),
+                    ],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+            )
 
             LinearGradient(
                 stops: [
                     .init(color: Theme.scrimBase.opacity(0.45), location: 0.0),
                     .init(color: Theme.clear, location: 0.25),
-                    .init(color: Theme.clear, location: 0.55),
-                    .init(color: Theme.ground, location: 1.0),
                 ],
                 startPoint: .top,
                 endPoint: .bottom
@@ -184,18 +212,19 @@ struct ClipDetailView: View {
             .frame(maxHeight: .infinity, alignment: .top)
 
             VStack(spacing: 8) {
-                Button {
-                    togglePlayback(clip)
-                } label: {
-                    GlassCircle(
-                        system: playing ? "pause.fill" : "play.fill",
-                        size: Theme.Size.stagePlayButton
-                    )
+                // While the picture is playing the centre stays clear; the
+                // player's own controls pause it and `playing` follows them.
+                if !playing {
+                    Button {
+                        togglePlayback(clip)
+                    } label: {
+                        GlassCircle(system: "play.fill", size: Theme.Size.stagePlayButton)
+                    }
+                    .buttonStyle(PressScaleStyle())
+                    .disabled(!canStream)
+                    .opacity(canStream ? 1.0 : Theme.Opacity.disabled)
+                    .accessibilityLabel("Play clip")
                 }
-                .buttonStyle(PressScaleStyle())
-                .disabled(!canStream)
-                .opacity(canStream ? 1.0 : Theme.Opacity.disabled)
-                .accessibilityLabel(playing ? "Pause clip" : "Play clip")
 
                 if model.link == .offline {
                     Text("Playback is off while Studio PC is offline.")
@@ -262,12 +291,16 @@ struct ClipDetailView: View {
                         .onChanged { value in
                             guard total > 0, !clip.writing, model.link != .offline else { return }
                             let next = min(total, max(0, total * Double(value.location.x / width)))
+                            scrubbing = true
                             checkHighlightCrossing(clip: clip, next: next, total: total)
                             position = next
                         }
                         .onEnded { _ in
                             lastHighlightHit = nil
-                            player?.seek(to: CMTime(seconds: position, preferredTimescale: 600))
+                            player?.seek(to: CMTime(seconds: position, preferredTimescale: 600)) { _ in
+                                scrubbing = false
+                            }
+                            if player == nil { scrubbing = false }
                         }
                 )
             }
@@ -510,7 +543,19 @@ struct ClipDetailView: View {
     private func togglePlayback(_ clip: Clip) {
         guard model.link != .offline, let url = model.http("/files/clip/\(clip.id)") else { return }
         if player == nil {
-            player = AVPlayer(url: url)
+            let made = AVPlayer(url: url)
+            player = made
+            // The scrubber and the elapsed label follow the player's own clock,
+            // and `playing` follows its real state (system pause, end of clip).
+            timeObserver = made.addPeriodicTimeObserver(
+                forInterval: CMTime(seconds: 0.25, preferredTimescale: 600),
+                queue: .main
+            ) { time in
+                if !scrubbing, time.seconds.isFinite {
+                    position = max(0, time.seconds)
+                }
+                playing = made.timeControlStatus != .paused
+            }
         }
         if playing {
             player?.pause()
@@ -591,8 +636,26 @@ struct ClipDetailView: View {
                         Task { @MainActor in model.toast("Studio PC didn’t send the file.") }
                         return
                     }
+                    // Photos sniffs the extension, and the download arrives as
+                    // ".tmp": stage a copy that keeps the clip's real extension
+                    // (mkv/mp4/mov) under the temporary directory. The OS owns
+                    // that directory; nothing the studio recorded is touched.
+                    let ext = (clip.file as NSString).pathExtension.lowercased()
+                    guard !ext.isEmpty else {
+                        Task { @MainActor in model.toast("Photos couldn’t take that clip.") }
+                        return
+                    }
+                    let staged = FileManager.default.temporaryDirectory
+                        .appendingPathComponent("nebula-save-\(UUID().uuidString)")
+                        .appendingPathExtension(ext)
+                    do {
+                        try FileManager.default.copyItem(at: url, to: staged)
+                    } catch {
+                        Task { @MainActor in model.toast("Photos couldn’t take that clip.") }
+                        return
+                    }
                     PHPhotoLibrary.shared().performChanges {
-                        PHAssetChangeRequest.creationRequestForAssetFromVideo(atFileURL: url)
+                        PHAssetChangeRequest.creationRequestForAssetFromVideo(atFileURL: staged)
                     } completionHandler: { ok, _ in
                         Task { @MainActor in
                             model.toast(ok ? "Saved to Photos." : "Photos couldn’t take that clip.")

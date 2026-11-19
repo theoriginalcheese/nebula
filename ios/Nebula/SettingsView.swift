@@ -7,12 +7,6 @@ struct SettingsRoot: View {
 
     var body: some View {
         ZStack {
-            BackgroundView(
-                kind: model.prefs.background,
-                seed: model.prefs.planetSeed,
-                live: model.active && !tone.isStill && !ProcessInfo.processInfo.isLowPowerModeEnabled
-            )
-
             NavigationStack(path: $path) {
                 ScrollView {
                     VStack(alignment: .leading, spacing: Theme.Space.sectionGap) {
@@ -111,7 +105,9 @@ struct SettingsRoot: View {
                                     symbol: "bell",
                                     iconFill: Theme.amberDeep.opacity(0.16),
                                     iconStroke: Theme.amberPale,
-                                    value: "On",
+                                    // Push is not implemented; prompts only show while
+                                    // the app is open. Never claim "On".
+                                    value: "In-app only",
                                     valueColor: nil
                                 ),
                                 SettingsLink(
@@ -137,7 +133,7 @@ struct SettingsRoot: View {
                 }
             }
         }
-        .background(Theme.ground.ignoresSafeArea())
+        .background(ClearHostBackground())
         .onAppear {
             if let route = model.settingsRoute {
                 path = [route]
@@ -312,12 +308,6 @@ struct SettingsPage: View {
 
     var body: some View {
         ZStack {
-            BackgroundView(
-                kind: model.prefs.background,
-                seed: model.prefs.planetSeed,
-                live: model.active && !tone.isStill && !ProcessInfo.processInfo.isLowPowerModeEnabled
-            )
-
             ScrollView {
                 VStack(alignment: .leading, spacing: Theme.Space.sectionGap) {
                     subpageHeader
@@ -351,7 +341,7 @@ struct SettingsPage: View {
             }
             .scrollContentBackground(.hidden)
         }
-        .background(Theme.ground.ignoresSafeArea())
+        .background(ClearHostBackground())
         .toolbar(.hidden, for: .navigationBar)
     }
 
@@ -457,16 +447,18 @@ struct SettingsPage: View {
 
             ReadingSurface(radius: Theme.Radius.settingsGroup) {
                 VStack(alignment: .leading, spacing: 0) {
+                    // The desktop accepts 1 to 3600 s (settings_spec.py) and
+                    // defaults to 90, so the range is not capped at 60.
                     MachinedStepperRow(
                         title: "Pause when idle",
                         subtitle: "No input for this long",
-                        value: settings?.idleTimeout ?? 4,
-                        range: 1 ... 60,
-                        step: 1,
+                        value: settings?.idleTimeout,
+                        range: 1 ... 3600,
+                        step: 5,
                         suffix: "s",
                         zeroLabel: nil
-                    ) { next in
-                        model.setSetting("idleTimeout", next)
+                    ) { next, settle in
+                        model.setSetting("idleTimeout", next, done: settle)
                     }
 
                     GroupDivider()
@@ -474,13 +466,13 @@ struct SettingsPage: View {
                     MachinedStepperRow(
                         title: "Discard clips under",
                         subtitle: "Deletes accidental flickers",
-                        value: settings?.discardUnder ?? 0,
-                        range: 0 ... 120,
+                        value: settings?.discardUnder,
+                        range: 0 ... 3600,
                         step: 5,
                         suffix: "s",
                         zeroLabel: "Off"
-                    ) { next in
-                        model.setSetting("discardUnder", next)
+                    ) { next, settle in
+                        model.setSetting("discardUnder", next, done: settle)
                     }
 
                     GroupDivider()
@@ -940,16 +932,20 @@ private struct AppearanceGrid: View {
 private struct MachinedStepperRow: View {
     var title: String
     var subtitle: String
-    var value: Int
+    /// Last value the server confirmed; nil until the PC has told us.
+    var value: Int?
     var range: ClosedRange<Int>
     var step: Int
     var suffix: String
     var zeroLabel: String?
-    var onWrite: (Int) -> Void
+    /// Sends the value; the closure must be called with whether the PC took it.
+    var onWrite: (Int, @escaping (Bool) -> Void) -> Void
 
     @Environment(\.tone) private var tone
-    @State private var draft: Int = 0
+    @State private var draft: Int?
+    @State private var confirmed: Int?
     @State private var debounceTask: Task<Void, Never>?
+    @State private var writeGeneration = 0
 
     var body: some View {
         HStack(spacing: Theme.Space.bentoGap) {
@@ -972,7 +968,9 @@ private struct MachinedStepperRow: View {
                 Text(formattedValue)
                     .font(Theme.TypeScale.factMediumTabular)
                     .foregroundStyle(Theme.ink)
-                    .frame(width: 44, alignment: .center)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+                    .frame(minWidth: 44, alignment: .center)
 
                 stepperButton("+") {
                     bump(step)
@@ -990,8 +988,15 @@ private struct MachinedStepperRow: View {
             )
         }
         .frame(minHeight: Theme.Size.stepperRowHeight)
-        .onAppear { draft = value }
-        .onChange(of: value) { _, next in draft = next }
+        .onAppear {
+            draft = value
+            confirmed = value
+        }
+        .onChange(of: value) { _, next in
+            draft = next
+            confirmed = next
+        }
+        .onDisappear { debounceTask?.cancel() }
     }
 
     private func stepperButton(_ symbol: String, action: @escaping () -> Void) -> some View {
@@ -1011,21 +1016,43 @@ private struct MachinedStepperRow: View {
     }
 
     private var formattedValue: String {
+        guard let draft else { return "—" }
         if draft == 0, let zeroLabel = zeroLabel {
             return zeroLabel
         }
         return "\(draft) \(suffix)"
     }
 
+    /// Moves to the next multiple of `step` in the direction of `delta`, so a
+    /// legal value the desktop already holds (90 s) is never snapped to a
+    /// neighbour of the stride (it is only ever clamped to the range).
+    private func nextValue(from current: Int, delta: Int) -> Int {
+        let raw: Int
+        if delta > 0 {
+            raw = (current / step + 1) * step
+        } else {
+            raw = ((current + step - 1) / step - 1) * step
+        }
+        return min(range.upperBound, max(range.lowerBound, raw))
+    }
+
     private func bump(_ delta: Int) {
-        let next = min(range.upperBound, max(range.lowerBound, draft + delta))
-        guard next != draft else { return }
+        guard let current = draft else { return }
+        let next = nextValue(from: current, delta: delta)
+        guard next != current else { return }
         draft = next
+        writeGeneration += 1
+        let generation = writeGeneration
         debounceTask?.cancel()
         debounceTask = Task { @MainActor in
             try? await Task.sleep(nanoseconds: 600_000_000)
             guard !Task.isCancelled else { return }
-            onWrite(next)
+            onWrite(next) { accepted in
+                // Rejected: put the control back on what the server last
+                // confirmed. A newer tap owns the display and settles itself.
+                guard !accepted, generation == writeGeneration else { return }
+                draft = confirmed
+            }
         }
     }
 }

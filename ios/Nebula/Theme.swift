@@ -238,7 +238,8 @@ enum Theme {
         static let detailTitleTracking: CGFloat = -0.56
 
         static let statMetric = Font.system(size: 28, weight: .medium).monospacedDigit()
-        static let lockClock = Font.system(size: 28, weight: .medium).monospacedDigit()
+        // Spec §9.11: gold clock 58 on the lock-screen card.
+        static let lockClock = Font.system(size: 58, weight: .medium).monospacedDigit()
 
         static func heroClock(_ size: CGFloat) -> Font {
             return Font.system(size: size, weight: .medium).monospacedDigit()

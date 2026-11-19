@@ -51,6 +51,7 @@ targets:
           - Info.plist
       - path: Nebula/RecordingActivity.swift
       - path: Nebula/Theme.swift
+      - path: Nebula/NebulaMark.swift
     settings:
       PRODUCT_BUNDLE_IDENTIFIER: app.nebula.mobile.activity
       PRODUCT_NAME: NebulaActivity

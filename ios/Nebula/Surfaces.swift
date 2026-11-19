@@ -225,9 +225,16 @@ struct PrimaryPill: View {
                     Circle()
                         .fill(badgeFill)
                         .overlay(Circle().stroke(badgeRing, lineWidth: Theme.Stroke.hairline))
-                    Image(systemName: system)
-                        .font(Theme.TypeScale.icon(compact ? 14 : 16, weight: .semibold))
-                        .foregroundStyle(iconColor)
+                    if toneStyle == .coralTint {
+                        // The design's glyph: a 12pt dark dot on a solid coral circle.
+                        Circle()
+                            .fill(Theme.inkDark)
+                            .frame(width: 12, height: 12)
+                    } else {
+                        Image(systemName: system)
+                            .font(Theme.TypeScale.icon(compact ? 14 : 16, weight: .semibold))
+                            .foregroundStyle(iconColor)
+                    }
                 }
                 .frame(width: circleSize, height: circleSize)
             }
@@ -288,7 +295,7 @@ struct PrimaryPill: View {
         case .violet:
             return Theme.violet.opacity(Theme.Opacity.primaryBadgeFill)
         case .coralTint:
-            return Theme.coral.opacity(0.22)
+            return Theme.coral
         }
     }
 
@@ -297,7 +304,7 @@ struct PrimaryPill: View {
         case .violet:
             return Theme.violetLight.opacity(0.32)
         case .coralTint:
-            return Theme.coral.opacity(0.50)
+            return Theme.clear
         }
     }
 }
@@ -543,44 +550,6 @@ struct StatusChip: View {
         case .buffer, .writing:
             return Theme.violetLight.opacity(0.38)
         }
-    }
-}
-
-struct NebulaMark: View {
-    var size: CGFloat = 26
-
-    var body: some View {
-        Canvas { context, canvasSize in
-            let w = canvasSize.width
-            let h = canvasSize.height
-            let cx = w * 0.5
-            let cy = h * 0.5
-            let scale = min(w, h) / 64.0
-
-            var orbitContext = context
-            orbitContext.translateBy(x: cx, y: cy)
-            orbitContext.rotate(by: .degrees(-22))
-            let rx = 25.0 * scale
-            let ry = 15.0 * scale
-            let orbit = Path(ellipseIn: CGRect(x: -rx, y: -ry, width: rx * 2, height: ry * 2))
-            orbitContext.stroke(orbit, with: .color(Theme.violetLight), lineWidth: 3.8 * scale)
-
-            var star = Path()
-            let outer = 19.0 * scale
-            let inner = 4.6 * scale
-            star.move(to: CGPoint(x: cx + outer, y: cy))
-            star.addLine(to: CGPoint(x: cx + inner, y: cy + inner))
-            star.addLine(to: CGPoint(x: cx, y: cy + outer))
-            star.addLine(to: CGPoint(x: cx - inner, y: cy + inner))
-            star.addLine(to: CGPoint(x: cx - outer, y: cy))
-            star.addLine(to: CGPoint(x: cx - inner, y: cy - inner))
-            star.addLine(to: CGPoint(x: cx, y: cy - outer))
-            star.addLine(to: CGPoint(x: cx + inner, y: cy - inner))
-            star.closeSubpath()
-            context.fill(star, with: .color(Theme.ink))
-        }
-        .frame(width: size, height: size)
-        .accessibilityHidden(true)
     }
 }
 

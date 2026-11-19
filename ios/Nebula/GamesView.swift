@@ -454,10 +454,9 @@ struct ClassifySheet: View {
             .padding(.top, 8)
         }
         .scrollBounceBehavior(.basedOnSize)
-        // The capture choice and both answers are pinned, not scrolled: the
-        // sheet opens at a medium detent, and anything below the fold there
-        // used to sit under the home indicator. safeAreaInset keeps them
-        // clear of it at any height or text size.
+        // The capture choice and both answers are pinned, not scrolled. The
+        // sheet opens at the large detent; safeAreaInset keeps the controls
+        // above the home indicator at any height or text size.
         .safeAreaInset(edge: .bottom, spacing: 0) {
             actionBar
         }
@@ -549,7 +548,7 @@ struct ClassifySheet: View {
         .padding(.horizontal, 30)
         .padding(.top, 12)
         .padding(.bottom, 12)
-        .background(Theme.modalBackdrop.opacity(0.92))
+        .background(Theme.modalBackdrop.opacity(0.92).ignoresSafeArea(edges: .bottom))
     }
 
     private var windowSummary: String {

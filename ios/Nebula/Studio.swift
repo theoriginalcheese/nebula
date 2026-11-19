@@ -100,6 +100,7 @@ struct Session: Codable, Equatable {
     var bytesWritten: Int64
     var highlights: [Highlight]
     var storageFreeBytes: Int64?
+    var storageTotalBytes: Int64?
     var estimatedRemaining: Double?
     var lastSession: LastSession?
     var achievement: String?
@@ -279,6 +280,7 @@ enum StudioJSON {
             bytesWritten: whole(data["bytesWritten"]) ?? 0,
             highlights: highlights(data["highlights"]),
             storageFreeBytes: whole(data["storageFreeBytes"]),
+            storageTotalBytes: whole(data["storageTotalBytes"]),
             estimatedRemaining: number(data["estimatedRemaining"]),
             lastSession: last(data["lastSession"]),
             achievement: data["achievement"] as? String
@@ -449,7 +451,9 @@ enum StudioJSON {
 
 enum StudioFormat {
     static func bytes(_ value: Int64?) -> String {
-        guard let value, value > 0 else { return "—" }
+        // nil is unknown (an em dash); zero bytes is a real, known "0 MB".
+        guard let value, value >= 0 else { return "—" }
+        if value == 0 { return "0 MB" }
         let mb = Double(value) / 1_000_000
         if mb < 1000 {
             if mb < 10 { return String(format: "%.1f MB", mb) }

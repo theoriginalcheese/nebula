@@ -7,17 +7,20 @@
 Everything runs against a temp directory; no recording is created, moved or
 removed outside it.
 """
+import http.client
 import json
 import os
 import re
+import socket
 import sys
 import tempfile
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from obsauto import fsprobe
-from obsauto.mobile_agent import MOCK_TOKEN
+from obsauto import config as config_mod
+from obsauto import fsprobe, mobile_real
+from obsauto.mobile_agent import MOCK_TOKEN, serve_mock
 from obsauto.mobile_real import RealStudio, build_real_agent
 from obsauto.phone_state import DiskSnapshot, peer_rows
 
@@ -257,11 +260,314 @@ with tempfile.TemporaryDirectory() as root:
 
     check("build_real_agent uses the real class", isinstance(build_real_agent(root=root), RealStudio))
 
+# ====================================================================== OBS probe
+def free_port():
+    sock = socket.socket()
+    sock.bind(("127.0.0.1", 0))
+    port = sock.getsockname()[1]
+    sock.close()
+    return port
+
+
+listener = socket.socket()
+listener.bind(("127.0.0.1", 0))
+listener.listen(4)
+open_port = listener.getsockname()[1]
+dead_port = free_port()
+check("a closed OBS port probes false", mobile_real.probe_obs("127.0.0.1", dead_port) is False)
+check("an open OBS port probes true", mobile_real.probe_obs("127.0.0.1", open_port) is True)
+check("a junk port probes false, never raises",
+      mobile_real.probe_obs("127.0.0.1", "nope") is False
+      and mobile_real.probe_obs("127.0.0.1", 0) is False
+      and mobile_real.probe_obs(None, 70000) is False)
+began = time.monotonic()
+mobile_real.probe_obs("127.0.0.1", dead_port)
+check("a probe is bounded", time.monotonic() - began < 1.0)
+
+with tempfile.TemporaryDirectory() as root:
+    agent = make(root, Foreground(), {"obs_host": "127.0.0.1", "obs_port": dead_port})
+    check("obs.connected is false while the port is closed",
+          find(pair(agent), "snapshot")["data"]["obs"] == {"connected": False})
+    agent = make(root, Foreground(), {"obs_host": "127.0.0.1", "obs_port": open_port,
+                                      "obs_password": "hunter2-secret"})
+    snap = find(pair(agent), "snapshot")["data"]
+    check("obs.connected is true while the port is open", snap["obs"] == {"connected": True})
+    check("the OBS password is never in the payload", "hunter2-secret" not in json.dumps(snap))
+listener.close()
+
+# ====================================================================== settings.set
+with tempfile.TemporaryDirectory() as root:
+    agent = make(root, Foreground(), {"obs_password": "keep-me", "toggle_hotkey": "f12",
+                                      "obs_port": dead_port, "obs_host": "127.0.0.1"})
+    snap = find(pair(agent), "snapshot")["data"]["settings"]
+    check("an unset idle timeout reads as the desktop default, not 0",
+          snap["idleTimeout"] == config_mod.DEFAULTS["idle_timeout_seconds"] != 0, snap)
+    check("unset replay and minimum-clip values are the defaults",
+          snap["replaySeconds"] == config_mod.DEFAULTS["replay_seconds"]
+          and snap["discardUnder"] == config_mod.DEFAULTS["min_clip_seconds"])
+
+    def saved_config():
+        with open(os.path.join(root, "config.json"), encoding="utf-8") as fh:
+            return json.load(fh)
+
+    cases = (("launchCapture", "both", "default_capture_mode", "both"),
+             ("replaySeconds", 45, "replay_seconds", 45),
+             ("idleTimeout", 120, "idle_timeout_seconds", 120),
+             ("discardUnder", 25, "min_clip_seconds", 25),
+             ("keepAliveApps", [" Discord.exe ", "", "discord.exe", "teams.exe"],
+              "keep_alive_audio_processes", ["Discord.exe", "teams.exe"]))
+    for key, value, cfg_key, stored in cases:
+        out = say(agent, "settings.set", {"key": key, "value": value})
+        check("settings.set %s persists to config.json" % key,
+              out[0]["type"] == "ack" and saved_config().get(cfg_key) == stored,
+              (out, saved_config().get(cfg_key)))
+    check("a settings event carries the new value",
+          find(say(agent, "settings.set", {"key": "idleTimeout", "value": 30}),
+               "settings")["data"]["idleTimeout"] == 30 and saved_config()["idle_timeout_seconds"] == 30)
+    check("saving merges: other keys are untouched",
+          saved_config()["obs_password"] == "keep-me" and saved_config()["toggle_hotkey"] == "f12"
+          and saved_config()["obs_port"] == dead_port)
+    before = saved_config()
+    for key, value in (("idleTimeout", 0), ("idleTimeout", 3601), ("idleTimeout", True),
+                       ("idleTimeout", "30"), ("replaySeconds", 9), ("replaySeconds", 301),
+                       ("discardUnder", -1), ("launchCapture", "stream"),
+                       ("keepAliveApps", "discord.exe"), ("keepAliveApps", ["C:/x/y.exe"]),
+                       ("offload.auto", "yes"), ("gameListSync.provider", "dropbox")):
+        out = say(agent, "settings.set", {"key": key, "value": value})
+        check("out-of-bounds %s=%r is refused" % (key, value),
+              out[0]["type"] == "error" and out[0]["data"]["code"] == "invalid", out)
+    check("a refused value leaves config.json byte-for-byte alone", saved_config() == before)
+    for key in ("hotkey", "obs_password", "recordingRoot", "appVersion", "remote.tailscale"):
+        out = say(agent, "settings.set", {"key": key, "value": "x"})
+        check("%s stays read-only" % key,
+              out[0]["data"]["code"] == "readOnly" and saved_config() == before, out)
+    out = say(agent, "settings.set", {"key": "offload.auto", "value": True})
+    check("auto offload with no NAS root is refused, not faked",
+          out[0]["data"]["code"] == "invalid" and "nas_offload_interval_hours" not in saved_config())
+    say(agent, "settings.set", {"key": "gameListSync.provider", "value": "none"})
+    check("sync provider none clears sync_folder", saved_config()["sync_folder"] == "")
+
+    write(os.path.join(root, "config.json"), dict(saved_config(),
+                                                   nas_offload_root="Z:/OBS Recordings"))
+    agent = make(root, Foreground(), {"nas_offload_root": "Z:/OBS Recordings",
+                                      "obs_port": dead_port, "obs_host": "127.0.0.1"})
+    pair(agent)
+    check("auto offload is on when a NAS root is set",
+          agent.settings["offload"] == {"target": "OBS Recordings", "auto": True},
+          agent.settings["offload"])
+    say(agent, "settings.set", {"key": "offload.auto", "value": False})
+    check("offload.auto false persists as manual-only",
+          saved_config()["nas_offload_interval_hours"] == 0
+          and agent.settings["offload"]["auto"] is False)
+    say(agent, "settings.set", {"key": "offload.auto", "value": True})
+    check("offload.auto true restores the desktop default interval",
+          saved_config()["nas_offload_interval_hours"]
+          == config_mod.DEFAULTS["nas_offload_interval_hours"])
+    with open(os.path.join(root, "config.json"), "w") as fh:
+        fh.write("{ not json")
+    out = say(agent, "settings.set", {"key": "idleTimeout", "value": 50})
+    check("an unreadable config.json is refused, not overwritten",
+          out[0]["data"]["code"] == "unsaved"
+          and open(os.path.join(root, "config.json")).read() == "{ not json")
+
+# ====================================================================== playback
+with tempfile.TemporaryDirectory() as root:
+    rec = os.path.join(root, "recordings")
+    os.makedirs(os.path.join(rec, "Hades"))
+    body = bytes(range(256)) * 40
+    clip_path = os.path.join(rec, "Hades", "run.mp4")
+    with open(clip_path, "wb") as fh:
+        fh.write(body)
+    secret = os.path.join(root, "secret.txt")
+    with open(secret, "wb") as fh:
+        fh.write(b"not a recording")
+    agent = make(root, Foreground(), {"obs_port": dead_port, "obs_host": "127.0.0.1"})
+    snap = find(pair(agent), "snapshot")["data"]
+    clip_id = snap["clips"][0]["id"]
+    stop, port = serve_mock(agent)
+    try:
+        from websocket import create_connection
+        held = create_connection("ws://127.0.0.1:%d/nebula" % port, timeout=5)
+        held.send(json.dumps({"type": "hello", "id": "h", "data": {"deviceToken": MOCK_TOKEN}}))
+        held.recv()
+
+        def get(path, headers=None):
+            conn = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+            conn.request("GET", path, headers=headers or {})
+            reply = conn.getresponse()
+            data = reply.read()
+            out = (reply.status, dict(reply.getheaders()), data)
+            conn.close()
+            return out
+
+        status, headers, data = get("/files/clip/" + clip_id)
+        check("a clip streams in full while the socket is held",
+              status == 200 and data == body and headers.get("Accept-Ranges") == "bytes"
+              and headers.get("Content-Type") == "video/mp4", (status, headers))
+        status, headers, data = get("/files/clip/" + clip_id, {"Range": "bytes=100-199"})
+        check("a byte range answers 206 with Content-Range",
+              status == 206 and data == body[100:200]
+              and headers.get("Content-Range") == "bytes 100-199/%d" % len(body), (status, headers))
+        status, headers, data = get("/files/clip/" + clip_id, {"Range": "bytes=%d-" % (len(body) - 10)})
+        check("an open-ended range runs to the end", status == 206 and data == body[-10:])
+        status, headers, data = get("/files/clip/" + clip_id, {"Range": "bytes=-16"})
+        check("a suffix range is the last bytes", status == 206 and data == body[-16:])
+        status, headers, data = get("/files/clip/" + clip_id, {"Range": "bytes=999999-"})
+        check("a range past the end is 416",
+              status == 416 and headers.get("Content-Range") == "bytes */%d" % len(body))
+        check("a clip id with its extension still resolves",
+              get("/files/clip/" + clip_id + ".mp4")[0] == 200)
+        for path in ("/files/clip/clip-000000000000", "/files/clip/", "/files/clip",
+                     "/files/clip/..%2Fsecret.txt", "/files/clip/../../secret.txt",
+                     "/files/clip/clip-0123456789ab/../..", "/files/clip/run.mp4",
+                     "/files/clip/Hades/run.mp4", "/files/clip/clip-%s" % ("g" * 12)):
+            check("%s is a 404, never a file or a listing" % path, get(path)[0] == 404, path)
+        check("the thumbnail route still answers beside it", get("/thumbs/clip-000000000000.jpg")[0] == 404)
+        held.close()
+    except Exception as exc:
+        check("playback over the listener", False, repr(exc))
+    finally:
+        stop.set()
+
+    # an id whose file has gone, and an escape through a symlink-free `..` rel
+    row = {"rel": "../secret.txt", "name": "secret.txt", "game": "", "size": 15,
+           "mtime": time.time()}
+    agent._clip_cache = (time.time(), agent._clip_cache[1] + [row])
+    check("a rel that climbs out of the root resolves to nothing",
+          agent.clip_file(mobile_real._clip_id("../secret.txt")) is None
+          and mobile_real._inside(rec, "../secret.txt") is None
+          and mobile_real._inside(rec, "..\\secret.txt") is None
+          and mobile_real._inside(rec, os.path.abspath(secret)) is None)
+    check("the recording and its folder are untouched",
+          open(clip_path, "rb").read() == body and sorted(os.listdir(rec)) == ["Hades"]
+          and sorted(os.listdir(os.path.join(rec, "Hades"))) == ["run.mp4"])
+
+# ====================================================================== ffprobe fields
+class FakeDone:
+    def __init__(self, text, code=0):
+        self.stdout, self.returncode = text.encode(), code
+
+
+def probe_with(payload, code=0):
+    real_run, real_which = mobile_real.subprocess.run, mobile_real.shutil.which
+    mobile_real.subprocess.run = lambda *a, **k: FakeDone(payload, code)
+    mobile_real.shutil.which = lambda name: "ffprobe"
+    try:
+        return mobile_real._ffprobe("x.mkv")
+    finally:
+        mobile_real.subprocess.run, mobile_real.shutil.which = real_run, real_which
+
+
+full = probe_with(json.dumps({
+    "streams": [{"codec_name": "h264", "width": 2560, "height": 1440,
+                 "avg_frame_rate": "60000/1001", "r_frame_rate": "60/1"}],
+    "format": {"duration": "612.25"}}))
+check("ffprobe fills resolution, fps, encoder and duration",
+      full == {"duration": 612.25, "resolution": "2560x1440", "fps": 60, "encoder": "H.264"}, full)
+sparse = probe_with(json.dumps({"streams": [{"codec_name": "hevc", "width": 1280,
+                                              "avg_frame_rate": "0/0"}], "format": {}}))
+check("what ffprobe does not return stays empty, never 1080p60",
+      sparse == {"duration": None, "resolution": "", "fps": 0, "encoder": "HEVC"}, sparse)
+check("a failed or unparseable probe is all-unknown",
+      probe_with("", 1) == {"duration": None, "resolution": "", "fps": 0, "encoder": ""}
+      and probe_with("not json") == {"duration": None, "resolution": "", "fps": 0, "encoder": ""}
+      and probe_with(json.dumps({"streams": [], "format": {"duration": "0"}}))["duration"] is None)
+check("r_frame_rate backs up an empty avg_frame_rate",
+      probe_with(json.dumps({"streams": [{"avg_frame_rate": "0/0", "r_frame_rate": "30/1"}],
+                             "format": {}}))["fps"] == 30)
+
+with tempfile.TemporaryDirectory() as root:
+    rec = os.path.join(root, "recordings", "Hades")
+    os.makedirs(rec)
+    path = os.path.join(rec, "tiny.mkv")
+    with open(path, "wb") as fh:
+        fh.write(b"x" * 2048)
+    agent = make(root, Foreground(), {"obs_port": dead_port, "obs_host": "127.0.0.1"})
+    row = find(pair(agent), "snapshot")["data"]["clips"][0]
+    check("an unprobed clip has empty resolution, fps and encoder",
+          (row["resolution"], row["fps"], row["encoder"]) == ("", 0, ""), row)
+    agent._media[row["id"]] = {"duration": 61.5, "thumb": False, "resolution": "1920x1080",
+                               "fps": 144, "encoder": "AV1"}
+    row = agent._clip_row(agent._clip_cache[1][0], time.time())
+    check("measured fields reach the clip row",
+          (row["resolution"], row["fps"], row["encoder"], row["duration"])
+          == ("1920x1080", 144, "AV1", 61.5), row)
+
+# ====================================================================== non-games, storage, offload
+with tempfile.TemporaryDirectory() as root:
+    rec = os.path.join(root, "recordings", "Hades")
+    os.makedirs(rec)
+    path = os.path.join(rec, "a.mkv")
+    other = os.path.join(rec, "b.mkv")
+    for item in (path, other):
+        with open(item, "wb") as fh:
+            fh.write(b"x" * 2048)
+    write(os.path.join(root, "games.json"), {
+        "games": {}, "non_games": {"blender.exe": True, "Discord.EXE": True, "tool": True,
+                                   ".exe": True}})
+    cfg = {"obs_port": dead_port, "obs_host": "127.0.0.1"}
+    agent = make(root, Foreground(), cfg)
+    snap = find(pair(agent), "snapshot")["data"]
+    names = {row["exe"]: row["displayName"] for row in snap["nonGames"]}
+    check("non-game display names drop a trailing .exe, nothing prettier",
+          names == {"blender.exe": "blender", "Discord.EXE": "Discord", "tool": "tool",
+                    ".exe": ".exe"}, names)
+    check("a non-game keeps its exe untouched", "blender.exe" in names)
+
+    session = snap["session"]
+    check("storage total sits beside free from the real disk",
+          isinstance(session["storageTotalBytes"], int) and session["storageTotalBytes"] > 0
+          and session["storageFreeBytes"] <= session["storageTotalBytes"], session)
+    check("no history means no remaining-time estimate", session["estimatedRemaining"] is None)
+    check("idle stays idle, with no scene and no live output",
+          session["state"] == "idle" and session["scene"] == ""
+          and session["output"] == {"resolution": "", "fps": 0, "encoder": ""}
+          and session["game"] is None)
+    check("the mock's scene name is not copied back", "Gameplay" not in json.dumps(snap))
+    check("no clip is on the NAS or queued without data",
+          all(c["locations"] == ["pc"] and c["offload"] == "none" for c in snap["clips"]))
+
+    write(os.path.join(root, "offload_queue.json"),
+          [{"path": path.replace("\\", "/"), "game": "Hades"}])
+    agent.refresh(force=True)
+    states = {c["file"]: (c["offload"], c["locations"]) for c in agent.clips}
+    check("a clip in the real queue reads queued, still only on the PC",
+          states["a.mkv"] == ("queued", ["pc"]) and states["b.mkv"] == ("none", ["pc"]), states)
+    check("the idle card follows the queue state",
+          agent.session["lastSession"]["offload"] in ("queued", "none"))
+
+    now = time.time()
+    rows = []
+    for back in range(1, 5):
+        start = now - back * 86400 - 7200
+        rows.append({"ts": start, "type": "rec_start", "game": "Hades"})
+        rows.append({"ts": start + 3600, "type": "rec_stop", "game": "Hades",
+                     "duration": 3600, "size": 4 * 1024 ** 3, "path": "x"})
+    with open(os.path.join(root, "sessions.jsonl"), "w", encoding="utf-8") as fh:
+        for entry in rows:
+            fh.write(json.dumps(entry) + "\n")
+        fh.write("{ torn line")
+    agent.refresh(force=True)
+    estimate = agent.session["estimatedRemaining"]
+    check("a ready forecast gives seconds remaining",
+          isinstance(estimate, float) and estimate > 0, estimate)
+    check("a history log does not invent a live recording",
+          agent.session["state"] == "idle" and agent.session["game"] is None)
+    short = rows[:4]
+    with open(os.path.join(root, "sessions.jsonl"), "w", encoding="utf-8") as fh:
+        for entry in short:
+            fh.write(json.dumps(entry) + "\n")
+    agent.refresh(force=True)
+    check("under three days of history the estimate is null, not a guess",
+          agent.session["estimatedRemaining"] is None)
+
 source = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                            "obsauto", "mobile_real.py"), encoding="utf-8").read()
 check("mobile_real never removes or renames a file",
       not any(token in source for token in ("os.remove", "os.unlink", "shutil.rmtree",
                                             "shutil.move", "os.rename", "os.rmdir")))
+check("a thumbnail spare file keeps a .jpg suffix ffmpeg will accept",
+      ".part.jpg" in source and 'dest + ".part"' not in source)
 
 passed_all = all(ok for _, ok, _ in results)
 for name, ok, detail in results:

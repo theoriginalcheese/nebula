@@ -897,7 +897,8 @@ enum BackgroundDraw {
     private static func drawDither(_ context: GraphicsContext, size: CGSize, scale: Double, logicalH: Double, time: TimeInterval) {
         context.fill(Path(CGRect(origin: .zero, size: size)), with: .color(Theme.ditherGround))
 
-        let cell = 6.0
+        // 4 pt, matching CELL in design/nebula-mobile/nm-space.js.
+        let cell = 4.0
         let palette = Theme.SpacePalette.ditherSteps
         let z = time * 0.05
         let rows = Int(ceil(logicalH / cell))
@@ -905,8 +906,8 @@ enum BackgroundDraw {
 
         for j in 0 ..< rows {
             for i in 0 ..< cols {
-                let x = Double(i) * (cell / 4.0) / 26.0
-                let y = Double(j) * (cell / 4.0) / 26.0
+                let x = Double(i) / 26.0
+                let y = Double(j) / 26.0
                 let wx = SphereEngine.fbm(x: x + z, y: y, z: z, seed: 3, octaves: 2)
                 let v = SphereEngine.fbm(x: x + wx * 1.6, y: y - z * 1.4, z: z * 0.7, seed: 9, octaves: 3)
                 let e = (v - 0.38) * 2.6 - (Double(j) / Double(max(1, rows))) * 0.35 + (1.0 - abs(Double(i) / Double(max(1, cols)) - 0.62) * 1.4) * 0.25

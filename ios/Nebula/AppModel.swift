@@ -85,6 +85,7 @@ final class AppModel: ObservableObject {
     private var undoWasGame = false
     private var classifyInFlight: Set<String> = []
     private var resolvedPending: [String: Date] = [:]
+    private var resolvedExes: [String: Date] = [:]
     private let resolvedHold: TimeInterval = 30
     private var clockOffset: TimeInterval = 0
     private let cacheURL: URL
@@ -183,7 +184,7 @@ final class AppModel: ObservableObject {
     func setActive(_ value: Bool) {
         active = value
         if value, classifyID == nil, !playback, !trimming {
-            classifyID = studio?.pending.first?.id
+            classifyID = nextPending(after: nil)?.id
         }
     }
 
@@ -274,10 +275,9 @@ final class AppModel: ObservableObject {
             // waiting for app.resolved, and close the sheet (the old code
             // re-pointed it at pending.first, which was still this item).
             self.resolvedPending[pendingID] = Date()
+            self.resolvedExes[item.exe.lowercased()] = Date()
             self.studio?.pending.removeAll { $0.id == pendingID || $0.exe == item.exe }
-            if self.classifyID == pendingID {
-                self.classifyID = nil
-            }
+            self.advanceClassify(from: pendingID)
         }
     }
 
@@ -287,6 +287,31 @@ final class AppModel: ObservableObject {
         let now = Date()
         resolvedPending = resolvedPending.filter { now.timeIntervalSince($0.value) < resolvedHold }
         return resolvedPending[id] != nil
+    }
+
+    /// Same, for a pending row: matches by id, or by exe when the PC
+    /// re-announces the same app under a fresh id.
+    private func recentlyAnswered(_ item: PendingApp) -> Bool {
+        let now = Date()
+        resolvedExes = resolvedExes.filter { now.timeIntervalSince($0.value) < resolvedHold }
+        return recentlyResolved(item.id) || resolvedExes[item.exe.lowercased()] != nil
+    }
+
+    /// The next app still waiting for an answer, never one just answered.
+    private func nextPending(after id: String?) -> PendingApp? {
+        return studio?.pending.first { $0.id != id && !recentlyAnswered($0) }
+    }
+
+    /// An answered sheet moves on to the next pending app instead of being
+    /// left on a row that no longer exists (spec §9.6). With nothing left,
+    /// or while playback/trim owns the screen, it just closes.
+    private func advanceClassify(from id: String) {
+        guard classifyID == id else { return }
+        if active, !playback, !trimming, let next = nextPending(after: id) {
+            classifyID = next.id
+        } else {
+            classifyID = nil
+        }
     }
 
     func reclassify(exe: String, isGame: Bool) {
@@ -304,8 +329,10 @@ final class AppModel: ObservableObject {
         command("game.setCapture", ["gameId": game.id, "capture": capture])
     }
 
-    func setSetting(_ key: String, _ value: Any) {
-        command("settings.set", ["key": key, "value": value], saved: true)
+    /// `done(false)` means the PC refused (or was unreachable): the caller
+    /// must put its control back to the last value the server confirmed.
+    func setSetting(_ key: String, _ value: Any, done: ((Bool) -> Void)? = nil) {
+        command("settings.set", ["key": key, "value": value], saved: true, done: done)
     }
 
     func refreshClips(query: String, gameId: String?) {
@@ -320,12 +347,14 @@ final class AppModel: ObservableObject {
         command("clips.list", data)
     }
 
-    func deleteClip(_ id: String) {
-        command("clip.delete", ["id": id])
+    /// `done` reports whether Studio PC agreed. The caller leaves the clip on
+    /// screen until it does; a refusal is toasted by `command`.
+    func deleteClip(_ id: String, done: ((Bool) -> Void)? = nil) {
+        command("clip.delete", ["id": id], done: done)
     }
 
-    func trimClip(_ id: String, start: Double, end: Double) {
-        command("clip.trim", ["id": id, "in": start, "out": end])
+    func trimClip(_ id: String, start: Double, end: Double, done: ((Bool) -> Void)? = nil) {
+        command("clip.trim", ["id": id, "in": start, "out": end], done: done)
     }
 
     /// Opens Moonlight on this phone first. A slow or offline Studio PC must
@@ -390,7 +419,7 @@ final class AppModel: ObservableObject {
             if let server = next.serverNow {
                 clockOffset = Date().timeIntervalSince(server)
             }
-            next.pending.removeAll { recentlyResolved($0.id) }
+            next.pending.removeAll { recentlyAnswered($0) }
             studio = next
             cache()
             syncActivity()
@@ -420,7 +449,7 @@ final class AppModel: ObservableObject {
                 if fpsSamples.count > 28 { fpsSamples.removeFirst(fpsSamples.count - 28) }
             }
         case "app.pending":
-            if let item = StudioJSON.pending(data), !recentlyResolved(item.id) {
+            if let item = StudioJSON.pending(data), !recentlyAnswered(item) {
                 studio?.pending.removeAll { $0.id == item.id }
                 studio?.pending.insert(item, at: 0)
                 if active, !playback, !trimming, classifyID == nil {
@@ -430,7 +459,7 @@ final class AppModel: ObservableObject {
         case "app.resolved":
             if let id = data["id"] as? String {
                 studio?.pending.removeAll { $0.id == id || $0.exe == id }
-                if classifyID == id { classifyID = nil }
+                advanceClassify(from: id)
             }
         case "clip.added":
             if let clip = StudioJSON.clip(data) {

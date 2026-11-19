@@ -72,6 +72,19 @@ struct ShellView: View {
             }
             .environmentObject(model)
             .preferredColorScheme(.dark)
+            // One live background, the shell's. A sheet cannot see through to
+            // it, so it gets a single still frame of the same art instead of
+            // its own 20 fps renderer (and none per pushed page).
+            .presentationBackground {
+                ZStack {
+                    Theme.ground
+                    BackgroundView(
+                        kind: model.prefs.background,
+                        seed: model.prefs.planetSeed,
+                        live: false
+                    )
+                }
+            }
         }
         .sheet(item: classifyBinding) { item in
             ToneReader(stillPref: model.prefs.still) { _ in
@@ -79,7 +92,11 @@ struct ShellView: View {
             }
             .environmentObject(model)
             .preferredColorScheme(.dark)
-            .presentationDetents([.medium, .large])
+            // Large, not medium: at medium the facts, the capture choice and
+            // both answers were crushed into half a screen. Spec §9.6 allows
+            // medium only on SE-size screens; this phone is not one.
+            .presentationDetents([.large])
+            .presentationDragIndicator(.hidden)
             .presentationBackground(Theme.clear)
         }
         .onAppear {
@@ -372,7 +389,7 @@ struct ScreenChrome<Content: View>: View {
 /// plate. Settings is a sheet with the planet inside it, so it showed
 /// through; the tabs did not. Clearing those host views lets the one
 /// background behind the shell show on every page.
-private struct ClearHostBackground: UIViewRepresentable {
+struct ClearHostBackground: UIViewRepresentable {
     func makeUIView(context: Context) -> UIView {
         let view = UIView()
         view.backgroundColor = .clear

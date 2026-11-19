@@ -193,8 +193,21 @@ struct NowView: View {
         .padding(.trailing, 14)
     }
 
+    private func coverReference(gameID: String?) -> String? {
+        guard let gameID = gameID, let studio = model.studio else { return nil }
+        if let cover = studio.games.first(where: { $0.id == gameID })?.coverURL, !cover.isEmpty {
+            return cover
+        }
+        for clip in studio.clips where clip.game.id == gameID {
+            if let still = clip.thumbnailURL, !still.isEmpty { return still }
+        }
+        return nil
+    }
+
     @ViewBuilder private func heroCoverArt(gameID: String?) -> some View {
-        let cover = gameID.flatMap { id in model.studio?.games.first(where: { $0.id == id })?.coverURL }
+        // A real cover wins; with none, the game's newest clip still. Neither
+        // means ClipStill's abstract backdrop, never an invented picture.
+        let cover = coverReference(gameID: gameID)
         ClipStill(reference: cover, seed: stillSeed(gameID ?? "game"))
             .frame(width: 210)
             .opacity(0.50)
@@ -475,21 +488,44 @@ struct NowView: View {
         }
     }
 
-    /// Storage tile: PC sends storageFreeBytes and estimatedRemaining, not total disk size.
-    /// Unknown used percentage renders as an honest em dash ("—"), never a fake percent.
+    /// The used fraction, only when the PC sent both numbers and the total is real.
+    /// Anything else is unknown: no arc, an em dash, never a guessed percent.
+    private func usedFraction(_ session: Session?) -> Double? {
+        guard let free = session?.storageFreeBytes,
+              let total = session?.storageTotalBytes,
+              total > 0, free >= 0
+        else { return nil }
+        let used = Double(total - min(free, total)) / Double(total)
+        return min(1.0, max(0.0, used))
+    }
+
+    /// Storage tile: the ring is drawn from storageFreeBytes + storageTotalBytes
+    /// when both are known; otherwise it stays an empty track with an em dash.
     private func storageTile(_ session: Session?) -> some View {
         let freeBytes = session?.storageFreeBytes
         let freeText = StudioFormat.bytes(freeBytes)
         let daysText = StudioFormat.remaining(session?.estimatedRemaining) ?? "—"
+        let fraction = usedFraction(session)
+        let percentText = fraction.map { "\(Int(($0 * 100).rounded()))%" } ?? "—"
+        let usedSpoken = fraction == nil ? "used unknown" : "\(percentText) used"
 
         return tileCard {
             HStack(spacing: Theme.Space.bentoGap) {
                 ZStack {
                     Circle()
                         .stroke(Theme.ink.opacity(0.08), lineWidth: Theme.Stroke.storageRing)
-                    Text("—")
+                    if let fraction = fraction {
+                        Circle()
+                            .trim(from: 0, to: CGFloat(fraction))
+                            .stroke(
+                                Theme.violetLight,
+                                style: StrokeStyle(lineWidth: Theme.Stroke.storageRing, lineCap: .round)
+                            )
+                            .rotationEffect(.degrees(-90))
+                    }
+                    Text(percentText)
                         .font(Theme.TypeScale.ringPercent)
-                        .foregroundStyle(tone.tertiary)
+                        .foregroundStyle(fraction == nil ? tone.tertiary : Theme.ink)
                 }
                 .frame(width: Theme.Size.storageRing, height: Theme.Size.storageRing)
 
@@ -508,7 +544,7 @@ struct NowView: View {
             .frame(maxHeight: .infinity, alignment: .center)
         }
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Storage, \(freeText) free, \(daysText)")
+        .accessibilityLabel("Storage, \(freeText) free, \(usedSpoken), \(daysText)")
     }
 
     private var encoderTile: some View {
@@ -610,17 +646,24 @@ struct NowView: View {
 
     private var offloadTile: some View {
         let active = (model.studio?.clips ?? []).filter { $0.offload.isActive }
-        let target = model.studio?.settings.offloadTarget ?? "—"
+        let known = model.studio?.settings.offloadTarget.flatMap { $0.isEmpty ? nil : $0 }
+        let target = known ?? "—"
 
         return tileCard {
             if active.isEmpty {
                 Eyebrow(text: "Offload")
-                Text("All synced")
-                    .font(Theme.TypeScale.cardTitle)
-                    .foregroundStyle(Theme.teal)
-                Text("To \(target)")
-                    .font(Theme.TypeScale.caption)
-                    .foregroundStyle(tone.tertiary)
+                if known != nil {
+                    Text("All synced")
+                        .font(Theme.TypeScale.cardTitle)
+                        .foregroundStyle(Theme.teal)
+                    Text("To \(target)")
+                        .font(Theme.TypeScale.caption)
+                        .foregroundStyle(tone.tertiary)
+                } else {
+                    Text("—")
+                        .font(Theme.TypeScale.cardTitle)
+                        .foregroundStyle(tone.tertiary)
+                }
             } else {
                 let movingProgress = active.compactMap { clip -> Double? in
                     if case let .moving(progress, _) = clip.offload { return progress }
@@ -715,7 +758,8 @@ struct NowView: View {
     private func libraryTile(_ session: Session?) -> some View {
         let free = session?.storageFreeBytes
         let pending = (model.studio?.clips ?? []).contains { $0.offload.isActive }
-        let target = model.studio?.settings.offloadTarget ?? "—"
+        let known = model.studio?.settings.offloadTarget.flatMap { $0.isEmpty ? nil : $0 }
+        let target = known ?? "—"
 
         return tileCard {
             Eyebrow(text: "Library")
@@ -733,14 +777,20 @@ struct NowView: View {
                     .font(Theme.TypeScale.statMetric)
                     .foregroundStyle(tone.tertiary)
             }
-            HStack(spacing: 6) {
-                Circle()
-                    .fill(pending ? Theme.amber : Theme.teal)
-                    .frame(width: 6, height: 6)
-                Text(pending ? "Offloading to \(target)" : "All synced to \(target)")
+            if pending || known != nil {
+                HStack(spacing: 6) {
+                    Circle()
+                        .fill(pending ? Theme.amber : Theme.teal)
+                        .frame(width: 6, height: 6)
+                    Text(pending ? "Offloading to \(target)" : "All synced to \(target)")
+                        .font(Theme.TypeScale.caption)
+                        .foregroundStyle(pending ? Theme.amber : Theme.teal)
+                        .lineLimit(1)
+                }
+            } else {
+                Text("—")
                     .font(Theme.TypeScale.caption)
-                    .foregroundStyle(pending ? Theme.amber : Theme.teal)
-                    .lineLimit(1)
+                    .foregroundStyle(tone.tertiary)
             }
         }
     }
@@ -1160,11 +1210,16 @@ struct ClipStack: View {
     private func stackCard(_ clip: Clip, isFront: Bool) -> some View {
         ZStack(alignment: .bottomLeading) {
             ClipStill(reference: clip.thumbnailURL, seed: stillSeed(clip.id))
-            LinearGradient(
-                colors: [Theme.clear, Theme.scrimBase.opacity(0.92)],
-                startPoint: UnitPoint(x: 0.5, y: 0.28),
-                endPoint: .bottom
-            )
+
+            // The scrim only sits under the front card's text; the cards behind
+            // it stay clean so the stack reads as pictures, not a dark slab.
+            if isFront {
+                LinearGradient(
+                    colors: [Theme.clear, Theme.scrimBase.opacity(0.92)],
+                    startPoint: UnitPoint(x: 0.5, y: 0.28),
+                    endPoint: .bottom
+                )
+            }
 
             if isFront {
                 if richFront {
@@ -1204,9 +1259,11 @@ struct ClipStack: View {
                         if richFront {
                             Text(StudioFormat.bytes(clip.bytes))
                         }
-                        HStack(spacing: 4) {
-                            Image(systemName: "star")
-                            Text("\(clip.highlights.count) marks")
+                        if !clip.highlights.isEmpty {
+                            HStack(spacing: 4) {
+                                Image(systemName: "star")
+                                Text("\(clip.highlights.count) marks")
+                            }
                         }
                     }
                     .font(Theme.TypeScale.captionSemibold)

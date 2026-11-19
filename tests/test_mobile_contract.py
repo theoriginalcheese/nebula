@@ -9,6 +9,8 @@ acks or errors as specified. The mock never touches a recording on disk.
 import json
 import os
 import sys
+import urllib.error
+import urllib.request
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -218,6 +220,50 @@ try:
           and second["type"] == "snapshot" and len(second["data"]["clips"]) == 20)
 except Exception as exc:
     check("a websocket client receives ack then snapshot", False, str(exc))
+finally:
+    stop.set()
+
+# A still has to be fetchable while the phone's socket is held open.
+# The old listener served one connection at a time, so this GET never
+# arrived and every card stayed on the plain backdrop.
+held = seed_mock()
+held.thumb_bytes = lambda name: b"\xff\xd8\xff\xd9" if name == "clip-aaaaaaaaaaaa.jpg" else None
+stop, port = serve_mock(held)
+try:
+    from websocket import create_connection
+    held_conn = create_connection("ws://127.0.0.1:%d/nebula" % port, timeout=5)
+    held_conn.send(json.dumps({
+        "type": "hello", "id": "held",
+        "data": {"deviceToken": MOCK_TOKEN, "appVersion": "test"},
+    }))
+    held_conn.recv()
+    with urllib.request.urlopen(
+        "http://127.0.0.1:%d/thumbs/clip-aaaaaaaaaaaa.jpg" % port, timeout=3
+    ) as response:
+        body = response.read()
+        code = response.status
+    held_conn.close()
+    check("a clip still loads while the phone socket is open",
+          code == 200 and body.startswith(b"\xff\xd8"), (code, body[:8]))
+except Exception as exc:
+    check("a clip still loads while the phone socket is open", False, str(exc))
+finally:
+    stop.set()
+
+# The playback route on an agent that serves no files is a plain 404, and it
+# does not hang a client that was expecting a websocket upgrade.
+bare = seed_mock()
+stop, port = serve_mock(bare)
+try:
+    try:
+        urllib.request.urlopen(
+            "http://127.0.0.1:%d/files/clip/clip-aaaaaaaaaaaa" % port, timeout=3)
+        code = 200
+    except urllib.error.HTTPError as exc:
+        code = exc.code
+    check("an agent with no files answers a clip GET with 404", code == 404, code)
+except Exception as exc:
+    check("an agent with no files answers a clip GET with 404", False, str(exc))
 finally:
     stop.set()
 

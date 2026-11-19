@@ -23,39 +23,48 @@ struct ClipsView: View {
     @State private var sort: ClipSort = .newest
     @State private var searchTask: Task<Void, Never>?
 
+    init(lockedGame: String? = nil) {
+        self.lockedGame = lockedGame
+        // A pushed per-game list starts on that game's chip but keeps the
+        // whole chip row, so the filter context is never hidden.
+        _gameID = State(initialValue: lockedGame)
+    }
+
     var body: some View {
         let clips = shownClips
-        let isUnfilteredRoot = lockedGame == nil && gameID == nil && query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let searching = !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let isUnfilteredRoot = lockedGame == nil && gameID == nil && !searching
 
         VStack(alignment: .leading, spacing: Theme.Space.sectionGap) {
             searchField
-            if lockedGame == nil {
-                gameFilterChips
-            }
+            gameFilterChips
             if clips.isEmpty {
                 emptyState
-            } else if isUnfilteredRoot {
-                if let latest = clips.first {
+            } else {
+                // Latest is the newest clip in the current filter, whatever
+                // the list below is sorted by. Not shown while searching.
+                if !searching, let latest = newestClip(in: clips) {
                     latestFeaturedCard(latest)
                 }
-                byGameSection
-            } else {
-                filteredClipsSection(clips)
-            }
-        }
-        .onAppear {
-            if let lockedGame = lockedGame {
-                gameID = lockedGame
+                if isUnfilteredRoot {
+                    byGameSection
+                } else {
+                    filteredClipsSection(clips)
+                }
             }
         }
         .onChange(of: query) { _, _ in scheduleSearch() }
         .onChange(of: gameID) { _, _ in scheduleSearch() }
     }
 
+    private func newestClip(in clips: [Clip]) -> Clip? {
+        return clips.max { ($0.createdAt ?? .distantPast) < ($1.createdAt ?? .distantPast) }
+    }
+
     private var shownClips: [Clip] {
         let base = model.listed ?? model.studio?.clips ?? []
         let filtered = base.filter { clip in
-            if let activeGame = lockedGame ?? gameID, clip.game.id != activeGame {
+            if let activeGame = gameID, clip.game.id != activeGame {
                 return false
             }
             let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -126,7 +135,7 @@ struct ClipsView: View {
                 filterChip(title: "All", selected: gameID == nil) {
                     withAnimation(tone.motion) { gameID = nil }
                 }
-                ForEach(gamesByRecent) { game in
+                ForEach(gamesByRecent.filter { $0.clipCount > 0 || $0.id == gameID }) { game in
                     filterChip(title: game.name, selected: gameID == game.id) {
                         withAnimation(tone.motion) { gameID = game.id }
                     }
@@ -286,7 +295,8 @@ struct ClipsView: View {
                 GridItem(.flexible(), spacing: Theme.Space.gridGap),
             ]
             LazyVGrid(columns: columns, spacing: Theme.Space.gridGap) {
-                ForEach(gamesByRecent) { game in
+                // Games with no recordings live on the Games tab; this grid is recordings.
+                ForEach(gamesByRecent.filter { $0.clipCount > 0 }) { game in
                     NavigationLink(value: ClipDest.game(game.id)) {
                         ZStack(alignment: .bottomLeading) {
                             ClipStill(
@@ -472,7 +482,7 @@ struct ClipsView: View {
         searchTask = Task { @MainActor in
             try? await Task.sleep(nanoseconds: 250_000_000)
             guard !Task.isCancelled else { return }
-            model.refreshClips(query: query, gameId: lockedGame ?? gameID)
+            model.refreshClips(query: query, gameId: gameID)
         }
     }
 }

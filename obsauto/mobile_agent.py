@@ -13,6 +13,8 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import os
+import re
 import socket
 import threading
 from datetime import datetime, timedelta, timezone
@@ -387,6 +389,7 @@ class MobileAgent:
             "bytesWritten": 0,
             "highlights": [],
             "storageFreeBytes": 212_000_000_000,
+            "storageTotalBytes": 1_000_000_000_000,
             "estimatedRemaining": 4 * 24 * 3600.0,
             "lastSession": self.session.get("lastSession"),
         }
@@ -470,7 +473,12 @@ class MobileAgent:
 
 
 def serve_mock(agent, host="127.0.0.1", port=0):
-    """One-client WebSocket around `handle`. Returns (stop_event, bound_port).
+    """WebSocket around `handle`. Returns (stop_event, bound_port).
+
+    Each accepted socket is its own thread. The phone holds one WebSocket
+    open for the whole session, and the clip stills are ordinary GETs on
+    this same port. A single-file listener never reached those GETs, so
+    the cards stayed on the plain backdrop.
 
     An agent that defines `poll_events()` gets it called every few seconds
     while a client is connected; whatever it returns is pushed unsolicited.
@@ -479,10 +487,27 @@ def serve_mock(agent, host="127.0.0.1", port=0):
     listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     listener.bind((host, port))
-    listener.listen(1)
+    listener.listen(8)
     listener.settimeout(0.2)
     bound = listener.getsockname()[1]
     stop = threading.Event()
+
+    def client(conn):
+        try:
+            _speak(conn, agent)
+        except Exception as exc:
+            # One phone hanging up must not kill the listener. That is
+            # what left Studio PC looking offline after a normal drop.
+            try:
+                from obsauto.app_log import log_to_file
+                log_to_file("[PHONE] client dropped: %s" % type(exc).__name__)
+            except Exception:
+                pass
+        finally:
+            try:
+                conn.close()
+            except OSError:
+                pass
 
     def loop():
         while not stop.is_set():
@@ -492,10 +517,8 @@ def serve_mock(agent, host="127.0.0.1", port=0):
                 continue
             except OSError:
                 break
-            try:
-                _speak(conn, agent)
-            finally:
-                conn.close()
+            threading.Thread(target=client, args=(conn,), name="mobile-client",
+                             daemon=True).start()
         listener.close()
 
     threading.Thread(target=loop, name="mobile-mock", daemon=True).start()
@@ -509,6 +532,9 @@ def _speak(conn, agent):
     header = _read_header(conn)
     if _thumb_get(header):
         _serve_thumb(conn, agent, header)
+        return
+    if _clip_get(header):
+        _serve_clip(conn, agent, header)
         return
     _accept_websocket(conn, header)
     lock = threading.Lock()
@@ -591,6 +617,126 @@ def _serve_thumb(conn, agent, header):
         "\r\n" % len(data)
     ).encode("ascii")
     conn.sendall(head + data)
+
+
+_CLIP_PATH = re.compile(r"^/files/clip/(clip-[0-9a-f]{12})(\.[A-Za-z0-9]{2,4})?$")
+_CLIP_TYPES = {
+    ".mp4": "video/mp4", ".m4v": "video/mp4", ".mov": "video/quicktime",
+    ".mkv": "video/x-matroska", ".ts": "video/mp2t", ".flv": "video/x-flv",
+}
+_CHUNK = 256 * 1024
+
+
+def _request_path(header):
+    parts = header.split("\r\n", 1)[0].split(" ")
+    if len(parts) < 2:
+        return ""
+    return parts[1].split("?", 1)[0]
+
+
+def _clip_get(header):
+    """A plain GET under /files/clip/. A websocket upgrade is not one."""
+    if "websocket" in header.lower():
+        return False
+    if not header.startswith("GET "):
+        return False
+    path = _request_path(header)
+    return path == "/files/clip" or path.startswith("/files/clip/")
+
+
+def _header_value(header, name):
+    prefix = name.lower() + ":"
+    for line in header.split("\r\n")[1:]:
+        if line.lower().startswith(prefix):
+            return line.split(":", 1)[1].strip()
+    return ""
+
+
+def _byte_range(spec, size):
+    """(first, last) inclusive for a single `bytes=` range; None for no usable
+    range (serve it whole); "bad" when it cannot be satisfied (416)."""
+    if not spec.lower().startswith("bytes=") or "," in spec:
+        return None
+    first, dash, last = spec[6:].strip().partition("-")
+    if not dash:
+        return None
+    try:
+        if first == "":
+            count = int(last)
+            if count <= 0:
+                return "bad"
+            return max(0, size - count), size - 1
+        start = int(first)
+        end = int(last) if last != "" else None
+    except ValueError:
+        return None
+    if end is not None and end < start:
+        return None  # malformed per RFC 9110: ignore the header
+    if start >= size:
+        return "bad"
+    return start, size - 1 if end is None else min(end, size - 1)
+
+
+def _plain(conn, status, extra=""):
+    conn.sendall(("HTTP/1.1 %s\r\n%sConnection: close\r\nContent-Length: 0\r\n\r\n"
+                  % (status, extra)).encode("ascii"))
+
+
+def _serve_clip(conn, agent, header):
+    """A recording, opened read-only and streamed, with HTTP Range support.
+
+    The id must be one the agent already handed out; the agent resolves it to
+    a file under its recording root, or to nothing. No listing, no writing,
+    and the request never supplies a path.
+    """
+    match = _CLIP_PATH.match(_request_path(header))
+    getter = getattr(agent, "clip_file", None)
+    path = getter(match.group(1)) if match and callable(getter) else None
+    if not path:
+        _plain(conn, "404 Not Found")
+        return
+    try:
+        handle = open(path, "rb")
+    except OSError:
+        _plain(conn, "404 Not Found")
+        return
+    with handle:
+        size = os.fstat(handle.fileno()).st_size
+        spec = _header_value(header, "Range")
+        picked = _byte_range(spec, size) if spec else None
+        if picked == "bad":
+            _plain(conn, "416 Range Not Satisfiable",
+                   "Content-Range: bytes */%d\r\n" % size)
+            return
+        kind = _CLIP_TYPES.get(os.path.splitext(path)[1].lower(),
+                               "application/octet-stream")
+        if picked:
+            first, last = picked
+            status = "206 Partial Content"
+            extra = "Content-Range: bytes %d-%d/%d\r\n" % (first, last, size)
+        else:
+            first, last = 0, size - 1
+            status = "200 OK"
+            extra = ""
+        length = last - first + 1 if size else 0
+        conn.sendall((
+            "HTTP/1.1 %s\r\n"
+            "Content-Type: %s\r\n"
+            "Content-Length: %d\r\n"
+            "Accept-Ranges: bytes\r\n"
+            "%s"
+            "Cache-Control: private, no-store\r\n"
+            "Connection: close\r\n"
+            "\r\n" % (status, kind, length, extra)
+        ).encode("ascii"))
+        handle.seek(first)
+        left = length
+        while left > 0:
+            chunk = handle.read(min(_CHUNK, left))
+            if not chunk:
+                break
+            conn.sendall(chunk)
+            left -= len(chunk)
 
 
 def _accept_websocket(conn, header):
@@ -677,6 +823,7 @@ def _idle_session():
         "bytesWritten": 0,
         "highlights": [],
         "storageFreeBytes": 212_000_000_000,
+        "storageTotalBytes": 1_000_000_000_000,
         "estimatedRemaining": None,
         "lastSession": None,
     }
