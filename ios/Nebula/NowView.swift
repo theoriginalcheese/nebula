@@ -384,7 +384,7 @@ struct NowView: View {
         }
     }
 
-    private func tile<Content: View>(title: String, @ViewBuilder content: () -> Content) -> some View {
+    private func tile<Content: View>(title: String, @ViewBuilder content: @escaping () -> Content) -> some View {
         Tray(radius: 30) {
             VStack(alignment: .leading, spacing: 8) {
                 Eyebrow(text: title, color: tone.tertiary)

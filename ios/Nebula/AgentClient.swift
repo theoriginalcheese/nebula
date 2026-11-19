@@ -124,6 +124,8 @@ final class AgentClient {
             text = value
         case let .data(value):
             text = String(data: value, encoding: .utf8)
+        @unknown default:
+            text = nil
         }
         guard let text,
               let data = text.data(using: .utf8),
