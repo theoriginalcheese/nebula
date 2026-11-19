@@ -56,6 +56,9 @@ check("the IPA job does not read GitHub secrets", "secrets." not in workflow)
 check("the connection is stored in the keychain",
       "kSecClassGenericPassword" in TEXT and "UserDefaults" not in TEXT)
 check("the token field is a secure field", "SecureField" in TEXT)
+activity_plist = open(os.path.join(IOS, "Activity", "Info.plist"), encoding="utf-8").read()
+check("the lock-screen widget has a version",
+      "CFBundleVersion" in activity_plist and "CFBundleShortVersionString" in activity_plist)
 
 passed_all = all(ok for _, ok, _ in results)
 for name, ok, detail in results:
